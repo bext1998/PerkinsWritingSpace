@@ -1,0 +1,127 @@
+package snapshot
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"perkins/internal/project"
+)
+
+func setup(t *testing.T) (*Store, string) {
+	t.Helper()
+	p, err := project.Create(t.TempDir(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := p.NewChapter("第一章", 0)
+	p.WriteFile(rel, "原稿第一行\n原稿第二行\n")
+	p.WriteFile("canon/world.md", "世界觀 v1\n")
+	return &Store{Proj: p}, rel
+}
+
+// A4 意圖:出錯後必須能回到之前的狀態,且還原後內容與快照當時逐字相同。
+func TestRestoreReturnsExactContent(t *testing.T) {
+	s, rel := setup(t)
+	orig, _ := s.Proj.ReadFile(rel)
+	m, err := s.Take("手動", "manual", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Files) != 2 {
+		t.Fatalf("未指定檔案時應保存全部稿件與設定, got %v", m.Files)
+	}
+	s.Proj.WriteFile(rel, "被改壞了")
+	s.Proj.WriteFile("canon/world.md", "世界觀 v2")
+	if _, err := s.Restore(m.ID, []string{rel}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Proj.ReadFile(rel); got != orig {
+		t.Fatalf("還原後 = %q, want %q", got, orig)
+	}
+	// 只還原指定的檔案,其他檔案的新進度不能被一併蓋掉
+	if got, _ := s.Proj.ReadFile("canon/world.md"); got != "世界觀 v2" {
+		t.Fatalf("未指定的檔案不應被還原, got %q", got)
+	}
+}
+
+// 意圖:還原本身是有風險的動作(可能選錯版本),必須先保存目前狀態,讓還原也能被撤銷。
+func TestRestoreIsItselfUndoable(t *testing.T) {
+	s, rel := setup(t)
+	m, _ := s.Take("", "manual", []string{rel})
+	s.Proj.WriteFile(rel, "作者今天新寫的一千字")
+	backup, err := s.Restore(m.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backup.Reason != "before-restore" {
+		t.Fatalf("reason = %s", backup.Reason)
+	}
+	if _, err := s.Restore(backup.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Proj.ReadFile(rel); got != "作者今天新寫的一千字" {
+		t.Fatalf("撤銷還原失敗, got %q", got)
+	}
+	prov, _ := os.ReadFile(filepath.Join(s.Proj.Root, ".perkins", "provenance.jsonl"))
+	if strings.Count(string(prov), `"event":"restore"`) != 2 {
+		t.Errorf("每次還原都應記錄 provenance:\n%s", prov)
+	}
+}
+
+// 還原前的備份快照失敗 → 不還原(否則作者目前的文字會在無備份的情況下被覆蓋)。
+func TestRestoreRefusedWhenBackupFails(t *testing.T) {
+	s, rel := setup(t)
+	m, _ := s.Take("", "manual", []string{rel})
+	s.Proj.WriteFile(rel, "新內容")
+	takeBackup = func(*Store, string, string, []string) (*Meta, error) { return nil, errors.New("disk full") }
+	defer func() { takeBackup = (*Store).Take }()
+	s2 := s
+	if _, err := s2.Restore(m.ID, nil); err == nil {
+		t.Fatal("無法備份時應拒絕還原")
+	}
+	if got, _ := s.Proj.ReadFile(rel); got != "新內容" {
+		t.Fatal("失敗時不得改動檔案")
+	}
+}
+
+func TestRejectsBadIDs(t *testing.T) {
+	s, _ := setup(t)
+	for _, id := range []string{"", "..", "../x", `a\b`, "C:x"} {
+		if _, err := s.Get(id); err == nil {
+			t.Errorf("應拒絕 id %q", id)
+		}
+	}
+	m, _ := s.Take("", "manual", nil)
+	if _, err := s.FileContent(m.ID, "../perkins.json"); err == nil {
+		t.Error("不在快照清單的路徑應被拒絕")
+	}
+}
+
+func TestListNewestFirst(t *testing.T) {
+	s, _ := setup(t)
+	a, _ := s.Take("a", "manual", nil)
+	b, _ := s.Take("b", "manual", nil)
+	list, _ := s.List()
+	if len(list) != 2 || list[0].ID != b.ID || list[1].ID != a.ID {
+		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestLineDiff(t *testing.T) {
+	d := LineDiff("甲\n乙\n丙\n丁", "甲\n乙改\n丙\n丁\n戊")
+	var ops []string
+	for _, l := range d {
+		ops = append(ops, l.Op+l.Text)
+	}
+	got := strings.Join(ops, "|")
+	want := " 甲|-乙|+乙改| 丙| 丁|+戊"
+	if got != want {
+		t.Fatalf("got %s\nwant %s", got, want)
+	}
+	if d := LineDiff("同", "同"); len(d) != 1 || d[0].Op != " " {
+		t.Fatalf("相同文字 diff = %+v", d)
+	}
+}

@@ -1,0 +1,11 @@
+# Local backups and generated metadata
+.backup/
+app/frontend/package.json.md5
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key

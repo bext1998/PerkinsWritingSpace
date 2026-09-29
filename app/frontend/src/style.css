@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 設計語彙:夜間書房。深藍墨色為底,琥珀金(書脊燙金)為強調色;淺色主題為暖白紙張。 */
+@layer base {
+    :root {
+        --radius: 0.6rem;
+        --background: 40 30% 97%;
+        --foreground: 222 25% 15%;
+        --sidebar: 40 24% 94%;
+        --rail: 40 18% 89%;
+        --paper: 40 40% 99%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 25% 15%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 25% 15%;
+        --primary: 30 62% 40%;
+        --primary-foreground: 40 40% 98%;
+        --secondary: 40 16% 89%;
+        --secondary-foreground: 222 25% 18%;
+        --muted: 40 16% 91%;
+        --muted-foreground: 222 10% 42%;
+        --accent: 40 18% 88%;
+        --accent-foreground: 222 25% 15%;
+        --destructive: 0 62% 48%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 40 14% 84%;
+        --input: 40 14% 80%;
+        --ring: 30 62% 40%;
+        --success: 142 45% 34%;
+        --warning: 32 85% 38%;
+        --selection: 30 80% 60%;
+    }
+
+    .dark {
+        --background: 222 24% 10%;
+        --foreground: 40 22% 90%;
+        --sidebar: 222 24% 8.5%;
+        --rail: 222 26% 6.5%;
+        --paper: 222 22% 12%;
+        --card: 222 22% 13%;
+        --card-foreground: 40 22% 90%;
+        --popover: 222 22% 13%;
+        --popover-foreground: 40 22% 90%;
+        --primary: 36 72% 60%;
+        --primary-foreground: 222 30% 10%;
+        --secondary: 222 16% 19%;
+        --secondary-foreground: 40 22% 90%;
+        --muted: 222 16% 17%;
+        --muted-foreground: 220 10% 62%;
+        --accent: 222 16% 20%;
+        --accent-foreground: 40 22% 92%;
+        --destructive: 0 62% 55%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 222 16% 19%;
+        --input: 222 16% 24%;
+        --ring: 36 72% 60%;
+        --success: 142 45% 55%;
+        --warning: 38 85% 62%;
+        --selection: 36 72% 60%;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    html, body, #root {
+        height: 100%;
+    }
+
+    body {
+        @apply bg-background text-foreground font-sans antialiased;
+        margin: 0;
+        overflow: hidden;
+    }
+
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / .5); background-clip: padding-box; border: 2px solid transparent; }
+    ::-webkit-scrollbar-track { background: transparent; }
+}
+
+/* CodeMirror:稿紙 */
+.cm-host { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+.cm-host .cm-editor { height: 100%; }
+.cm-host .cm-scroller { font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif; font-size: 1.08rem; line-height: 2; }
+.cm-host .cm-content { max-width: 44rem; margin: 0 auto; padding: 3rem 2.5rem 40vh; caret-color: hsl(var(--primary)); }
+.cm-host .cm-cursor { border-left: 2px solid hsl(var(--primary)); }
+.cm-host .cm-activeLine { background: transparent; }
+.cm-host .cm-header-1 { font-size: 1.5em; font-weight: 700; }
+.cm-host .cm-header-2 { font-size: 1.2em; font-weight: 700; color: hsl(var(--primary)); }
+.cm-flash { animation: cm-flash 1.2s ease-out; }
+@keyframes cm-flash { from { background: hsl(var(--selection) / .35); } to { background: transparent; } }
+
+/* 生成的書封 */
+.book-spine-shadow { box-shadow: inset 6px 0 8px -4px rgba(0,0,0,.45), inset -1px 0 0 rgba(255,255,255,.08), 0 10px 24px -8px rgba(0,0,0,.55); }
+.shelf-plank { background: linear-gradient(to bottom, hsl(30 30% 32%), hsl(28 32% 22%)); box-shadow: 0 8px 18px -6px rgba(0,0,0,.6); }
+.light .shelf-plank { background: linear-gradient(to bottom, hsl(32 35% 62%), hsl(30 32% 48%)); }
+
+.diff-del { background: hsl(0 70% 50% / .16); text-decoration: line-through; text-decoration-color: hsl(0 70% 60% / .6); }
+.diff-add { background: hsl(142 50% 45% / .18); }
