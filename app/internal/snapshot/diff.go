@@ -1,6 +1,9 @@
 package snapshot
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 type DiffLine struct {
 	Op   string `json:"op"` // " " 相同 | "-" 只在舊版 | "+" 只在新版
@@ -34,6 +37,7 @@ func LineDiff(oldText, newText string) []DiffLine {
 	}
 	ma, mb := a[pre:len(a)-suf], b[pre:len(b)-suf]
 	if len(ma)*len(mb) > 4_000_000 {
+		// 已退化成整段刪除 + 整段新增,不再做行內比較,否則會繞過這個上限
 		for _, l := range ma {
 			out = append(out, DiffLine{Op: "-", Text: l})
 		}
@@ -41,6 +45,7 @@ func LineDiff(oldText, newText string) []DiffLine {
 			out = append(out, DiffLine{Op: "+", Text: l})
 		}
 	} else {
+		start := len(out)
 		for _, o := range lcs(ma, mb) {
 			if o.op == "+" {
 				out = append(out, DiffLine{Op: o.op, Text: mb[o.j]})
@@ -48,17 +53,19 @@ func LineDiff(oldText, newText string) []DiffLine {
 				out = append(out, DiffLine{Op: o.op, Text: ma[o.i]})
 			}
 		}
+		markInline(out[start:])
 	}
 	for _, l := range a[len(a)-suf:] {
 		out = append(out, DiffLine{Op: " ", Text: l})
 	}
-	markInline(out)
 	return out
 }
 
 // markInline 找出每段連續的「-」行緊接「+」行,依序一對一配對,為配對的兩行補上字元層級的 Segs。
 // 中文一段通常就是一行,只改一個字時整段標色很難看出改了哪裡。
+// 整份差異的字元比較量以 inlineBudget 為上限,用完後其餘行維持整行標色。
 func markInline(lines []DiffLine) {
+	budget := inlineBudget
 	for i := 0; i < len(lines); {
 		d := i
 		for d < len(lines) && lines[d].Op == "-" {
@@ -69,6 +76,11 @@ func markInline(lines []DiffLine) {
 			p++
 		}
 		for k := 0; k < d-i && k < p-d; k++ {
+			cost := utf8.RuneCountInString(lines[i+k].Text) * utf8.RuneCountInString(lines[d+k].Text)
+			if cost > budget {
+				return
+			}
+			budget -= cost
 			lines[i+k].Segs, lines[d+k].Segs = runeSegs(lines[i+k].Text, lines[d+k].Text)
 		}
 		if p == i {
@@ -78,9 +90,12 @@ func markInline(lines []DiffLine) {
 	}
 }
 
+// inlineBudget 是一次差異中所有行內比較 DP 格數的總和上限(約與行級上限同量級)。
+var inlineBudget = 4_000_000
+
 func runeSegs(oldLine, newLine string) (del, add []Seg) {
 	a, b := []rune(oldLine), []rune(newLine)
-	if len(a) == 0 || len(b) == 0 || len(a)*len(b) > 1_000_000 {
+	if len(a) == 0 || len(b) == 0 {
 		return nil, nil
 	}
 	ops := lcs(a, b)

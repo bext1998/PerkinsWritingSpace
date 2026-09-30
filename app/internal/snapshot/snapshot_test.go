@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,5 +167,35 @@ func TestLineDiffInlineSegs(t *testing.T) {
 		if l.Segs != nil {
 			t.Fatalf("整段改寫不應有行內標示: %+v", l)
 		}
+	}
+}
+
+// 長章節每行都有小改時,行內比較不能讓總計算量失控而卡住介面(PR #2 審查發現)。
+func TestLineDiffInlineBounded(t *testing.T) {
+	lines := func(n int, ch string) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "第%d行%s\n", i, ch)
+		}
+		return b.String()
+	}
+	// 行級已退化成整段刪除 + 新增:不得再逐行做字元比較
+	for _, l := range LineDiff(lines(2001, "甲"), lines(2001, "乙")) {
+		if l.Segs != nil {
+			t.Fatalf("退化分支不應有行內標示: %+v", l)
+		}
+	}
+
+	// 未退化時,總預算用完後其餘行整行標色
+	defer func(v int) { inlineBudget = v }(inlineBudget)
+	inlineBudget = 40 // 「第N行甲」對「第N行乙」每組 4×4=16 格,只夠兩組
+	marked := 0
+	for _, l := range LineDiff(lines(10, "甲"), lines(10, "乙")) {
+		if l.Op == "-" && l.Segs != nil {
+			marked++
+		}
+	}
+	if marked != 2 {
+		t.Fatalf("預算 40 應只標示 2 組,實際 %d", marked)
 	}
 }
