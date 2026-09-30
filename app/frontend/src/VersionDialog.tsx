@@ -122,9 +122,18 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                         </div>
                                         <pre className="min-h-0 flex-1 overflow-auto rounded-md border p-2 font-serif text-[13px] leading-relaxed">
                                             {diff.map((l, i) => (
-                                                <div key={i} className={cn('whitespace-pre-wrap px-1', l.op === '-' && 'diff-del', l.op === '+' && 'diff-add')}>
-                                                    {l.op === ' ' ? ' ' : l.op} {l.text}
-                                                </div>
+                                                l.segs ? (
+                                                    // 修改的行:整行淡色,實際變動的字加深
+                                                    <div key={i} className={cn('whitespace-pre-wrap px-1', l.op === '-' ? 'diff-del-line' : 'diff-add-line')}>
+                                                        {l.op} {l.segs.map((s, k) => s.changed
+                                                            ? <span key={k} className={l.op === '-' ? 'diff-del-seg' : 'diff-add-seg'}>{s.text}</span>
+                                                            : s.text)}
+                                                    </div>
+                                                ) : (
+                                                    <div key={i} className={cn('whitespace-pre-wrap px-1', l.op === '-' && 'diff-del', l.op === '+' && 'diff-add')}>
+                                                        {l.op === ' ' ? ' ' : l.op} {l.text}
+                                                    </div>
+                                                )
                                             ))}
                                         </pre>
                                     </>

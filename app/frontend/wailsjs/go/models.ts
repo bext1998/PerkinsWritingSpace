@@ -696,9 +696,24 @@ export namespace settings {
 
 export namespace snapshot {
 	
+	export class Seg {
+	    changed: boolean;
+	    text: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Seg(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.changed = source["changed"];
+	        this.text = source["text"];
+	    }
+	}
 	export class DiffLine {
 	    op: string;
 	    text: string;
+	    segs?: Seg[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DiffLine(source);
@@ -708,7 +723,26 @@ export namespace snapshot {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.op = source["op"];
 	        this.text = source["text"];
+	        this.segs = this.convertValues(source["segs"], Seg);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Meta {
 	    id: string;

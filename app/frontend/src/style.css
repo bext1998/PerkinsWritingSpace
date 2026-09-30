@@ -100,3 +100,7 @@
 
 .diff-del { background: hsl(0 70% 50% / .16); text-decoration: line-through; text-decoration-color: hsl(0 70% 60% / .6); }
 .diff-add { background: hsl(142 50% 45% / .18); }
+.diff-del-line { background: hsl(0 70% 50% / .07); }
+.diff-add-line { background: hsl(142 50% 45% / .08); }
+.diff-del-seg { background: hsl(0 70% 50% / .35); text-decoration: line-through; text-decoration-color: hsl(0 70% 60% / .8); border-radius: 2px; }
+.diff-add-seg { background: hsl(142 50% 45% / .38); border-radius: 2px; }
