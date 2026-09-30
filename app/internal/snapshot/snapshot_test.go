@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,5 +124,78 @@ func TestLineDiff(t *testing.T) {
 	}
 	if d := LineDiff("同", "同"); len(d) != 1 || d[0].Op != " " {
 		t.Fatalf("相同文字 diff = %+v", d)
+	}
+}
+
+// 中文一段就是一行:改一個字時,作者要能看出改的是哪個字,而不是整段標色。
+func TestLineDiffInlineSegs(t *testing.T) {
+	render := func(l DiffLine) string {
+		var b strings.Builder
+		for _, s := range l.Segs {
+			if s.Changed {
+				b.WriteString("[" + s.Text + "]")
+			} else {
+				b.WriteString(s.Text)
+			}
+		}
+		return b.String()
+	}
+	d := LineDiff("前文\n她推開門,雨聲湧了進來。\n後文", "前文\n她推開窗,雨聲湧了進來。\n後文")
+	if len(d) != 4 || d[1].Op != "-" || d[2].Op != "+" {
+		t.Fatalf("diff = %+v", d)
+	}
+	if got := render(d[1]); got != "她推開[門],雨聲湧了進來。" {
+		t.Fatalf("刪除行標示 = %s", got)
+	}
+	if got := render(d[2]); got != "她推開[窗],雨聲湧了進來。" {
+		t.Fatalf("新增行標示 = %s", got)
+	}
+	// 各段接起來必須等於原行,否則畫面顯示的不是實際文字
+	for _, l := range d[1:3] {
+		var b strings.Builder
+		for _, s := range l.Segs {
+			b.WriteString(s.Text)
+		}
+		if b.String() != l.Text {
+			t.Fatalf("segs 接起來 %q ≠ 原行 %q", b.String(), l.Text)
+		}
+	}
+
+	// 整段改寫:逐字標示只剩零星巧合相同的字,應整行標色
+	d = LineDiff("她推開門,雨聲湧了進來。", "天亮以前,沒有人說話。")
+	for _, l := range d {
+		if l.Segs != nil {
+			t.Fatalf("整段改寫不應有行內標示: %+v", l)
+		}
+	}
+}
+
+// 長章節每行都有小改時,行內比較不能讓總計算量失控而卡住介面(PR #2 審查發現)。
+func TestLineDiffInlineBounded(t *testing.T) {
+	lines := func(n int, ch string) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "第%d行%s\n", i, ch)
+		}
+		return b.String()
+	}
+	// 行級已退化成整段刪除 + 新增:不得再逐行做字元比較
+	for _, l := range LineDiff(lines(2001, "甲"), lines(2001, "乙")) {
+		if l.Segs != nil {
+			t.Fatalf("退化分支不應有行內標示: %+v", l)
+		}
+	}
+
+	// 未退化時,總預算用完後其餘行整行標色
+	defer func(v int) { inlineBudget = v }(inlineBudget)
+	inlineBudget = 40 // 「第N行甲」對「第N行乙」每組 4×4=16 格,只夠兩組
+	marked := 0
+	for _, l := range LineDiff(lines(10, "甲"), lines(10, "乙")) {
+		if l.Op == "-" && l.Segs != nil {
+			marked++
+		}
+	}
+	if marked != 2 {
+		t.Fatalf("預算 40 應只標示 2 組,實際 %d", marked)
 	}
 }
