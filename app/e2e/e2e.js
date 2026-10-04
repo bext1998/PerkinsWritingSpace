@@ -454,6 +454,39 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
             await page.waitForSelector('.cm-content');
             check('E2 重新載入後稿件保留', (await page.textContent('.cm-content')).includes('crashSaveE2'));
 
+            // 情境 2b(review-merge):在途存檔保持 pending 時 root 崩潰 → saving 狀態下原文仍可取回與複製、重載停用;解除後 saved 且磁碟為最新
+            // 此分支需有 __perkinsSaveDelay(合併自 PR #5)
+            if (await page.evaluate(() => typeof window.__perkinsSaveDelay === 'function')) {
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type('pendingSaveText');
+                await page.waitForTimeout(300);
+                await page.evaluate(() => window.__perkinsSaveDelay(10000)); // 在途存檔保持 pending
+                await page.click('[data-testid=save-button]');
+                await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")');
+                await page.evaluate(() => window.__perkinsCrash('root'));
+                await page.waitForSelector('[data-testid=emergency-save][data-save-state=saving]', {timeout: 10000});
+                const beforePending = read(ch1); // 存檔前磁碟(不含 pendingSaveText)
+                check('E2b saving 狀態顯示 rescue textarea 且內容等於最新原文',
+                    (await page.inputValue('[data-testid=rescue-text]')) === beforePending + 'pendingSaveText', `len=${(await page.inputValue('[data-testid=rescue-text]')).length}`);
+                check('E2b saving 狀態重載停用', !!(await page.$('[data-testid=reload-app][disabled]')));
+                // 可複製:點「複製全文」→ 已複製
+                await page.click('[data-copy-main]');
+                await page.waitForSelector('text=已複製', {timeout: 5000});
+                check('E2b saving 狀態可複製原文', true);
+                // 解除 → saved 且磁碟為最新文字(沒有較舊寫入再覆蓋)
+                await page.evaluate(() => window.__perkinsSaveDelay(0));
+                await page.waitForSelector('[data-testid=emergency-save][data-save-state=saved]', {timeout: 15000});
+                check('E2b 解除後進 saved 且磁碟含最新文字', read(ch1).includes('pendingSaveText'), JSON.stringify(read(ch1).slice(-40)));
+                await page.click('[data-testid=reload-app]');
+                await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+                await page.click('[data-testid=chapter-row]:has-text("第一章")');
+                await page.waitForSelector('.cm-content');
+                check('E2b 重載後稿件保留最新文字', (await page.textContent('.cm-content')).includes('pendingSaveText'));
+            } else {
+                check('E2b 在途存檔情境', false, 'window.__perkinsSaveDelay 不存在');
+            }
+
             // 情境 4:緊急存檔失敗 → 救援 textarea 顯示未存原文與目標路徑,重新載入按鈕改為「放棄未存內容」
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');

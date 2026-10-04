@@ -164,8 +164,22 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
                 <p className="max-w-xl text-sm text-destructive">{errText(error)}</p>
                 {save === 'saving' && (
                     <p data-testid="emergency-save" data-save-state="saving" className="text-sm text-muted-foreground">
-                        正在儲存未寫入的內容…(儲存完成前無法重新載入)
+                        正在儲存未寫入的內容…(儲存完成前無法重新載入;下方原文可先複製)
                     </p>
+                )}
+                {/* saving 期間也提供已捕獲原文的唯讀 textarea 與「複製全文」(review-merge:
+                    在途存檔一直 pending 時,作者仍要能取回原文);放棄/重載仍只在 failed 提供 */}
+                {save === 'saving' && rescue && (
+                    <div className="flex w-full max-w-xl flex-col items-center gap-3">
+                        <textarea data-testid="rescue-text" readOnly value={rescue.text}
+                                  onFocus={e => e.currentTarget.select()}
+                                  className="h-56 w-full whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-sm"/>
+                        <div className="flex items-center gap-3">
+                            <Button size="sm" data-copy-main disabled={this.copying()} onClick={this.copyAll}>複製全文</Button>
+                            {copied === 'ok' && <span className="text-sm text-success">已複製</span>}
+                            {copied === 'failed' && <span className="text-sm text-destructive">複製失敗,請手動全選複製</span>}
+                        </div>
+                    </div>
                 )}
                 {save === 'saved' && (
                     <p data-testid="emergency-save" data-save-state="saved" className="text-sm text-success">
