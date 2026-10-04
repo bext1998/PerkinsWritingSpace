@@ -243,11 +243,56 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
+
+        // 錯誤防護(SPEC §16 第 0 項):需在開發模式(wails dev)下執行,__perkinsCrash 只存在於 DEV 建置
+        if (await page.evaluate(() => typeof window.__perkinsCrash === 'function')) {
+            // 情境 1:chat 區崩潰 → 編輯器仍在、未存的字仍在、ChatWindow 區顯示錯誤
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('boundaryE1');
+            await page.waitForTimeout(400);
+            await page.evaluate(() => window.__perkinsCrash('chat'));
+            await page.waitForSelector('[data-testid=area-error-chat]', {timeout: 5000});
+            const chatErrText = await page.textContent('[data-testid=area-error-chat]');
+            check('E1 chat 區崩潰後編輯器仍在', await page.isVisible('.cm-content'));
+            check('E1 未存的字仍在編輯器', (await page.textContent('.cm-content')).includes('boundaryE1'));
+            check('E1 ChatWindow 區顯示錯誤與重試', chatErrText.includes('錯誤') && !!(await page.$('[data-testid=area-error-chat] button:has-text("重試")')));
+            await shot('14-area-error-chat');
+            await page.click('[data-testid=area-error-chat] button:has-text("重試")');
+            await page.waitForTimeout(300);
+            check('E1 重試後 chat 區恢復', !(await page.$('[data-testid=area-error-chat]')));
+
+            // 情境 2:root 崩潰 → 錯誤畫面出現、未存的字先緊急存檔
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('crashSaveE2');
+            await page.waitForTimeout(400);
+            await page.evaluate(() => window.__perkinsCrash('root'));
+            await page.waitForSelector('[data-testid=root-error]', {timeout: 5000});
+            await page.waitForSelector('[data-testid=emergency-save]', {timeout: 10000});
+            const saveMsg = await page.textContent('[data-testid=emergency-save]');
+            check('E2 root 崩潰顯示錯誤畫面', (await page.textContent('[data-testid=root-error]')).includes('介面發生錯誤'));
+            check('E2 顯示「未儲存的內容已存檔」', saveMsg.includes('已存檔'), saveMsg);
+            const diskE2 = read(ch1);
+            check('E2 未存的字已寫入檔案', diskE2.includes('boundaryE1') && diskE2.includes('crashSaveE2'), JSON.stringify(diskE2.slice(-60)));
+            await shot('15-root-error');
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            check('E2 重新載入後稿件保留', (await page.textContent('.cm-content')).includes('crashSaveE2'));
+        } else {
+            check('E1 開發模式拋錯點存在', false, 'window.__perkinsCrash 不存在(需以 wails dev 開發模式執行)');
+        }
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
-    check('頁面沒有 JavaScript 錯誤', errors.length === 0, errors.join(' | '));
+    // 開發模式刻意拋錯(__perkinsCrash)會被 boundary 捕捉,但 React dev 仍會重拋到 window,屬預期,不算錯
+    const realErrors = errors.filter(e => !e.includes('開發模式刻意拋錯'));
+    check('頁面沒有 JavaScript 錯誤', realErrors.length === 0, realErrors.join(' | '));
     await browser.close();
     const failed = results.filter(r => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} passed`);

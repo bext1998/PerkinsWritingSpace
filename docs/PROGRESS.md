@@ -1,5 +1,15 @@
 # PROGRESS.md
 
+## 2026-10-05 — 錯誤防護(ErrorBoundary)
+
+完成 SPEC §16 第 0 項:render 期間未捕捉錯誤不再讓視窗全白。
+
+- `app/frontend/src/components/ErrorBoundary.tsx`(新):`RootBoundary`(最外層,錯誤畫面 + 重新載入按鈕,`componentDidCatch` 先呼叫緊急存檔再顯示畫面,存檔成功/失敗都寫在畫面上)與 `AreaBoundary`(區域防護,顯示簡短錯誤 + 「重試」重設 boundary 狀態)。未引入新依賴。
+- `main.tsx` 最外層包 `RootBoundary`;`Workspace.tsx` 內 `ChatWindow`、`Inspector`、側欄(aside)各自包 `AreaBoundary`,並把讀 `latest` ref 的存檔邏輯註冊到模組層級 `emergencySave`(只做 `SaveFile`,不依賴卸載後的 setState)。
+- 開發模式拋錯點:`main.tsx` 在 `import.meta.env.DEV` 下掛 `window.__perkinsCrash(area)`,讓 `chat`/`inspector`/`sidebar`/`root` 對應區塊下一次 render 拋錯;`App.tsx` 監聽拋錯事件強制重繪。正式建置已以 `grep -r __perkinsCrash app/frontend/dist` 確認不存在。
+- `app/e2e/e2e.js` 新增兩個情境:E1(chat 區崩潰 → 編輯器仍在、未存的字仍在、ChatWindow 區顯示錯誤、重試後恢復)、E2(root 崩潰 → 錯誤畫面顯示「未儲存的內容已存檔」、磁碟檔案含未存的字、重新載入後稿件保留)。刻意拋錯在 dev 模式會被 React 重拋到 window 成 pageerror,屬預期,不計入「頁面沒有 JavaScript 錯誤」。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **42/42 通過**(含既有情境無退步,LM Studio 本機模型正常回覆)。備註:「書櫃顯示最近的作品」首次執行曾失敗一次,第二輪(同程式碼)通過,判斷為既有檢查在書櫃非同步載入 `ListRecent` 時的偶發 race,與本變更無關。
+
 ## 2026-09-30 — 版本差異標出行內改動的字
 
 「版本」對話框原本只能整行標紅/綠(中文一段一行,改一個字也整段標色)。`snapshot.LineDiff` 現在會把相鄰的刪除行與新增行配對,以字元 LCS 標出實際變動的字;共同字不到一半(整段改寫)或行太長時仍整行標色。提案卡片的原文/替換對照未改(替換是可編輯的輸入框)。Go 測試與 `tsc` 通過;**畫面未實機 render,請開「版本」看一次**。
