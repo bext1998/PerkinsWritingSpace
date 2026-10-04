@@ -126,8 +126,9 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                                                     if (v === '') delete next[f.src]; else next[f.src] = v;
                                                                     return next;
                                                                 })}>
-                                                            <SelectTrigger className="h-7 w-40 shrink-0 text-xs">
-                                                                <SelectValue placeholder="跟隨資料夾"/>
+                                                            <SelectTrigger className="h-7 w-44 shrink-0 text-xs">
+                                                                {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
+                                                                <SelectValue placeholder={`跟隨資料夾(目前:${choices[g.key]})`}/>
                                                             </SelectTrigger>
                                                             <SelectContent>
                                                                 <SelectItem value="" data-testid={`page-follow-${f.name}`}>
