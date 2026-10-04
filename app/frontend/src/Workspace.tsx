@@ -335,7 +335,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
                             onChange={t => { latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
-                            onAskAI={onAskAI} onSelect={sv => { setSelection(sv); if (sv && latest.current.current) setLastSel({sel: sv, from: latest.current.current}); }}/>
+                            onAskAI={onAskAI} onSelect={sv => {
+                                setSelection(sv);
+                                // 選取時記回填候選;取消選取(null)時一併清除(review-round4 E1):
+                                // 已取消的選取不得在開啟 AI 視窗時復活
+                                if (sv && latest.current.current) setLastSel({sel: sv, from: latest.current.current});
+                                else if (!sv) setLastSel(null);
+                            }}/>
                 ) : (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
                         <BookOpen className="h-10 w-10 opacity-40"/>

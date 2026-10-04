@@ -16,6 +16,13 @@
 - E2E 更新:書櫃等待改 `bookshelf-title`;資訊欄檢查名稱改「本章提及的設定」(斷言內容不變)。
 
 
+## 2026-10-05 — 第四輪審查修補(review-round4 E1/E4/E5,G 段)
+
+- **E1 取消選取不得回填**(`Workspace.tsx`):`onSelect` 收到 null(點別行取消選取)時同步清掉 `lastSel` 回填候選;E2E 新增 U8(未開 AI 時選取私人筆記→點別行取消→開 AI,PreviewContext messages 不含該段)。破壞驗證:移除清除 → U8 兩項 FAIL。
+- **E4 U4 精確比對選取區塊**(`e2e.js`):以【作者選取的段落】區塊本身(標題後至空行前)精確比較,不再以整則 message 含關鍵句的方式(文件本文含雷恩句會誤判通過)。破壞驗證:selection 改為同文件舊選取 → U4 FAIL。
+- **E5 U3 精確驗證還原**(`e2e.js`):首點前保存磁碟/編輯器基準與快照內容(讀 `.perkins/snapshots/<id>/files/`);首點/取消後磁碟與編輯器各精確比較(編輯器以 .cm-line 行串接);確定後磁碟與編輯器精確等於快照;before-restore 備份讀回核對等於還原前磁碟;保留其他檔案未變。破壞驗證兩項:restore-file 略過確認直接還原(確認區不出現,中斷 FAIL);略過 RestoreSnapshot(磁碟/備份 4 項 FAIL)。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**67/67 passed,略過 8 項**。
+
 ## 2026-10-05 — 介面打磨第一批(操作問題,01/02/03/04/07)
 
 完成 SPEC §16 第 1 項的第一批(依設計審查前 5 優先中的操作類,作者拍板):

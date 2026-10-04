@@ -336,17 +336,29 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
         // U3(03):還原分層 — 主要「還原此檔」需確認,取消不還原,確定後還原
+        // (review-round4 E5:首點前保存基準;首點/取消後精確比較;確定後精確等於快照;備份讀回核對)
         const hashCH1U3 = hash('manuscript/第一章.md'); // 單檔還原時其他檔案未變
+        const snapDir = () => {
+            const base = P('.perkins/snapshots');
+            const ids = fs.readdirSync(base).filter(d => fs.existsSync(path.join(base, d, 'meta.json'))).sort();
+            return ids[ids.length - 1];
+        };
         // 先改稿:在第二章末尾打字(快照前的內容與目前不同,這樣 diff 才有差異、還原鈕可用)
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
         await page.keyboard.type('還原前的新句');
         await page.keyboard.press('Control+s');
         await page.waitForTimeout(600);
+        // 建快照前的完整基準:磁碟/編輯器 + 章節檔清單
+        const ch2Path = 'manuscript/第二章.md';
+        const diskBeforeSnap = read(ch2Path);
         await page.click('[data-testid=open-versions]');
         await page.waitForSelector('text=建立快照');
         await page.click('button:has-text("建立快照")');
         await page.waitForTimeout(800); // 等快照完成
+        const snapID = snapDir();
+        const snapCh2 = fs.readFileSync(P('.perkins/snapshots/' + snapID + '/files/' + ch2Path), 'utf8');
+        check('U3 快照內容等於建立當下的磁碟', snapCh2 === diskBeforeSnap, JSON.stringify(snapCh2.slice(-40)));
         // 選最新快照(清單第一項);dialog 內 flex 佈局,pre 可能攔截 — 用 evaluate 直擊
         await page.evaluate(() => { (document.querySelector('ul.w-56 li')).click(); });
         await page.waitForSelector('[data-testid=restore-file]');
@@ -358,34 +370,45 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         for (let i = 0; i < 6; i++) await page.keyboard.press('Backspace');
         await page.keyboard.press('Control+s');
         await page.waitForTimeout(600);
+        // 首點前的完整基準(磁碟+編輯器);編輯器以每行 .cm-line 用 LF 連接(textContent 無換行)
+        const diskBeforeFirst = read(ch2Path);
+        const LF = String.fromCharCode(10);
+        const editorText = () => page.$$eval('.cm-content .cm-line', els => els.map(e => e.textContent).join(String.fromCharCode(10)));
+        const editorBeforeFirst = await editorText();
         await page.click('[data-testid=open-versions]');
         await page.waitForSelector('text=建立快照');
         await page.evaluate(() => { (document.querySelector('ul.w-56 li')).click(); }); // 快照在清單中仍是最新(沒有新的)
         await page.waitForSelector('[data-testid=restore-file]');
         check('U3 還原此檔為主要按鈕', !!(await page.$('[data-testid=restore-file] .bg-primary, [data-testid=restore-file][class*=primary]')));
         check('U3 整批還原藏在「更多」下拉', !(await page.$('button:has-text("還原快照內全部檔案")')));
+        // 首點(只開確認區,不得改動)
         await page.click('[data-testid=restore-file]');
         await page.waitForSelector('[data-testid=restore-confirm]');
         const confirmTxt = await page.textContent('[data-testid=restore-confirm]');
         check('U3 確認區含快照時間與備份說明', confirmTxt.includes('快照') && confirmTxt.includes('自動備份'), confirmTxt);
-        // 存下還原前的磁碟/編輯器狀態(此時第二章磁碟被刪掉了新句)
-        const beforeCancel = read('manuscript/第二章.md');
+        check('U3 首點後磁碟未變', read(ch2Path) === diskBeforeFirst);
+        check('U3 首點後編輯器未變', (await editorText()) === editorBeforeFirst);
+        // 取消:磁碟與編輯器都精確未變
         await page.click('[data-testid=restore-confirm-cancel]');
         await page.waitForTimeout(300);
         check('U3 取消後未還原(無確認區)', !(await page.$('[data-testid=restore-confirm]')));
-        check('U3 取消後磁碟與編輯器未變', read('manuscript/第二章.md') === beforeCancel);
+        check('U3 取消後磁碟未變', read(ch2Path) === diskBeforeFirst);
+        check('U3 取消後編輯器未變', (await editorText()) === editorBeforeFirst);
+        // 確定還原:內容精確等於快照
         await page.click('[data-testid=restore-file]');
         await page.click('[data-testid=restore-confirm-go]');
         await page.waitForTimeout(1000);
         check('U3 確定後顯示已還原訊息', (await page.textContent('.max-w-5xl')).includes('已還原'));
-        // 確定後內容等於快照(快照含「還原前的新句」;刪句後的還原把它帶回)
-        check('U3 還原後磁碟等於快照內容(含新句)', read('manuscript/第二章.md').includes('還原前的新句'), JSON.stringify(read('manuscript/第二章.md').slice(-40)));
-        check('U3 編輯器也回到快照內容', (await page.textContent('.cm-content')).includes('還原前的新句'));
-        // 其他檔案未變(第一章此時為 fixture 原稿+staleGuard 已存的?第一章在 U4 還沒打字;以雜湊在 U3 開頭記下)
+        check('U3 還原後磁碟精確等於快照', read(ch2Path) === snapCh2, JSON.stringify(read(ch2Path).slice(-40)));
+        check('U3 還原後編輯器精確等於快照', (await editorText()) === snapCh2);
+        // 其他檔案未變
         check('U3 單檔還原時其他檔案未變', hash('manuscript/第一章.md') === hashCH1U3);
-        // before-restore 備份含還原前內容:清單第一項(最新)應為「還原前備份」,其第二章含刪句後的內容
+        // before-restore 備份:清單頂(最新)應為「還原前備份」,讀回核對其第二章內容 = 還原前磁碟
         const newestReason = await page.$$eval('ul.w-56 li', els => els[0].textContent);
         check('U3 before-restore 備份在清單頂', newestReason.includes('還原前備份'), newestReason);
+        const bakID = snapDir(); // 還原又建了新快照;最新一筆即還原前備份
+        const bakCh2 = fs.readFileSync(P('.perkins/snapshots/' + bakID + '/files/' + ch2Path), 'utf8');
+        check('U3 before-restore 備份內容等於還原前磁碟', bakCh2 === diskBeforeFirst, JSON.stringify(bakCh2.slice(-40)));
         await shot('21-u3-restore');
         await page.keyboard.press('Escape');
 
@@ -410,8 +433,18 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.waitForSelector('[data-testid=preview-direct]');
         await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
         const msgs4 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
-        check('U4 原始 messages 有【作者選取的段落】與當下選取全文',
-            msgs4.some(t => t.includes('【作者選取的段落】') && t.includes('雷恩點起營火。艾麗絲靠近火堆。')), `messages=${msgs4.length}`);
+        // 精確擷取【作者選取的段落】區塊本身(review-round4 E4):不能讓目前文件本文的雷恩句冒充選取
+        const selBlock4 = msgs4.map(t => {
+            const header = '【作者選取的段落】';
+            const i = t.indexOf(header);
+            if (i === -1) return null;
+            let after = t.slice(i + header.length);
+            if (after.startsWith('\n')) after = after.slice(1); // 標題後的換行
+            const end = after.indexOf('\n\n'); // 區塊以空行結尾(組訊息時加的)
+            return (end === -1 ? after : after.slice(0, end)).trim();
+        }).find(Boolean);
+        check('U4 原始 messages 有【作者選取的段落】且內容精確等於本次選取',
+            selBlock4 === '雷恩點起營火。艾麗絲靠近火堆。', `block=${JSON.stringify(selBlock4)}`);
         await page.keyboard.press('Escape');
         check('U4 未送出(無助手回覆)', !(await page.$('[data-testid=assistant-turn]')));
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
@@ -473,6 +506,28 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.keyboard.press('Escape');
         await page.waitForTimeout(250);
         await shot('24-u6-no-revive');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // U8(review-round4 E1):取消編輯器選取(未移除標籤、未開 AI)後,lastSel 也不得回填
+        // 選取私人筆記(不開 AI)→ 點別行取消選取 → 開 AI → messages 不含該段
+        await page.click('.cm-line:has-text("反派是雷恩的哥哥")');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Shift+End');
+        await page.waitForTimeout(300); // 等 onSelect 更新 lastSel
+        await page.click('.cm-line:has-text("私人筆記")'); // 點別行取消選取
+        await page.waitForTimeout(300);
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await page.waitForTimeout(400);
+        check('U8 取消選取後無回填(無選取標籤)', !(await page.$('[data-testid=chips] span:has-text("選取")')), await page.textContent('[data-testid=chips]'));
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
+        const msgs8 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
+        check('U8 原始 messages 不含已取消的私人筆記選取', !msgs8.some(t => t.includes('反派是雷恩的哥哥')), `messages=${msgs8.length}`);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(250);
+        await shot('27-u8-deselect-no-revive');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
         // U7(review-1a 第 2 點):長章名 —「仍要附加」與移除按鈕仍可見可點
