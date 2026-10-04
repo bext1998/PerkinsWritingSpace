@@ -7,11 +7,17 @@
 // 需要本機 LM Studio 與 Perkins 設定中已選好的模型(提案流程);需要 Microsoft Edge。
 // 注意:wails dev 使用真實的 %APPDATA%\Perkins\settings.json(書櫃清單會加入測試專案),必要時先備份。
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+// Notion 匯出 fixture:放在測試專案之外的暫存處,同一資料夾三頁,檔名帶 32 位 hex id
+// runtime 模式由 PROJ 推出;--fixture 模式由 dir 推出(兩者同層,同一個資料夾)。
+// 用 resolve 保證絕對路徑(Windows 後端不吃「\notion-export」這種相對路徑)
+let NOTION_SRC = path.resolve(path.dirname(process.env.PROJ || path.join(os.tmpdir(), 'perkins-e2e', 'proj')), 'notion-export');
 
 if (process.argv[2] === '--fixture') {
     const dir = process.argv[3];
+    NOTION_SRC = path.resolve(path.dirname(dir), 'notion-export');
     const w = (rel, s) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), {recursive: true}); fs.writeFileSync(path.join(dir, rel), s); };
     fs.rmSync(dir, {recursive: true, force: true});
     // 舊版單層 order:驗證升級後順序保留(B1)
@@ -24,12 +30,22 @@ if (process.argv[2] === '--fixture') {
     w('canon/雷恩.md', '# 雷恩\n\n隊長。\n');
     w('notes/私人.md', '私人筆記:反派是雷恩的哥哥。\n');
     w('outline/第二卷.md', '第二卷大綱:王都陷落。\n');
+    // Notion 匯出:同一資料夾(人物)三頁,檔名帶 32 位 hex id;放在測試專案之外的暫存處
+    const nid = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+    const ndir = path.join(path.dirname(dir), 'notion-export');
+    fs.rmSync(ndir, {recursive: true, force: true});
+    const wn = (rel, s) => { fs.mkdirSync(path.dirname(path.join(ndir, rel)), {recursive: true}); fs.writeFileSync(path.join(ndir, rel), s); };
+    wn('人物 ' + nid + '/艾莉絲 ' + nid + '.md', '# 艾莉絲\n\n年齡: 17\n\n怕黑。\n');
+    wn('人物 ' + nid + '/王都 ' + nid + '.md', '# 王都\n\n王國的首都。\n');
+    wn('人物 ' + nid + '/草稿 ' + nid + '.md', '# 草稿\n\n還沒想好。\n');
+    console.log('notion fixture ready:', ndir);
     console.log('fixture ready:', dir);
     process.exit(0);
 }
 
 const {chromium} = require('playwright-core');
 const PROJ = process.env.PROJ;
+// NOTION_SRC 已在 --fixture 分支前定義(同層 notion-export/)
 const SHOTS = path.join(__dirname, 'shots');
 fs.mkdirSync(SHOTS, {recursive: true});
 const P = rel => path.join(PROJ, ...rel.split('/'));
@@ -37,6 +53,15 @@ const read = rel => fs.readFileSync(P(rel), 'utf8');
 const hash = rel => crypto.createHash('sha256').update(fs.readFileSync(P(rel))).digest('hex');
 const results = [];
 const check = (name, ok, detail = '') => { results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+// E2E_SKIP_AI=1:本機模型吃大量記憶體時,跳過所有會向模型送出請求的步驟;
+// 被跳過的檢查印成「略過」,結尾統計「略過 N 項」,不算通過
+const SKIP_AI = process.env.E2E_SKIP_AI === '1';
+let skipped = 0;
+const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(E2E_SKIP_AI=1)'}); console.log(`SKIP ${name} (E2E_SKIP_AI=1)`); };
+const maybe = async (name, fn, detail = '') => {
+    if (SKIP_AI) { skip(name); return; }
+    check(name, await fn(), detail);
+};
 
 (async () => {
     const browser = await chromium.launch({executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true});
@@ -113,7 +138,18 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.keyboard.press('Escape');
         await shot('04-chat');
 
-        // 提案 → 部分採用
+        // 提案 → 部分採用(E2E_SKIP_AI=1 時整段跳過:不向模型送出請求)
+        let hasProposal = false;
+        if (SKIP_AI) {
+            skip('模型回覆完成');
+            skip('模型建立提案並顯示卡片');
+            skip('A1 提案顯示前稿件未被改動');
+            skip('編輯後提示將寫入作者版本');
+            skip('B4 接受後寫入作者編輯的版本');
+            skip('B4 provenance 記錄 authorEdited');
+            skip('編輯器重新載入為磁碟內容');
+            skip('接受提案前的自動快照在版本清單');
+        } else {
         const before = read(ch1);
         await page.fill('[data-testid=question]', '請使用 propose_patch 工具,把第一章的「天很黑。」改寫得更有畫面感。只改這一句,original 請逐字填「天很黑。」。');
         const t0 = Date.now();
@@ -123,7 +159,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.waitForSelector('[data-testid=send]', {timeout: 300000});
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         const chatErr = await page.$('[data-testid=chat-error]') ? await page.textContent('[data-testid=chat-error]') : '';
-        const hasProposal = !!(await page.$('[data-testid=proposal]'));
+        hasProposal = !!(await page.$('[data-testid=proposal]'));
         check('模型回覆完成', !chatErr, `${secs}s ${chatErr}`);
         check('模型建立提案並顯示卡片', hasProposal);
         check('A1 提案顯示前稿件未被改動', read(ch1) === before);
@@ -138,6 +174,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
             const prov = fs.readFileSync(path.join(PROJ, '.perkins', 'provenance.jsonl'), 'utf8');
             check('B4 provenance 記錄 authorEdited', prov.includes('"authorEdited":true'));
             check('編輯器重新載入為磁碟內容', (await page.textContent('.cm-content')).includes('夜色濃得化不開'));
+        }
         }
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
@@ -243,13 +280,58 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
+
+        // Notion 逐頁分類(SPEC §16 第 2 項):原生檔案對話框無法在無頭模式操作,覆寫 PickNotionExport 綁定
+        // (wailsjs 在呼叫當下才讀 window.go,所以可覆寫)
+        await page.evaluate(p => { window.go.main.App.PickNotionExport = async () => p; }, NOTION_SRC);
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=settings-page] button:has-text("選擇資料夾")');
+        await page.click('button:has-text("選擇資料夾")');
+        await page.waitForSelector('text=Notion 資料夾');
+        await page.waitForSelector('[data-testid=expand-人物]', {timeout: 5000});
+        await page.click('[data-testid=expand-人物]');
+        await page.waitForSelector('[data-testid=pages-人物]');
+        await shot('17-notion-pages');
+        // 三頁分別設:艾莉絲=跟隨資料夾(人物→角色)、王都=地點、草稿=略過
+        const setPage = async (name, target) => {
+            await page.click(`[data-testid=pages-人物] div:has(span:text-is("${name}")) button`);
+            await page.waitForSelector('[role=option]');
+            const opts = await page.$$('[role=option]');
+            for (const o of opts) {
+                if ((await o.textContent()).trim() === target) { await o.click(); break; }
+            }
+            await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        };
+        await setPage('王都', '地點');
+        await setPage('草稿', '略過');
+        await shot('18-notion-perpage');
+        check('N1 資料夾列顯示覆寫頁數', (await page.textContent('[data-testid=override-count-人物]')).includes('2 頁另行指定'));
+        const importBtnText = await page.textContent('button:has-text("匯入 ")');
+        check('N1 匯入頁數按逐頁結果計算', importBtnText.includes('匯入 2 頁'), importBtnText.trim());
+        const aliceBefore = hash('canon/艾莉絲.md');
+        await page.click('button:has-text("匯入 ")');
+        await page.waitForSelector('text=已匯入 1 個檔案', {timeout: 30000});
+        check('N1 匯入報告 1 個檔案、略過 1 個', (await page.textContent('[data-testid=settings-page]')).includes('略過 1 個'));
+        check('N1 王都 frontmatter 為地點', read('canon/王都.md').includes('type: 地點'), JSON.stringify(read('canon/王都.md').slice(0, 40)));
+        check('N1 草稿頁略過未匯入', !fs.existsSync(P('canon/草稿.md')));
+        check('N1 B9 同名頁未覆蓋既有艾莉絲', hash('canon/艾莉絲.md') === aliceBefore);
+        // 撤銷 → 檔案消失
+        await page.click('button:has-text("撤銷這次匯入")');
+        await page.waitForSelector('text=已撤銷這次匯入', {timeout: 10000});
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(500);
+        check('N1 撤銷後王都消失', !fs.existsSync(P('canon/王都.md')));
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
     check('頁面沒有 JavaScript 錯誤', errors.length === 0, errors.join(' | '));
     await browser.close();
-    const failed = results.filter(r => !r.ok);
-    console.log(`\n${results.length - failed.length}/${results.length} passed`);
+    const failed = results.filter(r => r.ok === false);
+    const passed = results.filter(r => r.ok === true);
+    const skippedN = results.filter(r => r.ok === null).length;
+    console.log(`\n${passed.length}/${passed.length + failed.length} passed,略過 ${skippedN} 項${SKIP_AI ? '(E2E_SKIP_AI=1)' : ''}`);
     process.exit(failed.length ? 1 : 0);
 })();

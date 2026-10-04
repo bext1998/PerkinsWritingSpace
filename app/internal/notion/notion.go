@@ -256,8 +256,10 @@ func targetDir(target string) (string, string, bool) {
 	return "", "", false
 }
 
-// Apply 依作者的選擇匯入。choices:群組 key → 去處。同名檔案一律略過並列入報告,絕不覆蓋(B9)。
-func Apply(p *project.Project, src string, choices map[string]string) (*Result, error) {
+// Apply 依作者的選擇匯入。choices:群組 key → 去處;pages:逐頁覆寫(頁面 File.Src → 去處,
+// 與群組同一套值),頁面有覆寫就用覆寫,否則用所屬群組的去處;key 不在掃描結果中時忽略。
+// 同名檔案一律略過並列入報告,絕不覆蓋(B9)。
+func Apply(p *project.Project, src string, choices map[string]string, pages map[string]string) (*Result, error) {
 	plan, err := Scan(src)
 	if err != nil {
 		return nil, err
@@ -268,11 +270,16 @@ func Apply(p *project.Project, src string, choices map[string]string) (*Result, 
 	}
 	res := &Result{ID: time.Now().Format("20060102-150405"), Created: []string{}, Skipped: []string{}}
 	for _, g := range plan.Groups {
-		dir, typ, ok := targetDir(choices[g.Key])
-		if !ok {
-			continue
-		}
 		for _, f := range g.Files {
+			// 逐頁覆寫優先;否則用所屬群組的去處
+			target := choices[g.Key]
+			if v, ok := pages[f.Src]; ok {
+				target = v
+			}
+			dir, typ, ok := targetDir(target)
+			if !ok {
+				continue
+			}
 			if f.Name == "" {
 				res.Skipped = append(res.Skipped, f.Src+" → 名稱無效")
 				continue

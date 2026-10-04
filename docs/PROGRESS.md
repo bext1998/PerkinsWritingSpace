@@ -1,5 +1,19 @@
 # PROGRESS.md
 
+## 2026-10-05 — Notion 匯入可逐頁分類
+
+完成 SPEC §16 第 2 項:同一資料夾裡的角色、地點、名詞可以分開歸類。
+
+- 後端:`notion.Apply` 新增第三參數 `pages map[string]string`(key = `File.Src`,value 與群組同一套值);頁面有覆寫就用覆寫,否則用所屬群組去處;key 不在掃描結果中時忽略。允許「群組略過、單頁指定類型」與「群組有類型、單頁略過」。`App.NotionApply(src, choices, pages)` 同步更新,wailsjs 綁定已重新生成。B9 不變:同名不覆蓋、匯入前快照、可撤銷。
+- Go 測試(`notion_test.go`):同資料夾三頁分別匯入角色/地點/略過、群組略過但單頁指定、群組有類型但單頁略過、不存在的 key 忽略。
+- 前端 `NotionImport.tsx`:資料夾列可展開(ChevronRight/Down),逐頁 Select 預設「跟隨資料夾(目前:X)」,清空回跟隨;覆寫頁數顯示「N 頁另行指定」;「匯入 N 頁」按逐頁結果計算(略過不算);展開區 max-h + 捲動。
+- E2E 新情境 N1:覆寫 `window.go.main.App.PickNotionExport`(wailsjs 呼叫當下才讀 window.go)繞過無頭模式無法操作的原生檔案對話框;fixture 在測試專案外建立 Notion 匯出(同資料夾三頁,檔名帶 32 位 hex id)。三頁分別跟隨(角色)/地點/略過 → 匯入 → 斷言王都 frontmatter 為地點、草稿不存在、同名艾莉絲未覆蓋、撤銷後王都消失。
+- E2E 新增 `E2E_SKIP_AI=1`(2026-10-05 作者回饋:本機模型吃大量記憶體):跳過所有向模型送出請求的步驟,被跳過的檢查印成「略過」,結尾統計「略過 N 項」,不算通過。
+- 踩坑記錄:`NOTION_SRC` 以 `path.dirname(PROJ)` 推導時,POSIX 風格路徑在 Windows 上會解析成 `
+otion-export`,Go 端報 `GetFileAttributesEx 
+otion-export` 錯;改用 `path.resolve` + 明確基準(fixture 模式取 dir 上層、runtime 模式取 PROJ 上層)。
+- 驗證:`go test ./...` 全過(含 4 個新測試);`npm run build` 通過;E2E **33/33 通過,略過 8 項(E2E_SKIP_AI=1:模型回覆完成、模型建立提案並顯示卡片、A1 提案顯示前稿件未被改動、編輯後提示將寫入作者版本、B4 接受後寫入作者編輯的版本、B4 provenance 記錄 authorEdited、編輯器重新載入為磁碟內容、接受提案前的自動快照在版本清單)**。截圖 `shots/18-notion-perpage.png` 已目視:展開列表、覆寫頁數、逐頁 Select 與匯入頁數均正常。
+
 ## 2026-09-30 — 版本差異標出行內改動的字
 
 「版本」對話框原本只能整行標紅/綠(中文一段一行,改一個字也整段標色)。`snapshot.LineDiff` 現在會把相鄰的刪除行與新增行配對,以字元 LCS 標出實際變動的字;共同字不到一半(整段改寫)或行太長時仍整行標色。提案卡片的原文/替換對照未改(替換是可編輯的輸入框)。Go 測試與 `tsc` 通過;**畫面未實機 render,請開「版本」看一次**。
