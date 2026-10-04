@@ -218,7 +218,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                                     {c.scenes!.map(s => (
                                                         <li key={s.line}
                                                             className="cursor-pointer truncate py-0.5 text-xs text-muted-foreground hover:text-foreground"
-                                                            onClick={() => openFile(c.path, s.line)}>
+                                                            onClick={e => { e.stopPropagation(); openFile(c.path, s.line); }}>
                                                             {s.title}
                                                         </li>
                                                     ))}
