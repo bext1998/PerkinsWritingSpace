@@ -102,6 +102,12 @@ type RootState = {error: Error | null; save: SaveState; saveMsg: string; rescue:
 export class RootBoundary extends React.Component<{children: React.ReactNode}, RootState> {
     state: RootState = {error: null, save: null, saveMsg: '', rescue: null, copied: 'none', confirming: false};
 
+    constructor(props: {children: React.ReactNode}) {
+        super(props);
+        // 開發模式:E2E 破壞驗證用 — 直接呼叫本元件方法(繞過 disabled 屬性仍被 handler 擋住的路徑)
+        if (import.meta.env.DEV) (window as any).__perkinsBoundary = this;
+    }
+
     static getDerivedStateFromError(error: Error): RootState {
         return {error, save: null, saveMsg: '', rescue: null, copied: 'none', confirming: false};
     }
@@ -129,7 +135,9 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
 
     copyAll = () => {
         const {rescue} = this.state;
-        if (!rescue || this.copying()) return; // 防重入:連按不啟動第二個 Promise
+        if (import.meta.env.DEV) (window as any).__perkinsCopyCalls = ((window as any).__perkinsCopyCalls ?? 0) + 1;
+        if (!rescue) return;
+        if (this.copying()) return; // 防重入:連按不啟動第二個 Promise
         this.setState({copied: 'copying'});
         navigator.clipboard.writeText(rescue.text).then(
             () => this.setState({copied: 'ok'}),
@@ -173,7 +181,7 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
                                   onFocus={e => e.currentTarget.select()}
                                   className="h-56 w-full whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-sm"/>
                         <div className="flex items-center gap-3">
-                            <Button size="sm" disabled={this.copying()} onClick={this.copyAll}>複製全文</Button>
+                            <Button size="sm" data-copy-main disabled={this.copying()} onClick={this.copyAll}>複製全文</Button>
                             {copied === 'ok' && <span className="text-sm text-success">已複製</span>}
                             {copied === 'failed' && <span className="text-sm text-destructive">複製失敗,請手動全選複製</span>}
                         </div>

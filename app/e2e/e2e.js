@@ -341,13 +341,18 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
             check('E4 放棄按鈕為次要樣式(ghost+destructive 色)', await page.$eval('[data-testid=reload-app]', el => el.classList.contains('text-destructive') && !el.classList.contains('bg-primary')));
             await shot('16-rescue');
 
-            // 受控剪貼簿:覆寫 writeText 為可控制的 Promise,驗證複製進行中無法重載(含確認段)
+            // 受控剪貼簿:覆寫 writeText 為可控制的 Promise(替身:記錄呼叫次數與捕捉到的文字,不寫真剪貼簿);
+            // 釋放時才以原始 writeText 寫入真剪貼簿
             await page.evaluate(() => {
-                window.__clipGate = {resolve: null};
+                const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+                window.__clipStubs = {calls: 0, texts: [], gate: null, orig};
                 navigator.clipboard.writeText = t => {
-                    window.__clipText = t;
-                    return new Promise(res => { window.__clipGate.resolve = res; });
+                    const s = window.__clipStubs;
+                    s.calls++;
+                    s.texts.push(t);
+                    return new Promise(res => { s.gate = res; });
                 };
+                window.__clipRelease = () => { const s = window.__clipStubs; const r = s.gate; s.gate = null; if (r) { s.calls--; return s.orig(s.texts[0]).then(r); } };
             });
             // 進入確認段後才複製:確認段的「確定放棄並重新載入」也應停用
             await page.click('[data-testid=reload-app]');
@@ -355,25 +360,39 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
             await page.click('button:has-text("複製全文")');
             await page.waitForTimeout(300);
             check('E4a 複製進行中確認段停用', !!(await page.$('[data-testid=confirm-abandon][disabled]')));
-            check('E4a 複製進行中確認按鈕點擊不重載', (await page.evaluate(() => { document.querySelector('[data-testid=confirm-abandon]').click(); return true; })) === true && !!(await page.$('[data-testid=root-error]')));
-            check('E4a 複製進行中複製按鈕停用', !!(await page.$('button:has-text("複製全文")[disabled]')));
-            // 連按複製:第二個呼叫不會啟動新 Promise
-            await page.evaluate(() => { window.__clipCalls = 0; const orig = navigator.clipboard.writeText; navigator.clipboard.writeText = t => { window.__clipCalls++; return orig(t); }; });
-            await page.$eval('button:has-text("複製全文")', el => el.disabled = false) && await page.click('button:has-text("複製全文")').catch(() => {});
+            // 確認段的確認按鈕在複製中停用,handler 也擋;點擊(含繞過 disabled)不得重載
+            await page.evaluate(() => document.querySelector('[data-testid=confirm-abandon]').click());
             await page.waitForTimeout(200);
-            await page.evaluate(() => window.__clipGate.resolve());
+            check('E4a 複製進行中確認按鈕點擊不重載', !!(await page.$('[data-testid=root-error]')));
+            check('E4a 複製進行中複製按鈕停用', !!(await page.$('button:has-text("複製全文")[disabled]')));
+            // 連按複製:防重入 — 兩層驗證:
+            // (1) handler 層:繞過 disabled 的 click 事件仍被 copying() 擋住(無防重入時 writeText 會被呼叫第二次)
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').disabled = false; });
+            await page.click('button[data-copy-main]').catch(() => {});
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').disabled = false; });
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); });
+            await page.waitForTimeout(300);
+            const calls = await page.evaluate(() => window.__clipStubs.calls);
+            const copyCalls = await page.evaluate(() => window.__perkinsCopyCalls ?? 0);
+            check('E4a 複製防重入:handler 層(繞過 disabled 的點擊也被擋)', calls === 1, `writeText=${calls} handlerCalls=${copyCalls}`);
+            // (2) 方法層:直接呼叫 copyAll 兩次(DEV 鉤),防重入存在時 stub 只收一筆
+            const stubCalls2 = await page.evaluate(() => { window.__perkinsBoundary.copyAll(); window.__perkinsBoundary.copyAll(); return window.__clipStubs.calls; });
+            check('E4a 複製防重入:直接呼叫 copyAll 兩次,writeText 仍只一筆', stubCalls2 === 1, `calls=${stubCalls2}`);
+            // 等待未解除時放棄按鈕(兩段)皆不可用
+            check('E4a 等待中第一段放棄不可用', !(await page.$('[data-testid=reload-app]')));
+            check('E4a 等待中確認段停用', !!(await page.$('[data-testid=confirm-abandon][disabled]')));
+            // 釋放 → 以原始 writeText 寫入真剪貼簿並解開等待
+            await page.evaluate(() => window.__clipRelease());
             await page.waitForSelector('text=已複製', {timeout: 5000});
-            check('E4a 釋放後顯示已複製', true);
-            check('E4a 複製防重入(第二個呼叫未改寫剪貼簿前不重置狀態)', true);
-            const clip2 = await page.evaluate(() => navigator.clipboard.readText());
-            check('E4a 受控複製內容等於未存原文', clip2.replace(/\r\n/g, '\n') === rescueText, `len=${clip2.length}`);
+            // 受控內容比對:用替身捕捉到的文字
+            const stubText = await page.evaluate(() => window.__clipStubs.texts[0]);
+            check('E4a 受控複製內容等於未存原文(替身捕捉)', stubText.replace(/\r\n/g, '\n') === rescueText, `len=${stubText.length}`);
             // 釋放後放棄恢復可用
             await page.click('[data-testid=cancel-abandon]');
             await page.waitForTimeout(200);
             check('E4a 釋放後放棄按鈕恢復可用', !(await page.$('[data-testid=reload-app][disabled]')));
             await page.click('[data-testid=reload-app]');
             await page.waitForSelector('[data-testid=confirm-abandon]');
-            check('E4a 釋放後可再次進入確認段', true);
             await page.click('[data-testid=cancel-abandon]');
             await page.waitForTimeout(200);
             // 回到正常兩段式放棄測試
