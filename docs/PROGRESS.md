@@ -2,7 +2,14 @@
 
 ## 2026-10-05 — 編輯器看得見的存檔按鈕
 
-完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。同日依審查意見修補三點(77d86f4 審查):
+完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。同日依審查意見修補三點(77d86f4 審查),再依第二輪複審(1f3ce46)重構存檔層:
+
+- **save() 改為單一序列化寫入迴圈**(1f3ce46 複審第 1 點):重複觸發(Ctrl+S/按鈕/自動存檔)回傳同一個 Promise,迴圈持續到畫面上的字全部落盤才結束;同時最多一個 SaveFile,忙碌狀態由這個迴圈的生命週期推導。修掉上一版「各 waiter 醒來後各自再啟動一筆寫入」的並行寫入缺陷(受控驗證曾達同時 3 筆)。踩過的坑:無事可存時若仍建立 IIFE,它會同步跑完,finally 先清 null、外層又把已結束的 Promise 指回 ref,之後每次 save() 都回傳過期 Promise、永遠不再寫入;已改為前置檢查 `current && dirty`,無事可存直接 resolve 不建立 Promise。
+- **openFile 防丟字**(複審第 2 點):`await save()` → ReadFile(目標) → 若等待期間又打字(dirty 再變 true)再 `await save()` 一次,然後才同步切換 setCurrent/setText/清 dirty。
+- **「已儲存」通知與狀態一致**(複審第 3 點):所有呼叫者等到畫面全文落盤才 resolve,saveNow 的通知不再有「僅舊版本已存、仍有新修改」的誤導。
+- E5 改寫:存檔延遲中輸入新字並連按 Ctrl+S 三次,斷言最終磁碟含全部文字、按鈕「已儲存」、`window.__perkinsSaveStats`(DEV 包住)記錄的 SaveFile 最大並行數為 1;延遲中點另一章,切換前在原章輸入的字(含存檔途中補的字)都在原章檔案、目標章逐位元組不變。45/45 兩輪通過。
+
+第一輪修補(77d86f4 審查):
 
 - **存檔途中輸入不會被誤標已儲存**(既有 bug):`save` 以 `editVersion` ref(每次 onChange/applyHeader 加 1)記錄版本,SaveFile 完成後只有檔案與版本都沒變才清 dirty;期間又有編輯時保留「未儲存」讓下次存檔處理新版本。E2E 新增 E5 回歸情境:開發模式專用 `window.__perkinsSaveDelay(ms)`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)延遲 SaveFile 1.5s,存檔途中輸入 B,完成後斷言按鈕仍為「儲存」、狀態列「未儲存」、磁碟只有 A,再存一次後磁碟含 A+B。
 - **in-flight 防重入**:`save` 用 `saveInFlight` ref 協調,重複觸發(Ctrl+S/按鈕/自動存檔)等同一請求結束、仍 dirty 才再存,不並行兩個 SaveFile;`saving` 由這個 ref 推導,最後一個請求結束才解除(先結束的請求不會提早結束忙碌)。E5 驗證存檔中再按 Ctrl+S 的最終狀態與磁碟內容。

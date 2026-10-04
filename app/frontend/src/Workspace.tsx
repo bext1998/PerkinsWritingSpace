@@ -34,6 +34,20 @@ const devSaveDelay = {ms: 0};
 
 if (import.meta.env.DEV) {
     (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
+    (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
+}
+
+// (DEV)SaveFile 包一層並行計數;正式建置時直接呼叫 SaveFile
+async function trackedSaveFile(path: string, text: string) {
+    if (!import.meta.env.DEV) return SaveFile(path, text);
+    const s = (window as any).__perkinsSaveStats;
+    s.inFlight++;
+    s.maxInFlight = Math.max(s.maxInFlight, s.inFlight);
+    try {
+        return await SaveFile(path, text);
+    } finally {
+        s.inFlight--;
+    }
 }
 
 interface Props {
@@ -110,41 +124,49 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 編輯版本計數:每次 onChange/applyHeader 加 1;存檔完成時版本沒變才清 dirty,
     // 存檔途中繼續打字不會被誤標為已儲存
     const editVersion = useRef(0);
-    // in-flight 存檔:防重入,重複觸發(Ctrl+S/按鈕/自動存檔)等同一請求結束,不並行兩個 SaveFile
+    // 單一序列化寫入迴圈:同時最多一個 SaveFile;重複觸發(Ctrl+S/按鈕/自動存檔)回傳同一個
+    // Promise,所有呼叫者等到畫面上的字全部落盤才 resolve,「已儲存」通知自然正確。
+    // 迴圈每輪記下當輪的 current+text 配對,切檔後以新的 latest 判斷,不會寫錯檔。
     const saveInFlight = useRef<Promise<void> | null>(null);
     const [saving, setSaving] = useState(false);
-    const save = useCallback(async () => {
-        if (saveInFlight.current) await saveInFlight.current.catch(() => {});
-        const doSave = async () => {
-            const {current, text, dirty} = latest.current;
-            if (!(current && dirty)) return;
-            const ver = editVersion.current;
-            if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
-            await SaveFile(current, text);
-            // 期間又有編輯(版本變了)或已切換檔案時,保留 dirty 讓下次存檔處理新版本
-            if (latest.current.current === current && editVersion.current === ver) {
-                latest.current = {...latest.current, dirty: false};
-                setDirty(false);
+    const save = useCallback((): Promise<void> => {
+        if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
+        // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
+        // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
+        if (!(latest.current.current && latest.current.dirty)) return Promise.resolve();
+        let run!: Promise<void>; // 閉包 finally 要比對自身;前置檢查保證 IIFE 先在 await 掛起,賦值必在 finally 前
+        run = (async () => {
+            setSaving(true);
+            try {
+                while (latest.current.current && latest.current.dirty) {
+                    const {current, text} = latest.current;
+                    const ver = editVersion.current;
+                    if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
+                    await trackedSaveFile(current, text);
+                    // 期間又有編輯(版本變了)或已切換檔案時,保留 dirty 讓下一輪存新版本
+                    if (latest.current.current === current && editVersion.current === ver) {
+                        latest.current = {...latest.current, dirty: false};
+                        setDirty(false);
+                    }
+                    refreshCounts();
+                    refreshIndex();
+                    if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
+                }
+            } finally {
+                if (saveInFlight.current === run) saveInFlight.current = null;
+                setSaving(false);
             }
-            refreshCounts();
-            refreshIndex();
-            if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
-        };
-        const p = doSave();
-        saveInFlight.current = p;
-        setSaving(true);
-        try {
-            await p;
-        } finally {
-            if (saveInFlight.current === p) saveInFlight.current = null;
-            setSaving(saveInFlight.current !== null); // 最後一個請求結束才解除
-        }
+        })();
+        saveInFlight.current = run;
+        return run;
     }, [refreshCounts, refreshIndex, refreshTree]);
 
     const openFile = useCallback(async (rel: string, line?: number) => {
         try {
             await save(); // 切換前自動存檔,避免遺失
             const content = await ReadFile(rel);
+            // ReadFile 等待期間若又有打字(dirty 變 true),先存完才切換,避免丟字
+            if (latest.current.dirty) await save();
             loaded.current = rel;
             setCurrent(rel);
             setText(content);

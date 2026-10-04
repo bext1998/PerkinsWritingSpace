@@ -267,49 +267,55 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         check('E3 存檔後按鈕變為「已儲存」且停用', btn2.includes('已儲存') && !!(await page.$('[data-testid=save-button][disabled]')), btn2.trim());
         await shot('14-save-button');
 
-        // 情境 5(回歸):存檔途中輸入不會被誤標已儲存;存檔中再觸發不並行寫入
-        // 需在開發模式(wails dev)下執行,__perkinsSaveDelay 只存在於 DEV 建置
-        if (await page.evaluate(() => typeof window.__perkinsSaveDelay === 'function')) {
+        // 情境 5(回歸):序列化存檔迴圈 — 存檔途中輸入並重複觸發,全部文字最終落盤,SaveFile 不並行
+        // 需在開發模式(wails dev)下執行,__perkinsSaveDelay/__perkinsSaveStats 只存在於 DEV 建置
+        if (await page.evaluate(() => typeof window.__perkinsSaveDelay === 'function' && typeof window.__perkinsSaveStats === 'object')) {
             await page.click('[data-testid=chapter-row]:has-text("第一章")');
             await page.waitForSelector('.cm-content');
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
             await page.keyboard.type('delayA');
             await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 5000});
-            await page.evaluate(() => window.__perkinsSaveDelay(1500));
+            await page.evaluate(() => window.__perkinsSaveDelay(500));
             await page.click('[data-testid=save-button]');
             await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")', {timeout: 5000});
-            // 存檔途中輸入 B
+            // 存檔途中輸入 B,並連按 Ctrl+S 兩次以上(重複觸發應等同一個序列化 Promise)
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
             await page.keyboard.type('delayB');
-            // 等第一次存檔結束(按鈕從「儲存中…」回到「儲存」,代表 dirty 未被誤清)
-            await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 10000});
+            await page.keyboard.press('Control+s');
+            await page.keyboard.press('Control+s');
+            await page.keyboard.press('Control+s');
+            // 迴圈會把新版本也存完,等按鈕進入「已儲存」停用
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 15000});
             const diskE5a = read('manuscript/第一章.md');
-            check('E5 存檔途中輸入後按鈕仍為「儲存」且未誤清 dirty', true);
-            check('E5 狀態列顯示未儲存', (await page.textContent('footer')).includes('未儲存'));
-            check('E5 第一次存檔只寫入 A(不含存檔中輸入的 B)', diskE5a.includes('delayA') && !diskE5a.includes('delayB'), JSON.stringify(diskE5a.slice(-50)));
-            // 再存一次 → A+B
-            await page.click('[data-testid=save-button]');
-            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
-            const diskE5b = read('manuscript/第一章.md');
-            check('E5 第二次存檔後磁碟含 A+B', diskE5b.includes('delayA') && diskE5b.includes('delayB'), JSON.stringify(diskE5b.slice(-50)));
-            // 存檔中再按 Ctrl+S:等同一請求、最後一個結束才解除忙碌
-            await page.click('.cm-content');
-            await page.keyboard.press('Control+End');
-            await page.keyboard.type('delayC');
+            check('E5 存檔途中輸入並連按 Ctrl+S 後磁碟含全部文字', diskE5a.includes('delayA') && diskE5a.includes('delayB'), JSON.stringify(diskE5a.slice(-50)));
+            check('E5 最終按鈕為「已儲存」', true);
+            const stats = await page.evaluate(() => ({...window.__perkinsSaveStats}));
+            check('E5 SaveFile 最大並行數為 1', stats.maxInFlight === 1, JSON.stringify(stats));
+            check('E5 最終狀態列顯示已儲存', (await page.textContent('footer')).includes('已儲存'));
+            await page.evaluate(() => window.__perkinsSaveDelay(0)); // 解除延遲
+
+            // 存檔延遲中點另一章:切換前在原章輸入的字最後都在原章檔案,目標章不混入
+            await page.keyboard.type('cutLateWord');
             await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 5000});
+            const ch2Before = read('manuscript/第二章.md');
             await page.evaluate(() => window.__perkinsSaveDelay(1200));
             await page.click('[data-testid=save-button]');
             await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")', {timeout: 5000});
-            await page.keyboard.press('Control+s'); // 存檔中重複觸發
-            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
-            const diskE5c = read('manuscript/第一章.md');
-            check('E5 存檔中再按 Ctrl+S 後磁碟含 C 且無重複寫入錯誤', diskE5c.includes('delayC'), JSON.stringify(diskE5c.slice(-50)));
-            check('E5 最終狀態列顯示已儲存', (await page.textContent('footer')).includes('已儲存'));
-            await page.evaluate(() => window.__perkinsSaveDelay(0)); // 解除延遲
+            await page.click('.cm-content'); // 回編輯器,在存檔途中再補一個字
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('X');
+            await page.click('[data-testid=chapter-row]:has-text("第二章")'); // openFile 等存檔迴圈結束才切換
+            await page.waitForSelector('.cm-line:has-text("天亮了")', {timeout: 15000});
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 15000});
+            const ch1After = read('manuscript/第一章.md');
+            check('E5 切章前原章輸入的字都在原章檔案', ch1After.includes('delayA') && ch1After.includes('delayB') && ch1After.includes('cutLateWordX'), JSON.stringify(ch1After.slice(-60)));
+            check('E5 目標章未混入原章文字', read('manuscript/第二章.md') === ch2Before);
+            check('E5 切章後 SaveFile 最大並行數仍為 1', (await page.evaluate(() => window.__perkinsSaveStats.maxInFlight)) === 1);
+            await page.evaluate(() => window.__perkinsSaveDelay(0));
         } else {
-            check('E5 開發模式延遲掛鉤存在', false, 'window.__perkinsSaveDelay 不存在(需以 wails dev 開發模式執行)');
+            check('E5 開發模式延遲掛鉤存在', false, 'window.__perkinsSaveDelay / __perkinsSaveStats 不存在(需以 wails dev 開發模式執行)');
         }
     } catch (e) {
         check('執行中斷', false, e.message);
