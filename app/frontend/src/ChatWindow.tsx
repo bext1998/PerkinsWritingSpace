@@ -44,6 +44,8 @@ interface Props {
     onPending: (n: number) => void;
     pending: number;
     notify: (t: Toast) => void;
+    onPickSelection?: () => void; // 開啟對話框前讀取編輯器當下的選取(§16 第 1 項 04)
+    lastSel?: {sel: {text: string}; from: string | null} | null; // 最後一次的非空選取與來源(02)
 }
 
 interface ChatEvent {
@@ -62,12 +64,14 @@ interface Turn {
 
 const KIND_LABEL: Record<string, string> = {canon: '設定', outline: '大綱', notes: '筆記', manuscript: '章節'};
 
-function Chip({children, onRemove, dashed, onClick, className, title}: {
-    children: React.ReactNode; onRemove?: () => void; dashed?: boolean; onClick?: () => void; className?: string; title?: string;
+function Chip({children, onRemove, dashed, onClick, className, title, warning}: {
+    children: React.ReactNode; onRemove?: () => void; dashed?: boolean; onClick?: () => void; className?: string; title?: string; warning?: boolean;
 }) {
     return (
         <span title={title} onClick={onClick}
-              className={cn('inline-flex max-w-[12rem] items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]',
+              className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]',
+                  warning ? 'max-w-[16rem]' : 'max-w-[12rem]',
+                  warning ? 'border-warning/50 bg-warning/10 text-warning' :
                   dashed ? 'cursor-pointer border-dashed text-muted-foreground hover:border-primary hover:text-primary' : 'bg-secondary',
                   className)}>
             <span className="truncate">{children}</span>
@@ -81,7 +85,7 @@ function Chip({children, onRemove, dashed, onClick, className, title}: {
 }
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onPending, pending, notify} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onPending, pending, notify, onPickSelection, lastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -89,6 +93,9 @@ export default function ChatWindow(props: Props) {
     const [attach, setAttach] = useState<string[]>([]);
     const [withDoc, setWithDoc] = useState(true);
     const [sel, setSel] = useState<string | null>(null);
+    // 選取來源(§16 第 1 項 02):記住選取來自哪個檔案;切章後來源≠目前文件時警示,送出預設不附加
+    const [selFrom, setSelFrom] = useState<string | null>(null);
+    const [keepSel, setKeepSel] = useState(false); // 作者明確點「仍要附加」後為 true
     const [mode, setMode] = useState<'' | 'report'>('');
     const [prior, setPrior] = useState(false);
     const [suggest, setSuggest] = useState<string[]>([]);
@@ -117,7 +124,11 @@ export default function ChatWindow(props: Props) {
         if (!request) return;
         if (request.question !== undefined) setQuestion(request.question);
         setMode(request.mode ?? '');
-        if (request.selection !== undefined) setSel(request.selection);
+        if (request.selection !== undefined) {
+            setSel(request.selection);
+            setSelFrom(doc); // 帶入選取時記下來源(此時的 doc 就是選取來源)
+            setKeepSel(false);
+        }
         if (request.attach?.length) setAttach(a => [...new Set([...a, ...request.attach!])]);
         if (request.priorSummaries) setPrior(true);
         setTimeout(() => input.current?.focus(), 50);
@@ -151,6 +162,25 @@ export default function ChatWindow(props: Props) {
 
     useEffect(() => { bottom.current?.scrollIntoView({block: 'end'}); }, [turns, proposals.length]);
 
+    // 開啟對話框時,把編輯器當下的選取帶入(§16 第 1 項 04;chat-fab 已透過 onPickSelection 讀取);
+    // 選取來自哪個檔案由帶入當下的 doc 記錄。
+    useEffect(() => {
+        if (!open) return;
+        const s = selection as {text?: string} | null;
+        if (s?.text) {
+            setSel(s.text);
+            setSelFrom(doc); // 當下選取來自目前文件
+            setKeepSel(false);
+        } else if (!sel && lastSel?.sel?.text) {
+            // 編輯器當下沒有選取,但之前選過(可能已在別章):帶入並記來源
+            setSel(lastSel.sel.text);
+            setSelFrom(lastSel.from);
+            setKeepSel(false);
+        }
+        // 只在 open 變化時帶入;之後由使用者清除或右鍵重新帶入
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
+
     // 建議附加:選取段落(沒有選取時為目前章節)中出現的設定實體。只是建議,作者點選才附加。
     useEffect(() => {
         if (!open) return;
@@ -160,10 +190,14 @@ export default function ChatWindow(props: Props) {
         return () => clearTimeout(id);
     }, [open, sel, docText, withDoc, isChapter]);
 
+    // 送出的選取:來源不是目前文件時,除非作者明確點「仍要附加」,預設不送出
+    const selStale = !!sel && !!selFrom && selFrom !== doc;
+    const selSent = sel && !selStale ? sel : sel && keepSel ? sel : null;
+
     const params = () => new agent.AskParams({
         question,
         doc: withDoc && doc ? doc : '',
-        selection: sel ?? '',
+        selection: selSent ?? '',
         attachments: attach,
         mode,
         priorSummaries: prior && withDoc && isChapter,
@@ -267,7 +301,7 @@ export default function ChatWindow(props: Props) {
             {!open && (
                 <button data-testid="chat-fab"
                         className="fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl transition-transform hover:scale-105"
-                        onClick={() => setOpen(true)} title="AI 助手">
+                        onClick={() => { onPickSelection?.(); setOpen(true); }} title="AI 助手">
                     <MessageCircle className="h-6 w-6"/>
                     {(pending > 0 || busy) && (
                         <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white">
@@ -384,7 +418,19 @@ export default function ChatWindow(props: Props) {
                         {doc && (withDoc
                             ? <Chip onRemove={() => setWithDoc(false)} title={doc}><FileText className="mr-0.5 inline h-3 w-3"/>目前:{baseName(doc)}</Chip>
                             : <Chip dashed onClick={() => setWithDoc(true)}><Plus className="inline h-3 w-3"/>目前文件</Chip>)}
-                        {sel && <Chip onRemove={() => setSel(null)}><TextSelect className="mr-0.5 inline h-3 w-3"/>選取 {sel.length} 字</Chip>}
+                        {sel && (selStale ? (
+                            // 來源不是目前文件:警示色 + 來源名 + 移除;預設不送出,點「仍要附加」才送
+                            <Chip warning onRemove={() => { setSel(null); setSelFrom(null); setKeepSel(false); }}
+                                  title={`這段選取來自「${titleOf(selFrom!)}」,不是目前開啟的檔案;送出時預設不附加`}>
+                                <TextSelect className="mr-0.5 inline h-3 w-3"/>
+                                選取 {sel.length} 字(來自〈{titleOf(selFrom!)}〉)
+                                {keepSel
+                                    ? <span className="ml-1 text-warning">仍要附加</span>
+                                    : <button className="ml-1 underline underline-offset-2 hover:text-foreground" data-testid="keep-sel"
+                                              onMouseDown={e => e.stopPropagation()}
+                                              onClick={() => setKeepSel(true)}>仍要附加</button>}
+                            </Chip>
+                        ) : <Chip onRemove={() => { setSel(null); setSelFrom(null); }}><TextSelect className="mr-0.5 inline h-3 w-3"/>選取 {sel.length} 字</Chip>)}
                         {isChapter && withDoc && (prior
                             ? <Chip onRemove={() => setPrior(false)}><ScrollText className="mr-0.5 inline h-3 w-3"/>前情摘要</Chip>
                             : <Chip dashed onClick={() => setPrior(true)}><Plus className="inline h-3 w-3"/>前情摘要</Chip>)}
@@ -465,9 +511,9 @@ export default function ChatWindow(props: Props) {
                         </Popover>
 
                         <div className="flex-1"/>
-                        <Tip label="預覽將送出的內容" side="top">
-                            <Button variant="ghost" size="iconSm" onClick={showPreview} data-testid="preview-btn"><Eye/></Button>
-                        </Tip>
+                        {/* 送出內容預覽(§16 第 1 項 07):可見文字按鈕,不用眼睛圖示 */}
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground" onClick={showPreview}
+                                data-testid="preview-btn"><Eye/>送出內容</Button>
                         {busy
                             ? <Button size="sm" variant="secondary" className="h-8" onClick={() => CancelAsk()}><Square className="!size-3"/>停止</Button>
                             : <Button size="sm" className="h-8" onClick={send} disabled={!question.trim()} data-testid="send"><SendHorizontal/>送出</Button>}
@@ -479,10 +525,10 @@ export default function ChatWindow(props: Props) {
             <Dialog open={!!preview} onOpenChange={o => !o && setPreview(null)}>
                 <DialogContent className="flex max-h-[85vh] max-w-3xl flex-col">
                     <DialogHeader>
-                        <DialogTitle>將送往模型的內容</DialogTitle>
+                        <DialogTitle>送出內容</DialogTitle>
                         <DialogDescription>
-                            這就是 AI 會看到的全部內容(另外 AI 可以用工具讀取稿件與摘要)。
                             估計約 {preview?.tokens.toLocaleString()} tokens{preview?.budget ? `,模型上限 ${preview.budget.toLocaleString()}` : ''}。
+                            端點:{profile ? (profile.remote ? '雲端(內容會離開這台電腦)' : '本機') : '未選擇'}。
                         </DialogDescription>
                     </DialogHeader>
                     {preview?.over && (
@@ -491,12 +537,39 @@ export default function ChatWindow(props: Props) {
                         </p>
                     )}
                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" data-testid="preview">
-                        {preview?.messages.map((m, i) => (
-                            <div key={i} className="rounded-md border">
-                                <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">{m.role}</div>
-                                <pre className="whitespace-pre-wrap p-2 font-sans text-xs leading-relaxed">{m.content}</pre>
+                        {/* 兩區分列(§16 第 1 項 07):本次直接送出 vs AI 工具可讀取範圍 */}
+                        <div className="rounded-md border" data-testid="preview-direct">
+                            <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">本次直接送出</div>
+                            <div className="space-y-1 p-2 text-xs">
+                                {withDoc && doc && <p>· 目前文件:{titleOf(doc)}(全文)</p>}
+                                {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
+                                {!withDoc && <p className="text-muted-foreground">· 目前文件:未附加</p>}
+                                {!selSent && sel && <p className="text-warning">· 選取:未附加(來自〈{titleOf(selFrom!)}〉,與目前文件不同)</p>}
+                                {attach.map(a => <p key={a}>· 附加設定/檔案:{titleOf(a)}(全文)</p>)}
+                                {prior && withDoc && isChapter && <p>· 前情摘要:本章之前的章節摘要</p>}
+                                <p>· 你的問題:{question || '(尚未輸入)'}</p>
+                                {mode === 'report' && <p>· 檢查報告模式:本次不含提案工具</p>}
                             </div>
-                        ))}
+                        </div>
+                        <div className="rounded-md border" data-testid="preview-tools">
+                            <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
+                            <div className="p-2 text-xs text-muted-foreground">
+                                · manuscript/ 全部章節、summaries/ 已確認的章節摘要
+                                · canon/ 設定:只有你點選附加的檔案
+                            </div>
+                        </div>
+                        {/* 完整原始訊息放在可展開區 */}
+                        <details className="rounded-md border">
+                            <summary className="cursor-pointer px-2 py-1 text-[11px] font-semibold text-muted-foreground">原始訊息(完整)</summary>
+                            <div className="p-2 pt-0">
+                                {preview?.messages.map((m, i) => (
+                                    <div key={i} className="mt-2 rounded-md border">
+                                        <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">{m.role}</div>
+                                        <pre className="whitespace-pre-wrap p-2 font-sans text-xs leading-relaxed">{m.content}</pre>
+                                    </div>
+                                ))}
+                            </div>
+                        </details>
                     </div>
                 </DialogContent>
             </Dialog>

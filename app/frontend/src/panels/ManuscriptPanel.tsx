@@ -143,12 +143,6 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                     <span className="ml-2 font-normal opacity-70">{done}/{v.chapters.length} 章 · {words.toLocaleString()} 字</span>
                                 </span>
                             )}
-                            <Tip label="新增章節" side="top">
-                                <Button variant="ghost" size="iconSm" className="opacity-0 group-hover:opacity-100" data-testid={`add-chapter-${vi}`}
-                                        onClick={() => { setAdding(vi); setInput(''); setCollapsed(c => ({...c, [vi]: false})); }}>
-                                    <Plus/>
-                                </Button>
-                            </Tip>
                             <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="iconSm" className="opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100"><MoreHorizontal/></Button>
@@ -232,13 +226,22 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                 )}
                             </ul>
                         )}
-                        {adding === vi && (
-                            <form className="mx-2 mb-1 pl-7" onSubmit={e => { e.preventDefault(); addChapter(vi); }}>
+                        {adding === vi ? (
+                            <form className="mx-2 mb-1 flex items-center gap-1 pl-7" onSubmit={e => { e.preventDefault(); addChapter(vi); }}>
                                 <Input autoFocus className="h-8 text-sm" placeholder="章節名稱,Enter 建立" value={input} data-testid="chapter-name"
                                        onChange={e => setInput(e.target.value)}
-                                       onBlur={() => { if (!input.trim()) setAdding(null); }}
-                                       onKeyDown={e => { if (e.key === 'Escape') setAdding(null); }}/>
+                                       onKeyDown={e => { if (e.key === 'Escape') { setAdding(null); setInput(''); } }}/>
+                                <Button size="sm" className="h-8 shrink-0" data-testid="chapter-create" disabled={!input.trim()}>建立</Button>
+                                <Button size="sm" variant="ghost" className="h-8 shrink-0" data-testid="chapter-cancel"
+                                        type="button" onClick={() => { setAdding(null); setInput(''); }}>取消</Button>
                             </form>
+                        ) : (
+                            /* 常駐的新章入口(不需 hover);卷選單內仍保留「新增章節」 */
+                            <button className="mx-2 mt-0.5 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md py-1.5 pl-7 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                                    data-testid={`add-chapter-${vi}`}
+                                    onClick={() => { setAdding(vi); setInput(''); setCollapsed(c => ({...c, [vi]: false})); }}>
+                                <Plus className="h-3.5 w-3.5"/>新增章節
+                            </button>
                         )}
                     </div>
                 );

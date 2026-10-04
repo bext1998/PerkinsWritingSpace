@@ -36,7 +36,11 @@ const P = rel => path.join(PROJ, ...rel.split('/'));
 const read = rel => fs.readFileSync(P(rel), 'utf8');
 const hash = rel => crypto.createHash('sha256').update(fs.readFileSync(P(rel))).digest('hex');
 const results = [];
-const check = (name, ok, detail = '') => { results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+const check = (name, ok, detail = '') => { ok = !!ok; results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+// E2E_SKIP_AI=1:跳過所有向模型送出請求的步驟;被跳過的檢查印成「略過」,結尾統計,不算通過
+const SKIP_AI = process.env.E2E_SKIP_AI === '1';
+let skipped = 0;
+const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(E2E_SKIP_AI=1)'}); console.log(`SKIP ${name} (E2E_SKIP_AI=1)`); };
 
 (async () => {
     const browser = await chromium.launch({executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true});
@@ -113,7 +117,18 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.keyboard.press('Escape');
         await shot('04-chat');
 
-        // 提案 → 部分採用
+        // 提案 → 部分採用(E2E_SKIP_AI=1 時整段跳過:不向模型送出請求)
+        let hasProposal = false;
+        if (SKIP_AI) {
+            skip('模型回覆完成');
+            skip('模型建立提案並顯示卡片');
+            skip('A1 提案顯示前稿件未被改動');
+            skip('編輯後提示將寫入作者版本');
+            skip('B4 接受後寫入作者編輯的版本');
+            skip('B4 provenance 記錄 authorEdited');
+            skip('編輯器重新載入為磁碟內容');
+            skip('接受提案前的自動快照在版本清單');
+        } else {
         const before = read(ch1);
         await page.fill('[data-testid=question]', '請使用 propose_patch 工具,把第一章的「天很黑。」改寫得更有畫面感。只改這一句,original 請逐字填「天很黑。」。');
         const t0 = Date.now();
@@ -123,7 +138,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.waitForSelector('[data-testid=send]', {timeout: 300000});
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         const chatErr = await page.$('[data-testid=chat-error]') ? await page.textContent('[data-testid=chat-error]') : '';
-        const hasProposal = !!(await page.$('[data-testid=proposal]'));
+        hasProposal = !!(await page.$('[data-testid=proposal]'));
         check('模型回覆完成', !chatErr, `${secs}s ${chatErr}`);
         check('模型建立提案並顯示卡片', hasProposal);
         check('A1 提案顯示前稿件未被改動', read(ch1) === before);
@@ -138,6 +153,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
             const prov = fs.readFileSync(path.join(PROJ, '.perkins', 'provenance.jsonl'), 'utf8');
             check('B4 provenance 記錄 authorEdited', prov.includes('"authorEdited":true'));
             check('編輯器重新載入為磁碟內容', (await page.textContent('.cm-content')).includes('夜色濃得化不開'));
+        }
         }
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
@@ -238,18 +254,145 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('text=我的書櫃');
+        // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
+        await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await shot('13-bookshelf');
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
+
+        // ===== 介面打磨第一批(§16 第 1 項,01/02/03/04/07) =====
+        // U1(01):每卷底部常駐「新增章節」→ 輸入框 + 建立/取消
+        await page.click('[data-testid=add-chapter-0]');
+        await page.waitForSelector('[data-testid=chapter-name]');
+        await page.fill('[data-testid=chapter-name]', '');
+        check('U1 建立鈕在名稱空白時停用', !!(await page.$('[data-testid=chapter-create][disabled]')));
+        // 取消:輸入框消失
+        await page.click('[data-testid=chapter-cancel]');
+        await page.waitForTimeout(200);
+        check('U1 取消後輸入框消失', !(await page.$('[data-testid=chapter-name]')));
+        await page.click('[data-testid=add-chapter-0]');
+        await page.fill('[data-testid=chapter-name]', '打磨測試章');
+        await page.click('[data-testid=chapter-create]');
+        await page.waitForSelector('.cm-content:has-text("打磨測試章")', {timeout: 10000});
+        check('U1 建立後新章出現並開啟', true);
+        await shot('20-u1-new-chapter');
+
+        // U2(02):章 A 選取 → 切到章 B → 開 AI 視窗 → 標籤顯示來源 A、預設不附加(以送出內容預覽驗證)
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+        await page.click('.cm-line:has-text("艾莉絲走進森林")');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Shift+End'); // 選取整行
+        await page.click('[data-testid=chapter-row]:has-text("第二章")');
+        await page.waitForSelector('.cm-line:has-text("天亮了")');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const staleChip = await page.textContent('[data-testid=chips]');
+        check('U2 標籤顯示選取來源為第一章', staleChip.includes('來自〈第一章〉'), staleChip);
+        check('U2 警示色標籤', !!(await page.$('[data-testid=chips] .border-warning, [data-testid=chips] [class*=warning]')));
+        // 送出內容預覽:直接送出區不應含第一章的選取
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        const direct = await page.textContent('[data-testid=preview-direct]');
+        check('U2 預設不送出舊選取(預覽無第一章選取段)', !direct.includes('艾莉絲走進森林。天很黑。她很害怕。'), direct);
+        check('U2 預覽標示選取未附加', direct.includes('未附加'), direct);
+        await page.keyboard.press('Escape');
+        // 點「仍要附加」→ 預覽改含選取
+        await page.click('[data-testid=keep-sel]');
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        const direct2 = await page.textContent('[data-testid=preview-direct]');
+        check('U2 明確點仍要附加後才送出', direct2.includes('艾莉絲走進森林。天很黑。她很害怕。'), direct2);
+        await page.keyboard.press('Escape');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // U3(03):還原分層 — 主要「還原此檔」需確認,取消不還原,確定後還原
+        // 先改稿:在第二章末尾打字(快照前的內容與目前不同,這樣 diff 才有差異、還原鈕可用)
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('還原前的新句');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(600);
+        await page.click('[data-testid=open-versions]');
+        await page.waitForSelector('text=建立快照');
+        await page.click('button:has-text("建立快照")');
+        await page.waitForTimeout(800); // 等快照完成
+        // 選最新快照(清單第一項);dialog 內 flex 佈局,pre 可能攔截 — 用 evaluate 直擊
+        await page.evaluate(() => { (document.querySelector('ul.w-56 li')).click(); });
+        await page.waitForSelector('[data-testid=restore-file]');
+        // 再改稿:關 dialog → 刪掉剛打的字(讓目前與快照有差異)→ 重開 dialog
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        for (let i = 0; i < 6; i++) await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(600);
+        await page.click('[data-testid=open-versions]');
+        await page.waitForSelector('text=建立快照');
+        await page.evaluate(() => { (document.querySelector('ul.w-56 li')).click(); }); // 快照在清單中仍是最新(沒有新的)
+        await page.waitForSelector('[data-testid=restore-file]');
+        check('U3 還原此檔為主要按鈕', !!(await page.$('[data-testid=restore-file] .bg-primary, [data-testid=restore-file][class*=primary]')));
+        check('U3 整批還原藏在「更多」下拉', !(await page.$('button:has-text("還原快照內全部檔案")')));
+        await page.click('[data-testid=restore-file]');
+        await page.waitForSelector('[data-testid=restore-confirm]');
+        const confirmTxt = await page.textContent('[data-testid=restore-confirm]');
+        check('U3 確認區含快照時間與備份說明', confirmTxt.includes('快照') && confirmTxt.includes('自動備份'), confirmTxt);
+        await page.click('[data-testid=restore-confirm-cancel]');
+        await page.waitForTimeout(300);
+        check('U3 取消後未還原(無確認區)', !(await page.$('[data-testid=restore-confirm]')));
+        await page.click('[data-testid=restore-file]');
+        await page.click('[data-testid=restore-confirm-go]');
+        await page.waitForTimeout(1000);
+        check('U3 確定後顯示已還原訊息', (await page.textContent('.max-w-5xl')).includes('已還原'));
+        await shot('21-u3-restore');
+        await page.keyboard.press('Escape');
+
+        // U4(04):選取後浮動列出現;點「詢問這段」帶入選取開啟 AI 視窗(不送出)
+        await page.keyboard.press('Escape'); // 關版本 dialog
+        await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+        await page.click('.cm-line:has-text("艾莉絲走進森林")');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Shift+End');
+        await page.waitForSelector('[data-testid=selection-bar]');
+        check('U4 選取後浮動列出現', true);
+        await shot('22-u4-selection-bar');
+        await page.click('[data-testid=selection-ask]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const chip4 = await page.textContent('[data-testid=chips]');
+        check('U4 帶入當下選取(標籤選取 N 字,無來源警示)', chip4.includes('選取') && !chip4.includes('來自'), chip4);
+        check('U4 未送出(無助手回覆)', !(await page.$('[data-testid=assistant-turn]')));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // U5(07):預覽按鈕可見文字;兩區內容正確
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await page.fill('[data-testid=question]', '測試問題');
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        check('U5 兩區分列(直接送出+工具可讀範圍)', !!(await page.$('[data-testid=preview-direct]')) && !!(await page.$('[data-testid=preview-tools]')));
+        const toolsTxt = await page.textContent('[data-testid=preview-tools]');
+        check('U5 工具區標示 manuscript/canon 範圍', toolsTxt.includes('manuscript') && toolsTxt.includes('canon'), toolsTxt);
+        const direct5 = await page.textContent('[data-testid=preview-direct]');
+        check('U5 直接送出區含目前文件與問題', direct5.includes('目前文件') && direct5.includes('測試問題'), direct5);
+        const dlg = await page.textContent('[role=dialog]');
+        check('U5 預覽標示端點位置', dlg.includes('本機') || dlg.includes('雲端'), dlg.slice(0, 120));
+        check('U5 原始訊息在可展開區', !!(await page.$('[role=dialog] details')));
+        await shot('23-u5-preview');
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
     check('頁面沒有 JavaScript 錯誤', errors.length === 0, errors.join(' | '));
     await browser.close();
-    const failed = results.filter(r => !r.ok);
-    console.log(`\n${results.length - failed.length}/${results.length} passed`);
+    const failed = results.filter(r => r.ok === false);
+    const passed = results.filter(r => r.ok === true);
+    const skippedN = results.filter(r => r.ok === null).length;
+    console.log(`
+${passed.length}/${passed.length + failed.length} passed,略過 ${skippedN} 項${SKIP_AI ? '(E2E_SKIP_AI=1)' : ''}`);
     process.exit(failed.length ? 1 : 0);
 })();

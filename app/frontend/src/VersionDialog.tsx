@@ -4,7 +4,7 @@ import {ListSnapshots, RestoreSnapshot, SnapshotDiff, TakeSnapshot} from '../wai
 import {snapshot} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/basic';
-import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle} from '@/components/ui/overlay';
+import {Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger} from '@/components/ui/overlay';
 import {cn, errText} from '@/lib/utils';
 
 interface Props {
@@ -22,6 +22,8 @@ const reasonText: Record<string, string> = {
     'before-import': 'Notion 匯入前',
 };
 
+const titleOf = (p: string) => p.split('/').pop()?.replace(/\.md$/, '') ?? p;
+
 export default function VersionDialog({open, onOpenChange, current, saveFirst, onRestored}: Props) {
     const [list, setList] = useState<snapshot.Meta[]>([]);
     const [label, setLabel] = useState('');
@@ -30,6 +32,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
     const [diff, setDiff] = useState<snapshot.DiffLine[] | null>(null);
     const [msg, setMsg] = useState('');
     const [error, setError] = useState('');
+    const [confirm, setConfirm] = useState<{files: string[]} | null>(null); // 還原前的原地確認(§16 第 1 項 03)
 
     const fail = (e: unknown) => setError(errText(e));
     const refresh = () => ListSnapshots().then(setList).catch(fail);
@@ -59,6 +62,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
     const pick = (m: snapshot.Meta) => {
         setSel(m);
         setDiff(null);
+        setConfirm(null);
         const f = m.files?.includes(current ?? '') ? current : m.files?.[0] ?? null;
         setFile(f);
         if (f) showDiff(m, f);
@@ -109,7 +113,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                     {sel.files?.map(f => (
                                         <button key={f} onClick={() => showDiff(sel, f)}
                                                 className={cn('rounded border px-2 py-0.5 text-[11px]', f === file ? 'border-primary text-primary' : 'text-muted-foreground hover:text-foreground')}>
-                                            {f.split('/').pop()?.replace(/\.md$/, '')}
+                                            {titleOf(f)}
                                         </button>
                                     ))}
                                 </div>
@@ -117,9 +121,37 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                     <>
                                         <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
                                             <span className="flex-1">{changed ? '紅色 = 快照中有、目前沒有;綠色 = 目前新增' : '此檔與快照相同'}</span>
-                                            <Button size="sm" variant="outline" className="h-7" disabled={!changed} onClick={() => restore([file])}><RotateCcw/>還原此檔</Button>
-                                            <Button size="sm" variant="outline" className="h-7" onClick={() => restore([])}>還原快照內全部檔案</Button>
+                                            {/* 還原此檔 = 主要;整批還原 = 次要「更多」下拉(§16 第 1 項 03) */}
+                                            <Button size="sm" className="h-7" disabled={!changed}
+                                                    data-testid="restore-file" onClick={() => setConfirm({files: [file]})}><RotateCcw/>還原此檔</Button>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button size="sm" variant="ghost" className="h-7 text-muted-foreground" data-testid="restore-more">更多…</Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem onSelect={() => setConfirm({files: []})}>還原快照內全部檔案({sel.files?.length ?? 0} 個)</DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </div>
+                                        {confirm && (
+                                            /* 原地確認:範圍、時間、備份說明 */
+                                            <div className="mb-2 rounded-md border p-3 text-xs" data-testid="restore-confirm">
+                                                <p className="font-medium">確定要還原?</p>
+                                                <p className="mt-1 text-muted-foreground">
+                                                    快照:{new Date(sel.time).toLocaleString()}({reasonText[sel.reason] ?? sel.reason}{sel.label ? ` · ${sel.label}` : ''})
+                                                </p>
+                                                <p className="text-muted-foreground">
+                                                    {confirm.files.length === 0
+                                                        ? `將還原快照內全部 ${sel.files?.length ?? 0} 個檔案`
+                                                        : `將還原:${confirm.files.map(titleOf).join('、')}`}
+                                                </p>
+                                                <p className="mt-1 text-warning">目前內容會先自動備份成一個快照,需要時可以再還原回來。</p>
+                                                <div className="mt-2 flex items-center gap-2">
+                                                    <Button size="sm" className="h-7" data-testid="restore-confirm-go" onClick={() => { const f = confirm.files; setConfirm(null); restore(f); }}>確定還原</Button>
+                                                    <Button size="sm" variant="ghost" className="h-7" data-testid="restore-confirm-cancel" onClick={() => setConfirm(null)}>取消</Button>
+                                                </div>
+                                            </div>
+                                        )}
                                         <pre className="min-h-0 flex-1 overflow-auto rounded-md border p-2 font-serif text-[13px] leading-relaxed">
                                             {diff.map((l, i) => (
                                                 l.segs ? (

@@ -6,7 +6,7 @@ import {markdown} from '@codemirror/lang-markdown';
 import {yamlFrontmatter} from '@codemirror/lang-yaml';
 import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
 import {tags} from '@lezer/highlight';
-import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors} from 'lucide-react';
+import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'lucide-react';
 import {QUICK_ACTIONS, Quick} from './quick';
 
 export interface Selection {
@@ -61,6 +61,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     onSelectRef.current = onSelect;
     const [menu, setMenu] = useState<{x: number; y: number; sel: Selection | null} | null>(null);
     const [sub, setSub] = useState(false);
+    const [current, setCurrent] = useState<Selection | null>(null); // 最新選取(浮動列用)
+    const [subBar, setSubBar] = useState(false); // 浮動列的段落指令子選單
 
     const currentSelection = (): Selection | null => {
         const v = view.current;
@@ -105,9 +107,11 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     theme,
                     EditorView.updateListener.of(u => {
                         if (u.docChanged) onChangeRef.current(u.state.doc.toString());
-                        if (u.selectionSet && onSelectRef.current) {
+                        if (u.selectionSet) {
                             const {from, to} = u.state.selection.main;
-                            onSelectRef.current(from === to ? null : {text: u.state.sliceDoc(from, to), from, to});
+                            const s = from === to ? null : {text: u.state.sliceDoc(from, to), from, to};
+                            setCurrent(s); // 浮動列顯示/隱藏
+                            onSelectRef.current?.(s);
                         }
                     }),
                 ],
@@ -152,13 +156,39 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         v.focus();
     };
 
-    const item = 'flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm cursor-default hover:bg-accent';
+    const item = 'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent';
     const disabled = 'pointer-events-none opacity-40';
     // 選單靠近視窗右緣時,子選單改往左開
     const flip = menu ? menu.x > window.innerWidth - 420 : false;
 
     return (
-        <div className="cm-host" ref={host} onContextMenu={onContextMenu}>
+        <div className="cm-host relative" ref={host} onContextMenu={onContextMenu}>
+            {/* 選取浮動列(§16 第 1 項 04):有選取時出現在編輯器頂部右側;帶入當下選取,右鍵選單保留 */}
+            {current && (
+                <div data-testid="selection-bar"
+                     className="absolute right-3 top-2 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 shadow-lg">
+                    <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask"
+                            onClick={() => { const s = currentSelection(); if (s) onAskAI(s); }}>
+                        <Bot className="h-3.5 w-3.5 text-primary"/>詢問這段
+                    </button>
+                    <div className="relative">
+                        <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-quick"
+                                onClick={() => setSubBar(v => !v)}>
+                            <TextSelect className="h-3.5 w-3.5"/>段落指令<ChevronRight className="h-3 w-3"/>
+                        </button>
+                        {subBar && (
+                            <div className="absolute right-0 top-full z-30 mt-1 min-w-[13rem] rounded-md border bg-popover p-1 shadow-xl">
+                                {QUICK_ACTIONS.map(q => (
+                                    <div key={q.id} className={item}
+                                         onClick={() => { const s = currentSelection(); if (s) { onAskAI(s, q); setSubBar(false); } }}>
+                                        {q.label}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             {menu && (
                 <div className="ctxmenu fixed z-50 min-w-[11rem] rounded-md border bg-popover p-1 text-popover-foreground shadow-xl"
                      style={{left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 220)}}
