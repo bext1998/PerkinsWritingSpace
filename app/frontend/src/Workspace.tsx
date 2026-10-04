@@ -28,12 +28,14 @@ import {Quick} from './quick';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
 
-// 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲,驗證存檔途中輸入的競態;
-// 正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
+// 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲、__perkinsReadDelay(ms)
+// 讓 ReadFile 延遲(重疊導覽回歸用);正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
 const devSaveDelay = {ms: 0};
+const devReadDelay = {ms: 0};
 
 if (import.meta.env.DEV) {
     (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
+    (window as any).__perkinsReadDelay = (ms: number) => { devReadDelay.ms = ms; };
     (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
 }
 
@@ -161,7 +163,12 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         return run;
     }, [refreshCounts, refreshIndex, refreshTree]);
 
+    // 導覽序號:每個在途 openFile 記下自己的 seq;await 後 seq 已不是最新就直接返回,
+    // 不得套用讀檔結果(過期導覽會把作者在等待期間輸入的字替換成舊稿)
+    const navSeq = useRef(0);
     const openFile = useCallback(async (rel: string, line?: number) => {
+        const seq = ++navSeq.current;
+        const stale = () => seq !== navSeq.current;
         try {
             // 重開目前檔案:不重新讀檔,保留編輯器內容(含未存的字),只做定位
             if (rel === latest.current.current) {
@@ -169,9 +176,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 return;
             }
             await save(); // 切換前自動存檔,避免遺失
+            if (stale()) return;
+            if (import.meta.env.DEV && devReadDelay.ms > 0) await new Promise(r => setTimeout(r, devReadDelay.ms));
             const content = await ReadFile(rel);
+            if (stale()) return;
             // ReadFile 等待期間若又有打字(dirty 變 true),先存完才切換,避免丟字
             if (latest.current.dirty) await save();
+            if (stale()) return;
             loaded.current = rel;
             setCurrent(rel);
             setText(content);

@@ -36,7 +36,7 @@ const P = rel => path.join(PROJ, ...rel.split('/'));
 const read = rel => fs.readFileSync(P(rel), 'utf8');
 const hash = rel => crypto.createHash('sha256').update(fs.readFileSync(P(rel))).digest('hex');
 const results = [];
-const check = (name, ok, detail = '') => { results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+const check = (name, ok, detail = '') => { ok = !!ok; results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
 // E2E_SKIP_AI=1:跳過所有向模型送出請求的步驟;被跳過的檢查印成「略過」,結尾統計,不算通過
 const SKIP_AI = process.env.E2E_SKIP_AI === '1';
 let skipped = 0;
@@ -349,14 +349,58 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         // 展開場景列並點「森林」場景 → 同檔案 openFile,只定位不重讀
         await page.click('[data-testid=rail-manuscript]');
         await page.waitForSelector('aside li:has-text("森林")');
+        const editorBefore = await page.textContent('.cm-content'); // 點場景前存下完整文字
         await page.click('aside li:has-text("森林")');
         await page.waitForTimeout(500);
         check('E6 點場景列後新字仍在編輯器', (await page.textContent('.cm-content')).includes('reopenNewText'));
-        check('E6 場景列點擊未觸發章節列重複導覽(編輯器內容一致)', !(await page.textContent('.cm-content')).includes('艾莉絲走進森林。天很黑。她很害怕。') === false || true, '內容未回退');
+        check('E6 場景列點擊後編輯器內容逐字不變', (await page.textContent('.cm-content')) === editorBefore);
+        check('E6 場景列點擊後仍為未儲存', (await page.textContent('footer')).includes('未儲存'));
         // 存檔後磁碟保有新字
         await page.click('[data-testid=save-button]');
         await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
         check('E6 存檔後磁碟保有新字', read(ch1).includes('reopenNewText'), JSON.stringify(read(ch1).slice(-40)));
+
+        // 情境 7(回歸):重疊導覽 — 過期導覽不得套用讀檔結果
+        if (await page.evaluate(() => typeof window.__perkinsReadDelay === 'function')) {
+            // 場景定位後側欄可能仍開著;先確保側欄開啟(章節列可見)
+            if (!(await page.$('[data-testid=chapter-row]:has-text("第一章")'))) await page.click('[data-testid=rail-manuscript]');
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+            await page.evaluate(() => window.__perkinsReadDelay(400));
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForTimeout(50);
+            await page.click('[data-testid=chapter-row]:has-text("第三章")');
+            await page.waitForSelector('.cm-line:has-text("風停了")', {timeout: 10000});
+            await page.waitForTimeout(1000); // 讓過期導覽回來
+            check('E7 A→B→C 快速切換最後停在 C', (await page.textContent('.cm-content')).includes('風停了'));
+            // 第二段:B 進入在途後輸入新字,再點第三章觸發過期導覽,新字不得被舊稿蓋掉
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForSelector('.cm-line:has-text("天亮了")');
+            await page.evaluate(() => window.__perkinsReadDelay(2500));
+            // 點第一章(讀 A 在途,2.5s);期間補點第二章的請求已過期;等第一章讀回後打字
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForTimeout(300); // 讓第一章導覽先註冊序號,再點第二章使第一章變過期?不行——
+            // 修正做法:點第二章(在途)→ 回第一章(第一章過期第二章變最新)→ 在途的第二章回來不得套用
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForTimeout(100);
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")', {timeout: 10000});
+            // 等待期間打字(不存);第二章的在途導覽回來不得覆蓋第一章的內容
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('staleGuard');
+            await page.waitForTimeout(3000); // 第二章的在途導覽(2.5s)回來
+            check('E7 過期導覽回來後編輯器仍是第一章', (await page.textContent('.cm-content')).includes('艾莉絲走進森林'));
+            check('E7 過期導覽未套用,新字仍在', (await page.textContent('.cm-content')).includes('staleGuard'));
+            check('E7 仍為未儲存', (await page.textContent('footer')).includes('未儲存'));
+            // 存檔後磁碟不丟字
+            await page.click('[data-testid=save-button]');
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
+            check('E7 存檔後磁碟不丟字', read(ch1).includes('staleGuard'), JSON.stringify(read(ch1).slice(-40)));
+            await page.evaluate(() => window.__perkinsReadDelay(0));
+        } else {
+            check('E7 開發模式讀檔延遲掛鉤存在', false, 'window.__perkinsReadDelay 不存在(需以 wails dev 開發模式執行)');
+        }
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
