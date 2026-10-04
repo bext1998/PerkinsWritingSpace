@@ -12,6 +12,8 @@ import (
 	"perkins/internal/project"
 	"perkins/internal/research"
 	"perkins/internal/settings"
+
+	"github.com/zalando/go-keyring"
 )
 
 // 意圖:平台常有字數門檻,字數不能把 Markdown 記號、空白或藏在註解裡的作者筆記算進去。
@@ -57,12 +59,14 @@ func askResearchEvents(t *testing.T, dir string) []map[string]any {
 
 // 意圖(review-round3 第 1 點):前置失敗要走到真正的錯誤路徑並斷言錯誤原因。
 // 兩個情境,各恰好一筆 ask:
-//  A. 尚未選擇模型(agent 非空、store 用隔離 temp dir 無模型)→ prepare 成功、begin 拒絕 →
-//     App 前置失敗記一筆(sent=false、requests 空、error 含「尚未選擇模型」)。
-//  B. 端點錯誤:prepare 不會失敗(clientFor 恆可取得 profile),端點錯誤發生在交給 Agent 後的
-//     LLM.Chat(不可達端點),由 Agent 的 defer 記恰好一筆(sent=true、requests 含失敗請求),
-//     App 層不得重複。以隔離 store 指向封閉埠,不讀寫作者設定、不呼叫真模型。
+//
+//	A. 尚未選擇模型(agent 非空、store 用隔離 temp dir 無模型)→ prepare 成功、begin 拒絕 →
+//	   App 前置失敗記一筆(sent=false、requests 空、error 含「尚未選擇模型」)。
+//	B. 端點錯誤:prepare 不會失敗(clientFor 恆可取得 profile),端點錯誤發生在交給 Agent 後的
+//	   LLM.Chat(不可達端點),由 Agent 的 defer 記恰好一筆(sent=true、requests 含失敗請求),
+//	   App 層不得重複。以隔離 store 指向封閉埠,不讀寫作者設定、不呼叫真模型。
 func TestAskAIPrematureFailureRecordsOnce(t *testing.T) {
+	keyring.MockInit() // 隔離憑證庫(review-round4 D3):clientFor 會經 ProfileAPIKey 讀 keyring,不得碰作者的原生憑證庫
 	dir := t.TempDir()
 	p, err := project.Create(dir, "n")
 	if err != nil {
@@ -75,7 +79,7 @@ func TestAskAIPrematureFailureRecordsOnce(t *testing.T) {
 	a.proj = p
 	a.research = research.New(p, "sess-1")
 	a.agent = &agent.Agent{Proj: p, Research: a.research} // 非空:避開 errNoProject,走到真正的錯誤路徑
-	a.ctx = context.Background() // begin() 需要非 nil 的 parent context(startup 才會設定)
+	a.ctx = context.Background()                          // begin() 需要非 nil 的 parent context(startup 才會設定)
 	// 隔離 store:temp dir 無 settings.json → 載入預設 profile(default/localhost:1234)且無模型
 	tmpCfg := t.TempDir()
 	a.store = &settings.Store{Dir: tmpCfg}
