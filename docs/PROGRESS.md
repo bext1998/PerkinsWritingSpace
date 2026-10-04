@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-05 — 長書名驗證改 render 真實元件(review-1b2,I 段)
+
+- H4 的臨時 div 驗證移除(它不 render GeneratedCover,只取標籤的 computed style,封面修補被破壞仍會通過);E2E 改為:覆寫 `window.go.main.App.ListRecent` 回傳受控資料(`TheLastGallopAndTheForgottenKingdom` 與 `The Last Gallop and the Forgotten Kingdom`,路徑指向不存在的暫存位置、missing=true 不開啟;另置入真實作品卡供驗證後重開),回書櫃讓真實 Bookshelf/GeneratedCover render,分別核對兩種長名的封面 span(斷行兩行、與書脊線間距≥20px)與下方書名標籤(兩行內、不溢出)。找不到測試卡片即 FAIL,不退回短名、不跳過。
+- 補拍 `32-1b-cover-zoom.png`(長名卡特寫)與 `38-1b-longname-covers.png`(兩筆受控長名+1 真實卡之書櫃全張,深色):無空白長名封面斷行兩行、書名標籤兩行省略、書脊線間距正常。
+- 破壞驗證兩項各自成立:只移除封面的 overflow-wrap → 封面斷行檢查 FAIL(spanH 退回單行 17.9px,標籤檢查仍 PASS);只移除標籤的 overflow-wrap → 標籤檢查 FAIL(tagNoOverflow=false,封面檢查仍 PASS)。
+- 不碰作者真實最近清單:只在頁面上覆寫綁定、結束前還原;settings.json 照常備份還原。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**75/75 passed,略過 8 項**。
+
 ## 2026-10-05 — 第二批審查修補(review-1b,H 段)
 
 - **回覆縮短子項取消**(作者決定):原本「新 pending 提案+最後 assistant 氣泡>80 字→覆寫成『已建立提案』」會吃掉模型回覆中的其他資訊(限制、未處理項目、其他答案),字數不是「重述」的判準;整個縮短邏輯(含 askStartProposals 標記)移除,回覆完整以 Markdown 呈現。

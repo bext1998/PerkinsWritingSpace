@@ -261,50 +261,74 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await page.waitForTimeout(400); // 等移除鈕/書封動畫收尾再拍
         await shot('13-bookshelf');
-        // 1B 視覺驗收(設計審查 16/17):書櫃首頁與自動書封特寫(深色)
+        // 1B 視覺驗收(設計審查 16/17):書櫃首頁(深色)
         await shot('31-1b-bookshelf-dark');
-        // H4(review-1b 第 4 點):含空白與無空白長英文名的書封/書名 render 驗證
-        // 最近清單第二項(TheLastGallop,無空白長名)特寫 + 封內文字不貼書脊線、標籤不溢出
-        const bookCards = await page.$$('.group.relative button.h-\\[176px\\]');
-        const titles = await Promise.all(bookCards.map(c => c.getAttribute('title').catch(() => '')));
-        const longIdx = titles.findIndex(t => (t || '').includes('TheLastGallop'));
-        const longNameCard = longIdx >= 0 ? bookCards[longIdx] : bookCards[bookCards.length - 1];
-        if (longNameCard) {
-            const cb = await longNameCard.boundingBox();
-            await page.screenshot({path: path.join(SHOTS, '32-1b-cover-zoom.png'), clip: {x: Math.max(0, cb.x - 20), y: Math.max(0, cb.y - 20), width: cb.width + 40, height: cb.height + 70}});
-            // 封內文字與書脊線留間距 + 長名標籤不溢出(review-1b 第 4 點):全部以長名卡為對象
-            const cardIdx = longIdx >= 0 ? longIdx : bookCards.length - 1;
-            const h4 = await page.evaluate(idx => {
-                const cards = [...document.querySelectorAll('.group.relative')];
-                const card = cards[idx];
-                if (!card) return null;
+
+        const PROJ2 = 'C:/Users/tiger/AppData/Local/Temp/perkins-e2e-bak/e2e-proj-1b';
+        // H4(review-1b2):render 真實元件的長書名驗證 — 此時已在書櫃(13 之後);覆寫 ListRecent
+        // 回傳兩筆受控資料(無空白與含空白的長英文名;路徑指向不存在的暫存位置,不開啟、
+        // 不動作者的最近清單),reload 讓真實 Bookshelf/GeneratedCover 以受控資料 render
+        await page.evaluate(projPath => {
+            window.__perkinsListRecentOrig = window.go.main.App.ListRecent;
+            window.go.main.App.ListRecent = () => Promise.resolve([
+                {path: projPath, name: 'E2E測試', cover: '', missing: false}, // 真實作品:置入受控清單供 H4 後重開
+                {path: 'C:/__perkins_test__/no-space-long-name', name: 'TheLastGallopAndTheForgottenKingdom', cover: '', missing: true},
+                {path: 'C:/__perkins_test__/spaced-long-name', name: 'The Last Gallop and the Forgotten Kingdom', cover: '', missing: true},
+            ]);
+        }, PROJ2);
+        // 此時已在書櫃(13 之後);先開任意真實作品進編輯器,再回書櫃讓 Bookshelf 重新
+        // mount,以覆寫後的 ListRecent render 受控卡片
+        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        await page.click('nav button:has(svg.lucide-house)');
+        await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
+        // 兩張受控測試卡片必須 render;找不到就 FAIL(不退回短名、不跳過)
+        await page.waitForSelector('.group.relative button.h-\\[176px\\]', {timeout: 10000});
+        const h4All = await page.evaluate(() => {
+            const cards = [...document.querySelectorAll('.group.relative')];
+            const out = {};
+            for (const name of ['TheLastGallopAndTheForgottenKingdom', 'The Last Gallop and the Forgotten Kingdom']) {
+                const card = cards.find(c => (c.querySelector('p')?.textContent || '') === name);
+                if (!card) { out[name] = null; continue; }
                 const btn = card.querySelector('button');
                 const span = btn?.querySelector('span.line-clamp-2');
                 const tag = card.querySelector('p');
-                return {
-                    spanLeft: span ? span.getBoundingClientRect().left - btn.getBoundingClientRect().left : null,
+                const spanR = span?.getBoundingClientRect();
+                const btnR = btn?.getBoundingClientRect();
+                const tagR = tag?.getBoundingClientRect();
+                out[name] = {
+                    spanLeft: span && btnR ? spanR.left - btnR.left : null,
+                    spanH: spanR ? spanR.height : null,
+                    spanTwoLines: spanR ? spanR.height > 20 && spanR.height <= 2 * 17.55 + 2 : null, // 斷行兩行內(line-clamp-2 上限)
                     tagNoOverflow: tag ? tag.scrollWidth <= tag.clientWidth + 1 : null,
-                    tagH: tag ? tag.getBoundingClientRect().height : null,
+                    tagH: tagR ? tagR.height : null,
                 };
-            }, cardIdx);
-            check('H4 封內文字與書脊線留間距', !!h4 && h4.spanLeft >= 20, JSON.stringify(h4));
-            check('H4 長名書名標籤不溢出(可斷行)', !!h4 && h4.tagNoOverflow, JSON.stringify(h4));
-            // 隔離 layout 驗證:無空白長英文名(TheLastGallopAndTheForgottenKingdom)在 124px 容器,
-            // overflow-wrap 取自 app 實際書名標籤的 computed style(隨實作連動,不硬寫);
-            // 移除 anywhere 的破壞會讓此檢查 FAIL(不斷行 → 溢出)。
-            const wrapOk = await page.evaluate(() => {
-                const realTag = document.querySelector('.group.relative p');
-                const ow = realTag ? getComputedStyle(realTag).overflowWrap : 'normal';
-                const d = document.createElement('div');
-                d.style.cssText = `position:absolute;left:-9999px;width:124px;line-height:1.35;font-size:12px;overflow-wrap:${ow};display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;`;
-                d.textContent = 'TheLastGallopAndTheForgottenKingdom';
-                document.body.appendChild(d);
-                const r = {overflowWrap: ow, h: d.getBoundingClientRect().height, noOverflow: d.scrollWidth <= d.clientWidth + 1};
-                d.remove();
-                return r;
-            });
-            check('H4 長單字可斷行(無空白長名兩行內、不水平溢出)', wrapOk.noOverflow && wrapOk.h <= 2 * 12 * 1.35 * 1.2, JSON.stringify(wrapOk));
+            }
+            return out;
+        });
+        const noSpace = 'TheLastGallopAndTheForgottenKingdom';
+        const spaced = 'The Last Gallop and the Forgotten Kingdom';
+        check('H4 兩張長名測試卡片都已 render', !!h4All[noSpace] && !!h4All[spaced], JSON.stringify(Object.keys(h4All)));
+        // 封面:文字與書脊線留間距(≥20px)、長名斷行成兩行(高>一行且 ≤ 兩行上限)
+        check('H4 無空白長名:封面斷行兩行、與書脊線留間距',
+            !!h4All[noSpace] && h4All[noSpace].spanLeft >= 20 && h4All[noSpace].spanTwoLines, JSON.stringify(h4All[noSpace]));
+        check('H4 含空白長名:封面斷行兩行、與書脊線留間距',
+            !!h4All[spaced] && h4All[spaced].spanLeft >= 20 && h4All[spaced].spanTwoLines, JSON.stringify(h4All[spaced]));
+        // 下方書名標籤:兩行內(高≤兩行)且不水平溢出
+        check('H4 無空白長名:標籤兩行內且不溢出',
+            !!h4All[noSpace] && h4All[noSpace].tagNoOverflow && h4All[noSpace].tagH <= 2 * 18 * 1.3, JSON.stringify(h4All[noSpace]));
+        check('H4 含空白長名:標籤兩行內且不溢出',
+            !!h4All[spaced] && h4All[spaced].tagNoOverflow && h4All[spaced].tagH <= 2 * 18 * 1.3, JSON.stringify(h4All[spaced]));
+        // 補拍:兩張長名卡特寫(第一張無空白)
+        const testCards = await page.$$('.group.relative');
+        if (testCards[0]) {
+            const cb = await testCards[0].boundingBox();
+            await page.screenshot({path: path.join(SHOTS, '32-1b-cover-zoom.png'), clip: {x: Math.max(0, cb.x - 20), y: Math.max(0, cb.y - 20), width: Math.min(300, cb.width + 40 + 140), height: cb.height + 70}});
         }
+        await shot('38-1b-longname-covers');
+        // 還原覆寫;書櫃仍 render 受控清單(含真實卡)— 點真實卡重開作品進編輯器
+        await page.evaluate(() => { window.go.main.App.ListRecent = window.__perkinsListRecentOrig; });
+        await page.waitForTimeout(200);
         // 淺色書櫃:切白紙 → 書櫃 → 切回
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
@@ -318,9 +342,11 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
-        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
-        await page.waitForSelector('[data-testid=chapter-row]');
-        check('從書櫃重新開啟作品', true);
+        // 從書櫃重新開啟作品(受控清單中的真實卡;title 用真實路徑)
+        await page.click('button[title="' + PROJ2.replace(/\//g, '\\') + '"], button[title="' + PROJ2 + '"]');
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        if (!(await page.$('.cm-content'))) await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        check('從書櫃重新開啟作品', !!(await page.$('[data-testid=chapter-row]')));
 
         // ===== 介面打磨第一批(§16 第 1 項,01/02/03/04/07) =====
         // U1(01):每卷底部常駐「新增章節」→ 輸入框 + 建立/取消
