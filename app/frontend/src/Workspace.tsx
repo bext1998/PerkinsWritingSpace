@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
     ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, GetSettings, GetTree, ParseEntity, ReadFile,
-    SaveFile, SetChapterStatus, WordCount,
+    ResearchOpenFile, SaveFile, SetChapterStatus, WordCount,
 } from '../wailsjs/go/main/App';
 import {bible, main, project} from '../wailsjs/go/models';
 import Editor, {EditorHandle, Selection} from './Editor';
@@ -121,6 +121,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             setDirty(false);
             setSelection(null);
             setReloadKey(k => k + 1);
+            ResearchOpenFile(rel); // 研究記錄(§12.8):open_file 事件,後端只接受專案內既有路徑
             if (line) setTimeout(() => editor.current?.scrollToLine(line), 60);
         } catch (e) { fail(e); }
     }, [save, fail]);

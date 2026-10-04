@@ -42,10 +42,11 @@ type Volume struct {
 }
 
 type Config struct {
-	Name    string            `json:"name"`
-	Order   []string          `json:"order,omitempty"` // 舊版單層順序;開啟時轉為單一卷(SPEC §12.1)
-	Volumes []Volume          `json:"volumes"`
-	Status  map[string]string `json:"status,omitempty"` // 章節路徑 → draft | done
+	Name     string            `json:"name"`
+	Order    []string          `json:"order,omitempty"` // 舊版單層順序;開啟時轉為單一卷(SPEC §12.1)
+	Volumes  []Volume          `json:"volumes"`
+	Status   map[string]string `json:"status,omitempty"`  // 章節路徑 → draft | done
+	Research bool              `json:"research,omitempty"` // 研究記錄(§12.8),預設關閉
 }
 
 type Project struct {
@@ -245,6 +246,12 @@ func (p *Project) NewDoc(dir, title, content string) (string, error) {
 
 // NewCanon 保留給舊呼叫者。
 func (p *Project) NewCanon(title string) (string, error) { return p.NewDoc(CanonDir, title, "") }
+
+// SetResearch 切換研究記錄(§12.8),存在 perkins.json 隨作品走。
+func (p *Project) SetResearch(on bool) error {
+	p.Config.Research = on
+	return p.saveConfig()
+}
 
 // SetVolumes 只更新 perkins.json,不動任何稿件檔案(SPEC §10、B1)。
 func (p *Project) SetVolumes(vols []Volume) error {

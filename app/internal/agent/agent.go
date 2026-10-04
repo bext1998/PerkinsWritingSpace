@@ -15,6 +15,7 @@ import (
 	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/research"
 	"perkins/internal/summary"
 )
 
@@ -59,10 +60,22 @@ type Agent struct {
 	LLM           llm.Client
 	Model         string
 	MaxIter       int
-	ContextTokens int // 端點上下文長度;0 = 不限制(測試用)
+	ContextTokens int                // 端點上下文長度;0 = 不限制(測試用)
+	Research      *research.Recorder // 研究記錄(§12.8);nil 或關閉時不記錄
+	Remote        bool               // 目前端點是否在本機之外(研究記錄用)
 
 	mu      sync.Mutex
 	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
+
+	lastProposal *string // 最近一次 propose_patch 建立的提案 id(研究記錄用)
+}
+
+// rlog 記錄研究事件(關閉或 nil 時為 no-op;失敗只留內部訊息,不影響 AI 流程)。
+func (a *Agent) rlog(name string, detail any) {
+	if a.Research == nil {
+		return
+	}
+	_ = a.Research.Log(name, detail)
 }
 
 func (a *Agent) maxIter() int {
@@ -212,6 +225,7 @@ func (a *Agent) runTool(name, args string, g gate) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		a.lastProposal = &pr.ID
 		return "提案 " + pr.ID + " 已建立,等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", nil
 	}
 	return "", fmt.Errorf("未實作的工具 %s", name)
@@ -421,10 +435,17 @@ func (a *Agent) historyTokens() int {
 
 // Ask 執行一次提問的代理迴圈。回傳最終回覆文字。
 func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string, error) {
+	start := time.Now()
 	msgs, err := a.BuildMessages(p)
 	if err != nil {
+		a.rlogAsk(p, nil, "", nil, start, "error", errText(err))
 		return "", err
 	}
+	defer func() {
+		if err != nil {
+			a.rlogAsk(p, nil, "", nil, start, "error", errText(err))
+		}
+	}()
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {
 		if a.compact(ctx, emit) == nil {
 			if msgs, err = a.BuildMessages(p); err != nil {
@@ -441,10 +462,17 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	g := gateFor(p)
 	tools := toolsFor(p.Mode)
 	req := llm.Request{Model: a.Model, Tools: tools}
+	var toolCalls []researchToolCall
+	rejectedIDs := map[string]bool{}
 	for i := 0; i < a.maxIter(); i++ {
 		req.Messages = msgs
 		reply, err := a.LLM.Chat(ctx, req, func(s string) { emit(Event{Kind: "delta", Text: s}) })
 		if err != nil {
+			result := "error"
+			if ctx.Err() != nil {
+				result = "cancelled"
+			}
+			a.rlogAsk(p, msgs, "", toolCalls, start, result, errText(err))
 			return "", err
 		}
 		if len(reply.ToolCalls) == 0 {
@@ -457,6 +485,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
 				a.compact(ctx, emit)
 			}
+			a.rlogAsk(p, msgs, reply.Content, toolCalls, start, "ok", "")
 			return reply.Content, nil
 		}
 		msgs = append(msgs, reply)
@@ -464,12 +493,15 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			if !allowed(tc.Name, tools) {
 				a.audit(auditRecord{Event: "tool_denied", Tool: tc.Name, Args: tc.Arguments, Detail: "mode=" + p.Mode})
 				emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: false})
+				rejectedIDs[tc.ID] = true
+				toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Denied: true})
 				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: "錯誤:此工具不存在或本次不被允許。你只能使用: " + strings.Join(names(tools), ", ")})
 				continue
 			}
 			result, terr := a.runTool(tc.Name, tc.Arguments, g)
 			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
 			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true})
+			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
 			if terr != nil {
 				result = "錯誤:" + terr.Error()
 			}
@@ -479,8 +511,54 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	a.audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
 	msg := fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已停止。", a.maxIter())
 	emit(Event{Kind: "notice", Text: msg})
+	a.rlogAsk(p, msgs, "", toolCalls, start, "error", msg)
 	return "", fmt.Errorf("%s", msg)
 }
+
+// ---- 研究記錄(§12.8):ask 事件的欄位,全部從 agent 內部取得 ----
+
+// researchToolCall 記錄一次工具呼叫(名稱、參數、是否被拒、錯誤)。
+type researchToolCall struct {
+	Name   string `json:"name"`
+	Args   string `json:"args,omitempty"`
+	Denied bool   `json:"denied,omitempty"`
+	Err    string `json:"err,omitempty"`
+}
+
+// rlogAsk 寫一筆 ask 事件(含實際送出的完整 messages、回覆、工具呼叫、耗時、結果)。
+func (a *Agent) rlogAsk(p AskParams, msgs []llm.Message, replyText string, tcs []researchToolCall, start time.Time, result, errMsg string) {
+	if a.Research == nil || !a.Research.Enabled() {
+		return
+	}
+	selLen := len([]rune(p.Selection))
+	var proposalID string
+	for _, tc := range tcs {
+		if tc.Name == "propose_patch" && tc.Err == "" && !tc.Denied {
+			// proposal id 無法直接從工具回呼取得,從 Projections 反查最後建立的提案
+			break
+		}
+	}
+	// 反查本次產生的提案:工具回呼沒有回傳 id,改由 runTool 記錄到 a.lastProposal
+	proposalID = a.lastProposalID()
+	a.Research.Log("ask", map[string]any{
+		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
+		"selectionLen": selLen, "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
+		"messages": msgs, "reply": replyText, "toolCalls": tcs,
+		"proposalId": proposalID, "elapsedMs": time.Since(start).Milliseconds(),
+		"result": result, "error": errMsg,
+	})
+}
+
+// lastProposalID 回傳最近一次 propose_patch 建立的提案 id(無則空)。
+func (a *Agent) lastProposalID() string {
+	if a.lastProposal == nil {
+		return ""
+	}
+	return *a.lastProposal
+}
+
+// ResearchRemote 回傳目前模型端點是否在本機之外(研究記錄用;由 App 在 prepare 時設定)。
+func (a *Agent) ResearchRemote() bool { return a.Remote }
 
 const summaryPrompt = `你是輕小說編輯助手。為下面這一章寫一份「之後寫作時參考用」的摘要,300 字以內,條列:
 1. 主要事件(依發生順序)

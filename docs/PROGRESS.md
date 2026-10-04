@@ -1,5 +1,17 @@
 # PROGRESS.md
 
+## 2026-10-05 — 研究記錄(研究模式)
+
+完成 SPEC §16 第 3 項,規格見新增的 §12.8(作者拍板:中等粒度、存在作品內預設關閉、另開 research.jsonl 不動 audit/provenance)。
+
+- **開關**:`project.Config.Research`(perkins.json,隨作品走);綁定 `GetResearch`/`SetResearch`。設定頁作品分頁有 Switch(`data-testid=research-switch`)與說明(記錄內容、只存本機、檔案位置),只在開啟作品時顯示。
+- **記錄器**:`app/internal/research` 套件,`Recorder.Log(event, detail)`;關閉時 no-op 不建立檔案,開啟時 append 一行 JSON 到 `.perkins/research.jsonl`;共同欄位 `ts`(RFC3339 含毫秒)、`event`、`session`(App 啟動時隨機產生,區分使用時段);寫入失敗回傳 error 給呼叫端記錄,不中斷存檔/AI 流程。
+- **事件**(全部在 Go 後端記錄):`ask`(agent 內部取得:model、remote、mode、doc、selection 字數、attachments、實際送出的完整 messages、AI 回覆、工具呼叫清單(名稱/參數/denied/err)、proposal id、耗時、結果 ok/error/cancelled)、`proposal_accept`/`proposal_reject`(id、target、authorEdited、原 replacement 與 Final、從建立到決定的耗時;Reject 簽名改回傳 `*Proposal`)、`save`(path、前後字數,不記內文)、`snapshot`/`restore`、`summary_draft`/`summary_save`、`copy_chapter`/`export_volume`、`open_file`(前端切檔時呼叫 `ResearchOpenFile`,後端只接受專案內既有的 manuscript/canon/notes/outline 路徑)。
+- **G1–G4**:`research.jsonl` 不在 project 路徑白名單內,AI 工具讀不到(測試鎖定);研究記錄不進入 AI 上下文(測試鎖定);研究記錄只寫 `.perkins/`,不碰稿件與 Canon。
+- **測試**:`internal/research`(關閉不建檔、開啟逐筆 append、共同欄位、寫入失敗回 error 不 panic)、`internal/agent`(預設關閉 ask 不建檔、開啟後 ask 筆含完整 messages/回覆/工具呼叫/proposal id、AI 工具讀不到 research.jsonl 且不進上下文、開關寫回 perkins.json 重開保留);`internal/proposal` 測試隨 Reject 簽名調整。
+- **E2E**(一律 E2E_SKIP_AI=1,不呼叫本機模型):R1 情境——預設關閉檔案不存在 → 設定頁開關 → 開章有 open_file、存檔有 save → 關閉後存檔不再新增 → 記錄不含逐字內文。check() 已正規化 `!!ok`:非略過的 falsy 一律計失敗、退出碼非 0。
+- 驗證:`go test ./...` 全過;`npm run build` 通過;E2E **31/31 passed,略過 8 項(E2E_SKIP_AI=1)**。截圖 `shots/19-research-settings.png` 已目視。
+
 ## 2026-09-30 — 版本差異標出行內改動的字
 
 「版本」對話框原本只能整行標紅/綠(中文一段一行,改一個字也整段標色)。`snapshot.LineDiff` 現在會把相鄰的刪除行與新增行配對,以字元 LCS 標出實際變動的字;共同字不到一半(整段改寫)或行太長時仍整行標色。提案卡片的原文/替換對照未改(替換是可編輯的輸入框)。Go 測試與 `tsc` 通過;**畫面未實機 render,請開「版本」看一次**。

@@ -36,7 +36,12 @@ const P = rel => path.join(PROJ, ...rel.split('/'));
 const read = rel => fs.readFileSync(P(rel), 'utf8');
 const hash = rel => crypto.createHash('sha256').update(fs.readFileSync(P(rel))).digest('hex');
 const results = [];
-const check = (name, ok, detail = '') => { results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+// check 正規化結果:非略過的 falsy 一律計失敗(避免 undefined 之類印 FAIL 卻不計入、退出碼 0)
+const check = (name, ok, detail = '') => { ok = !!ok; results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
+// E2E_SKIP_AI=1:跳過所有向模型送出請求的步驟;被跳過的檢查印成「略過」,結尾統計,不算通過
+const SKIP_AI = process.env.E2E_SKIP_AI === '1';
+let skipped = 0;
+const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(E2E_SKIP_AI=1)'}); console.log(`SKIP ${name} (E2E_SKIP_AI=1)`); };
 
 (async () => {
     const browser = await chromium.launch({executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true});
@@ -113,7 +118,18 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.keyboard.press('Escape');
         await shot('04-chat');
 
-        // 提案 → 部分採用
+        // 提案 → 部分採用(E2E_SKIP_AI=1 時整段跳過:不向模型送出請求)
+        let hasProposal = false;
+        if (SKIP_AI) {
+            skip('模型回覆完成');
+            skip('模型建立提案並顯示卡片');
+            skip('A1 提案顯示前稿件未被改動');
+            skip('編輯後提示將寫入作者版本');
+            skip('B4 接受後寫入作者編輯的版本');
+            skip('B4 provenance 記錄 authorEdited');
+            skip('編輯器重新載入為磁碟內容');
+            skip('接受提案前的自動快照在版本清單');
+        } else {
         const before = read(ch1);
         await page.fill('[data-testid=question]', '請使用 propose_patch 工具,把第一章的「天很黑。」改寫得更有畫面感。只改這一句,original 請逐字填「天很黑。」。');
         const t0 = Date.now();
@@ -123,7 +139,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.waitForSelector('[data-testid=send]', {timeout: 300000});
         const secs = ((Date.now() - t0) / 1000).toFixed(0);
         const chatErr = await page.$('[data-testid=chat-error]') ? await page.textContent('[data-testid=chat-error]') : '';
-        const hasProposal = !!(await page.$('[data-testid=proposal]'));
+        hasProposal = !!(await page.$('[data-testid=proposal]'));
         check('模型回覆完成', !chatErr, `${secs}s ${chatErr}`);
         check('模型建立提案並顯示卡片', hasProposal);
         check('A1 提案顯示前稿件未被改動', read(ch1) === before);
@@ -138,6 +154,7 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
             const prov = fs.readFileSync(path.join(PROJ, '.perkins', 'provenance.jsonl'), 'utf8');
             check('B4 provenance 記錄 authorEdited', prov.includes('"authorEdited":true'));
             check('編輯器重新載入為磁碟內容', (await page.textContent('.cm-content')).includes('夜色濃得化不開'));
+        }
         }
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
@@ -243,13 +260,57 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
+
+        // 研究記錄(SPEC §16 第 3 項/§12.8):預設關閉;開啟後 open_file/save 逐筆記錄;關閉後不再新增
+        const rlog = () => { try { return fs.readFileSync(P('.perkins/research.jsonl'), 'utf8'); } catch { return ''; } };
+        check('R1 預設關閉時檔案不存在', !fs.existsSync(P('.perkins/research.jsonl')));
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=research-switch]');
+        await shot('19-research-settings');
+        await page.click('[data-testid=research-switch]');
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        // 開一章(open_file)→ 打字存檔(save)
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-content');
+        check('R1 開啟後有 open_file 記錄', rlog().includes('"open_file"'), rlog().slice(-100));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('researchLogText');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=toast]');
+        await page.waitForTimeout(500);
+        check('R1 存檔後有 save 記錄', rlog().includes('"save"'));
+        const rlogLines = rlog().trim().split('\n').length;
+        // 關掉開關 → 再存檔不再新增
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.click('[data-testid=research-switch]');
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('afterOff');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(800);
+        check('R1 關閉後存檔不再新增記錄', rlog().trim().split('\n').length === rlogLines, `before=${rlogLines} after=${rlog().trim().split('\n').length}`);
+        check('R1 記錄不含逐字內文', !rlog().includes('researchLogText') && !rlog().includes('afterOff'));
+        // 恢復:把研究記錄關閉狀態留在專案(拋棄式測試專案,不需還原)
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
     check('頁面沒有 JavaScript 錯誤', errors.length === 0, errors.join(' | '));
     await browser.close();
-    const failed = results.filter(r => !r.ok);
-    console.log(`\n${results.length - failed.length}/${results.length} passed`);
+    const failed = results.filter(r => r.ok === false);
+    const passed = results.filter(r => r.ok === true);
+    const skippedN = results.filter(r => r.ok === null).length;
+    console.log(`
+${passed.length}/${passed.length + failed.length} passed,略過 ${skippedN} 項${SKIP_AI ? '(E2E_SKIP_AI=1)' : ''}`);
     process.exit(failed.length ? 1 : 0);
 })();
