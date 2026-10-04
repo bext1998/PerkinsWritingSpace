@@ -315,10 +315,25 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
             await page.click('button:has-text("複製全文")');
             await page.waitForSelector('text=已複製', {timeout: 5000});
             check('E4 複製全文顯示完成', true);
+            const clip = await page.evaluate(() => navigator.clipboard.readText());
+            // Windows 系統剪貼簿會把換行正規化成 CRLF(實測 9 個 \n → \r\n),比對前先還原
+            const clipNorm = clip.replace(/\r\n/g, '\n');
+            check('E4 剪貼簿內容等於未存原文', clipNorm === rescueText, `clipLen=${clip.length} rescueLen=${rescueText.length}`);
             const relTxt = await page.textContent('[data-testid=reload-app]');
-            check('E4 存檔失敗時重新載入改為「放棄未存內容並重新載入」', relTxt.includes('放棄未存內容'), relTxt);
+            check('E4 存檔失敗時放棄按鈕為次要樣式', relTxt.includes('放棄未存內容'), relTxt);
+            check('E4 複製全文為主要按鈕(default)', await page.$eval('button:has-text("複製全文")', el => el.classList.contains('bg-primary')));
+            check('E4 放棄按鈕為次要樣式(ghost+destructive 色)', await page.$eval('[data-testid=reload-app]', el => el.classList.contains('text-destructive') && !el.classList.contains('bg-primary')));
             await shot('16-rescue');
+
+            // 兩段式放棄:第一次點擊只顯示確認,不重載;取消回到原畫面;確定後才重載
             await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=confirm-abandon]', {timeout: 5000});
+            check('E4 第一次點擊放棄只顯示確認,頁面未重載', !!(await page.$('[data-testid=root-error]')) && !!(await page.$('[data-testid=confirm-abandon]')));
+            await page.click('[data-testid=cancel-abandon]');
+            await page.waitForTimeout(200);
+            check('E4 取消後回到救援畫面', !!(await page.$('[data-testid=reload-app]')) && !(await page.$('[data-testid=confirm-abandon]')));
+            await page.click('[data-testid=reload-app]');
+            await page.click('[data-testid=confirm-abandon]');
             await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
             await page.click('[data-testid=chapter-row]:has-text("第一章")');
             await page.waitForSelector('.cm-content');

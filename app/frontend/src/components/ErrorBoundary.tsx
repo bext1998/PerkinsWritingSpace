@@ -94,15 +94,16 @@ export class AreaBoundary extends React.Component<AreaBoundaryProps, AreaState> 
 }
 
 type SaveState = 'saving' | 'saved' | 'failed' | null;
-type CopyState = 'none' | 'ok' | 'failed';
-type RootState = {error: Error | null; save: SaveState; saveMsg: string; rescue: RescueData; copied: CopyState};
+type CopyState = 'none' | 'copying' | 'ok' | 'failed';
+type RootState = {error: Error | null; save: SaveState; saveMsg: string; rescue: RescueData; copied: CopyState; confirming: boolean};
 
-// 最外層防護:先緊急存檔再顯示錯誤畫面;存檔中不可重新載入,失敗時提供原文救援
+// 最外層防護:先緊急存檔再顯示錯誤畫面;存檔中不可重新載入,失敗時提供原文救援。
+// 放棄未存內容需兩段式確認(不用 window.confirm);「複製全文」為主要按鈕。
 export class RootBoundary extends React.Component<{children: React.ReactNode}, RootState> {
-    state: RootState = {error: null, save: null, saveMsg: '', rescue: null, copied: 'none'};
+    state: RootState = {error: null, save: null, saveMsg: '', rescue: null, copied: 'none', confirming: false};
 
     static getDerivedStateFromError(error: Error): RootState {
-        return {error, save: null, saveMsg: '', rescue: null, copied: 'none'};
+        return {error, save: null, saveMsg: '', rescue: null, copied: 'none', confirming: false};
     }
 
     componentDidCatch() {
@@ -126,6 +127,7 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
     copyAll = () => {
         const {rescue} = this.state;
         if (!rescue) return;
+        this.setState({copied: 'copying'});
         navigator.clipboard.writeText(rescue.text).then(
             () => this.setState({copied: 'ok'}),
             () => this.setState({copied: 'failed'}),
@@ -133,7 +135,7 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
     };
 
     render() {
-        const {error, save, saveMsg, rescue, copied} = this.state;
+        const {error, save, saveMsg, rescue, copied, confirming} = this.state;
         if (!error) return this.props.children;
         return (
             <div data-testid="root-error" className="flex h-full flex-col items-center justify-center gap-4 bg-background p-8 text-center">
@@ -158,17 +160,31 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
                                   onFocus={e => e.currentTarget.select()}
                                   className="h-56 w-full whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-sm"/>
                         <div className="flex items-center gap-3">
-                            <Button size="sm" variant="outline" onClick={this.copyAll}>複製全文</Button>
+                            <Button size="sm" onClick={this.copyAll}>複製全文</Button>
                             {copied === 'ok' && <span className="text-sm text-success">已複製</span>}
                             {copied === 'failed' && <span className="text-sm text-destructive">複製失敗,請手動全選複製</span>}
                         </div>
+                        {confirming ? (
+                            <div className="flex flex-col items-center gap-2">
+                                <p className="text-sm text-warning">尚未儲存的原文將無法取回,確定要放棄?</p>
+                                <div className="flex items-center gap-3">
+                                    <Button size="sm" variant="outline" className="text-destructive" data-testid="confirm-abandon"
+                                            onClick={() => window.location.reload()}>確定放棄並重新載入</Button>
+                                    <Button size="sm" variant="outline" data-testid="cancel-abandon" onClick={() => this.setState({confirming: false})}>取消</Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <Button size="sm" variant="ghost" className="text-destructive" data-testid="reload-app"
+                                    disabled={copied === 'copying'} // 複製進行中停用放棄
+                                    onClick={() => this.setState({confirming: true})}>放棄未存內容並重新載入</Button>
+                        )}
                     </div>
                 )}
                 {save === null && <p className="text-sm text-muted-foreground">沒有需要緊急存檔的未存內容。</p>}
-                <Button data-testid="reload-app" disabled={save === 'saving'}
-                        onClick={() => window.location.reload()}>
-                    {save === 'failed' ? '放棄未存內容並重新載入' : '重新載入'}
-                </Button>
+                {save !== 'failed' && (
+                    <Button data-testid="reload-app" disabled={save === 'saving'}
+                            onClick={() => window.location.reload()}>重新載入</Button>
+                )}
             </div>
         );
     }
