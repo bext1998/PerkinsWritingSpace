@@ -124,14 +124,27 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
         );
     }
 
+    // 複製進行中(Promise 未結束):停用複製與放棄;結束前不可重載
+    copying = () => this.state.copied === 'copying';
+
     copyAll = () => {
         const {rescue} = this.state;
-        if (!rescue) return;
+        if (!rescue || this.copying()) return; // 防重入:連按不啟動第二個 Promise
         this.setState({copied: 'copying'});
         navigator.clipboard.writeText(rescue.text).then(
             () => this.setState({copied: 'ok'}),
             () => this.setState({copied: 'failed'}),
         );
+    };
+
+    abandon = () => {
+        if (this.copying()) return; // 複製未完成不可重載
+        this.setState({confirming: true});
+    };
+
+    confirmAbandon = () => {
+        if (this.copying()) return; // 複製未完成不可重載
+        window.location.reload();
     };
 
     render() {
@@ -160,7 +173,7 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
                                   onFocus={e => e.currentTarget.select()}
                                   className="h-56 w-full whitespace-pre-wrap break-words rounded-md border bg-background p-2 font-mono text-sm"/>
                         <div className="flex items-center gap-3">
-                            <Button size="sm" onClick={this.copyAll}>複製全文</Button>
+                            <Button size="sm" disabled={this.copying()} onClick={this.copyAll}>複製全文</Button>
                             {copied === 'ok' && <span className="text-sm text-success">已複製</span>}
                             {copied === 'failed' && <span className="text-sm text-destructive">複製失敗,請手動全選複製</span>}
                         </div>
@@ -169,14 +182,15 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
                                 <p className="text-sm text-warning">尚未儲存的原文將無法取回,確定要放棄?</p>
                                 <div className="flex items-center gap-3">
                                     <Button size="sm" variant="outline" className="text-destructive" data-testid="confirm-abandon"
-                                            onClick={() => window.location.reload()}>確定放棄並重新載入</Button>
+                                            disabled={this.copying()}
+                                            onClick={this.confirmAbandon}>確定放棄並重新載入</Button>
                                     <Button size="sm" variant="outline" data-testid="cancel-abandon" onClick={() => this.setState({confirming: false})}>取消</Button>
                                 </div>
                             </div>
                         ) : (
                             <Button size="sm" variant="ghost" className="text-destructive" data-testid="reload-app"
-                                    disabled={copied === 'copying'} // 複製進行中停用放棄
-                                    onClick={() => this.setState({confirming: true})}>放棄未存內容並重新載入</Button>
+                                    disabled={this.copying()} // 複製進行中停用放棄
+                                    onClick={this.abandon}>放棄未存內容並重新載入</Button>
                         )}
                     </div>
                 )}
