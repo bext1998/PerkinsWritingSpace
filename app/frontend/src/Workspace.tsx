@@ -112,12 +112,18 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         }
     }, [refreshCounts, refreshIndex, refreshTree]);
 
-    // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時呼叫,保住未存的字。
+    // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。
     // 用讀 latest ref 的同一套邏輯,但不依賴卸載後的 setState,只做 SaveFile 本身。
     useEffect(() => {
-        registerEmergencySave(async () => {
-            const {current, text, dirty} = latest.current;
-            if (current && dirty) await SaveFile(current, text);
+        registerEmergencySave({
+            save: async () => {
+                const {current, text, dirty} = latest.current;
+                if (current && dirty) await SaveFile(current, text);
+            },
+            rescue: () => {
+                const {current, text, dirty} = latest.current;
+                return current && dirty ? {path: current, text} : null;
+            },
         });
         return () => registerEmergencySave(null);
     }, []);
@@ -262,7 +268,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {/* 可收合的側欄 */}
             {panel && (
-                <AreaBoundary area="sidebar" className="w-[272px] shrink-0 border-r bg-sidebar">
+                <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
                 <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
                     <div className="flex h-12 items-center justify-between border-b px-4">
                         <span className="truncate font-serif text-[15px] font-semibold" title={tree.name}>{tree.name}</span>
@@ -361,14 +367,16 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             </main>
 
             {inspector && current && (
-                <AreaBoundary area="inspector">
+                <AreaBoundary area="inspector" fallbackClassName="w-[280px] shrink-0 justify-center overflow-y-auto border-l bg-sidebar">
                     <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
                                scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
                     <CrashPoint area="inspector"/>
                 </AreaBoundary>
             )}
 
-            <AreaBoundary area="chat">
+            {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流 */}
+            <AreaBoundary area="chat"
+                          fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}

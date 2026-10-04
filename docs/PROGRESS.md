@@ -2,7 +2,15 @@
 
 ## 2026-10-05 — 錯誤防護(ErrorBoundary)
 
-完成 SPEC §16 第 0 項:render 期間未捕捉錯誤不再讓視窗全白。
+完成 SPEC §16 第 0 項:render 期間未捕捉錯誤不再讓視窗全白。同日依審查意見修補四點(ea4d024 審查):
+
+- **救援資料**:緊急存檔改註冊 `{save, rescue}`,`rescue()` 在呼叫 SaveFile 前先取好 `{path, text}`(不可寫入 log 或檔案)。存檔失敗時錯誤畫面顯示目標路徑、唯讀可全選的 textarea 放原文與「複製全文」(`navigator.clipboard.writeText`),不做另存救援檔。
+- **重新載入時序**:存檔中(`data-save-state=saving`)停用「重新載入」;存檔失敗時按鈕文字改為「放棄未存內容並重新載入」。
+- **區域 fallback 版面**:chat fallback 改為右下 fixed 小卡片(不佔版面流);inspector fallback 保留 `w-[280px] shrink-0`;側欄保留 272px;錯誤文字可斷行。E1 對 sidebar/inspector/chat 各別觸發,斷言 `.cm-editor` 寬度前後差 < 3px 且仍可輸入。
+- **E2E 競態**:`emergency-save` 加 `data-save-state`,E2 等 `saved` 再讀磁碟;新增 E4 情境:開發模式專用 `window.__perkinsSaveFail`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)模擬存檔失敗,驗證 textarea 內容等於未存原文(磁碟內容+輸入字)、唯讀、複製全文、放棄重載後檔案無未存字。另移植已核准的「書櫃顯示最近的作品」waitForSelector 穩定性修正。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **57/57 通過**(四輪執行:一輪 LM Studio 模型未產生提案卡屬模型 flakiness,與本變更無關)。
+
+原實作內容:
 
 - `app/frontend/src/components/ErrorBoundary.tsx`(新):`RootBoundary`(最外層,錯誤畫面 + 重新載入按鈕,`componentDidCatch` 先呼叫緊急存檔再顯示畫面,存檔成功/失敗都寫在畫面上)與 `AreaBoundary`(區域防護,顯示簡短錯誤 + 「重試」重設 boundary 狀態)。未引入新依賴。
 - `main.tsx` 最外層包 `RootBoundary`;`Workspace.tsx` 內 `ChatWindow`、`Inspector`、側欄(aside)各自包 `AreaBoundary`,並把讀 `latest` ref 的存檔邏輯註冊到模組層級 `emergencySave`(只做 `SaveFile`,不依賴卸載後的 setState)。

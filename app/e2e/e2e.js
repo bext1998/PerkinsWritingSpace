@@ -40,7 +40,9 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
 
 (async () => {
     const browser = await chromium.launch({executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true});
-    const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+    const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']); // E4 複製全文用
+    const page = await context.newPage();
     const errors = [];
     page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERROR', e.message); });
     const shot = n => page.screenshot({path: path.join(SHOTS, n + '.png')});
@@ -238,53 +240,91 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('text=我的書櫃');
+        // 既有檢查原本直接用 page.$ 查詢,會在 ListRecent 資料回來前就判定而偶發失敗;先等列 render 再斷言
+        await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await shot('13-bookshelf');
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
 
-        // 錯誤防護(SPEC §16 第 0 項):需在開發模式(wails dev)下執行,__perkinsCrash 只存在於 DEV 建置
-        if (await page.evaluate(() => typeof window.__perkinsCrash === 'function')) {
-            // 情境 1:chat 區崩潰 → 編輯器仍在、未存的字仍在、ChatWindow 區顯示錯誤
+        // 錯誤防護(SPEC §16 第 0 項):需在開發模式(wails dev)下執行,__perkinsCrash/__perkinsSaveFail 只存在於 DEV 建置
+        if (await page.evaluate(() => typeof window.__perkinsCrash === 'function' && typeof window.__perkinsSaveFail === 'function')) {
+            // 情境 1:sidebar/inspector/chat 各自崩潰 → 編輯器寬度不變、仍可輸入,該區顯示錯誤與重試
             await page.click('[data-testid=chapter-row]:has-text("第一章")');
             await page.waitForSelector('.cm-content');
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
             await page.keyboard.type('boundaryE1');
             await page.waitForTimeout(400);
-            await page.evaluate(() => window.__perkinsCrash('chat'));
-            await page.waitForSelector('[data-testid=area-error-chat]', {timeout: 5000});
-            const chatErrText = await page.textContent('[data-testid=area-error-chat]');
-            check('E1 chat 區崩潰後編輯器仍在', await page.isVisible('.cm-content'));
-            check('E1 未存的字仍在編輯器', (await page.textContent('.cm-content')).includes('boundaryE1'));
-            check('E1 ChatWindow 區顯示錯誤與重試', chatErrText.includes('錯誤') && !!(await page.$('[data-testid=area-error-chat] button:has-text("重試")')));
-            await shot('14-area-error-chat');
-            await page.click('[data-testid=area-error-chat] button:has-text("重試")');
-            await page.waitForTimeout(300);
-            check('E1 重試後 chat 區恢復', !(await page.$('[data-testid=area-error-chat]')));
+            const editorWidth = () => page.$eval('.cm-editor', el => el.getBoundingClientRect().width);
+            const w0 = await editorWidth();
+            for (const [area, marker] of [['sidebar', 'E1sb'], ['inspector', 'E1in'], ['chat', 'E1ch']]) {
+                await page.evaluate(a => window.__perkinsCrash(a), area);
+                await page.waitForSelector(`[data-testid=area-error-${area}]`, {timeout: 5000});
+                const w1 = await editorWidth();
+                check(`E1 ${area} 區崩潰後編輯器寬度不變(±3px)`, Math.abs(w1 - w0) < 3, `${w0} → ${w1}`);
+                const areaErr = await page.textContent(`[data-testid=area-error-${area}]`);
+                check(`E1 ${area} 區顯示錯誤與重試`, areaErr.includes('錯誤') && !!(await page.$(`[data-testid=area-error-${area}] button:has-text("重試")`)));
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type(marker);
+                await page.waitForTimeout(300);
+                check(`E1 ${area} 區崩潰後編輯器仍可輸入`, (await page.textContent('.cm-content')).includes(marker));
+                if (area === 'chat') await shot('14-area-error-chat');
+                await page.click(`[data-testid=area-error-${area}] button:has-text("重試")`);
+                await page.waitForTimeout(300);
+                check(`E1 ${area} 區重試後恢復`, !(await page.$(`[data-testid=area-error-${area}]`)));
+            }
 
-            // 情境 2:root 崩潰 → 錯誤畫面出現、未存的字先緊急存檔
+            // 情境 2:root 崩潰 → 未存的字先緊急存檔,等 data-save-state=saved 再驗證
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
             await page.keyboard.type('crashSaveE2');
             await page.waitForTimeout(400);
             await page.evaluate(() => window.__perkinsCrash('root'));
             await page.waitForSelector('[data-testid=root-error]', {timeout: 5000});
-            await page.waitForSelector('[data-testid=emergency-save]', {timeout: 10000});
+            await page.waitForSelector('[data-testid=emergency-save][data-save-state=saved]', {timeout: 10000});
             const saveMsg = await page.textContent('[data-testid=emergency-save]');
             check('E2 root 崩潰顯示錯誤畫面', (await page.textContent('[data-testid=root-error]')).includes('介面發生錯誤'));
             check('E2 顯示「未儲存的內容已存檔」', saveMsg.includes('已存檔'), saveMsg);
+            check('E2 已存檔後重新載入可用', !(await page.$('[data-testid=reload-app][disabled]')));
             const diskE2 = read(ch1);
-            check('E2 未存的字已寫入檔案', diskE2.includes('boundaryE1') && diskE2.includes('crashSaveE2'), JSON.stringify(diskE2.slice(-60)));
+            check('E2 未存的字已寫入檔案', diskE2.includes('boundaryE1') && diskE2.includes('E1sb') && diskE2.includes('E1in') && diskE2.includes('E1ch') && diskE2.includes('crashSaveE2'), JSON.stringify(diskE2.slice(-80)));
             await shot('15-root-error');
             await page.click('[data-testid=reload-app]');
             await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
             await page.click('[data-testid=chapter-row]:has-text("第一章")');
             await page.waitForSelector('.cm-content');
             check('E2 重新載入後稿件保留', (await page.textContent('.cm-content')).includes('crashSaveE2'));
+
+            // 情境 4:緊急存檔失敗 → 救援 textarea 顯示未存原文與目標路徑,重新載入按鈕改為「放棄未存內容」
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            const beforeFail = read(ch1);
+            await page.keyboard.type('rescueFailText');
+            await page.waitForTimeout(300);
+            await page.evaluate(() => window.__perkinsSaveFail());
+            await page.evaluate(() => window.__perkinsCrash('root'));
+            await page.waitForSelector('[data-testid=emergency-save][data-save-state=failed]', {timeout: 10000});
+            const failMsg = await page.textContent('[data-testid=emergency-save]');
+            check('E4 存檔失敗顯示目標路徑與原因', failMsg.includes('manuscript/第一章.md') && failMsg.includes('存檔失敗'), failMsg);
+            const rescueText = await page.inputValue('[data-testid=rescue-text]');
+            check('E4 救援 textarea 內容等於未存原文', rescueText === beforeFail + 'rescueFailText', `len=${rescueText.length}`);
+            check('E4 救援 textarea 為唯讀', !!(await page.$('[data-testid=rescue-text][readonly]')));
+            await page.click('button:has-text("複製全文")');
+            await page.waitForSelector('text=已複製', {timeout: 5000});
+            check('E4 複製全文顯示完成', true);
+            const relTxt = await page.textContent('[data-testid=reload-app]');
+            check('E4 存檔失敗時重新載入改為「放棄未存內容並重新載入」', relTxt.includes('放棄未存內容'), relTxt);
+            await shot('16-rescue');
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            check('E4 放棄重載後檔案與編輯器皆無未存字', !read(ch1).includes('rescueFailText') && !(await page.textContent('.cm-content')).includes('rescueFailText'));
         } else {
-            check('E1 開發模式拋錯點存在', false, 'window.__perkinsCrash 不存在(需以 wails dev 開發模式執行)');
+            check('E1 開發模式拋錯點存在', false, 'window.__perkinsCrash / __perkinsSaveFail 不存在(需以 wails dev 開發模式執行)');
         }
     } catch (e) {
         check('執行中斷', false, e.message);
