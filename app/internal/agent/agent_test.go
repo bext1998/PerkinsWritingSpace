@@ -853,45 +853,75 @@ func TestResearchDisabledRealRecorderAndConcurrentOff(t *testing.T) {
 }
 
 // 意圖(第 4 點):SetResearch 保存失敗時,記憶體狀態不異動。
+// 意圖(review-round3 第 2 點):開啟/關閉兩向都在同一個作品 p 製造確定寫入失敗(perkins.json 換成
+// 同名目錄);之後在同一個 p 恢復合法 perkins.json、成功呼叫 SetName(真正走 saveConfig,非參數驗證
+// 就返回的操作),重開作品核對 Research 仍是失敗前的值 — 失敗的開關值不會經其他設定保存落盤。
 func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
 	dir := t.TempDir()
 	p, err := project.Create(dir, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 可確定製造寫入失敗:把 perkins.json 換成**同名目錄**
-	os.Remove(filepath.Join(dir, "perkins.json"))
-	os.Mkdir(filepath.Join(dir, "perkins.json"), 0o755)
+	cfgPath := filepath.Join(dir, "perkins.json")
+	breakDisk := func() {
+		os.Remove(cfgPath)
+		if err := os.Mkdir(cfgPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restoreDisk := func(researchOn bool) {
+		// 移除同名目錄,寫回合法 perkins.json(research 與失敗前一致),再成功保存一次
+		if err := os.RemoveAll(cfgPath); err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(map[string]any{"name": "n", "volumes": []map[string]any{{"title": "第一卷", "chapters": []string{}}}, "research": researchOn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfgPath, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
-	// 開啟失敗:Config 與磁碟不變
+	// ——— 開啟方向 ———
+	breakDisk()
 	if err := p.SetResearch(true); err == nil {
 		t.Fatal("perkins.json 是目錄時應失敗")
 	}
 	if p.Config.Research {
-		t.Fatal("保存失敗時 Config.Research 應還原為 false")
+		t.Fatal("開啟保存失敗時 Config.Research 應還原為 false")
 	}
-	// 關閉失敗:先把 Config.Research 改成 true(繞過保存)再讓保存失敗 → 應還原為 true(磁碟會在恢復後仍 true)
-	p.Config.Research = true
+	restoreDisk(false) // 失敗前磁碟值 false
+	if err := p.SetName("改名"); err != nil {
+		t.Fatalf("恢復後 SetName 應成功: %v", err)
+	}
+	reopened, err := project.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Config.Research {
+		t.Fatal("重開後 Research 應為失敗前值 false(開啟失敗值未落盤)")
+	}
+
+	// ——— 關閉方向(同一個作品 p)———
+	p.Config.Research = true // 模擬未保存的開啟意圖(繞過保存)
+	breakDisk()
 	if err := p.SetResearch(false); err == nil {
 		t.Fatal("關閉保存應失敗")
 	}
 	if !p.Config.Research {
 		t.Fatal("關閉保存失敗時 Config.Research 應還原為 true")
 	}
-	// 修好檔案後,確認失敗值沒有被其他設定保存落盤:SetStatus 走 saveConfig
-	os.Remove(filepath.Join(dir, "perkins.json"))
-	dir2 := t.TempDir()
-	p3, err := project.Create(dir2, "n2")
+	restoreDisk(true) // 失敗前值 true
+	if err := p.SetName("再改名"); err != nil {
+		t.Fatalf("恢復後 SetName 應成功: %v", err)
+	}
+	reopened, err = project.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p3.Config.Research = true // 記憶體已開(模擬未保存的開啟意圖)
-	if err := p3.SetVolumes(nil); err == nil {
-		t.Fatal("空卷應失敗(至少需要一卷)")
-	}
-	b, _ := os.ReadFile(filepath.Join(dir2, "perkins.json"))
-	if strings.Contains(string(b), "research") {
-		t.Fatalf("失敗的開關值不應經其他設定保存落盤: %s", b)
+	if !reopened.Config.Research {
+		t.Fatal("重開後 Research 應為失敗前值 true(關閉失敗值未落盤)")
 	}
 }
 

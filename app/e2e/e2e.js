@@ -302,6 +302,33 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.waitForTimeout(800);
         check('R1 關閉後存檔不再新增記錄', rlog().trim().split('\n').length === rlogLines, `before=${rlogLines} after=${rlog().trim().split('\n').length}`);
         check('R1 記錄不含逐字內文', !rlog().includes('researchLogText') && !rlog().includes('afterOff'));
+
+        // R2(review-round3 第 3 點):受控 GetResearch Promise — 等待期間 Switch 停用;
+        // 拒絕後仍停用且顯示載入錯誤,不得冒充已關閉。以拋棄式測試專案驗證,不動作者設定。
+        // 先在開設定頁前覆寫綁定(綁定在呼叫時才解析 window.go,覆寫對後續呼叫生效)
+        await page.evaluate(() => {
+            window.__perkinsGetResearchOrig = window.go.main.App.GetResearch;
+            window.go.main.App.GetResearch = () => new Promise((resolve, reject) => {
+                window.__perkinsGetResearchGate = {resolve, reject};
+            });
+        });
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=research-switch]');
+        await page.waitForTimeout(300); // 等受控 Promise 掛入(useEffect 的 GetResearch 呼叫)
+        const disPending = await page.$eval('[data-testid=research-switch]', el => el.disabled);
+        check('R2 GetResearch 等待期間 Switch 停用', disPending === true, `disabled=${disPending}`);
+        await page.evaluate(() => window.__perkinsGetResearchGate.reject(new Error('測試載入失敗')));
+        await page.waitForSelector('[data-testid=research-load-error]', {timeout: 5000});
+        const loadErrTxt = await page.textContent('[data-testid=research-load-error]');
+        const disRejected = await page.$eval('[data-testid=research-switch]', el => el.disabled);
+        check('R2 拒絕後仍停用且顯示載入錯誤(不冒充關閉)', disRejected === true && loadErrTxt.includes('測試載入失敗'), `disabled=${disRejected} err=${loadErrTxt.slice(0, 60)}`);
+        await shot('26-research-load-error');
+        // 還原覆寫,重開設定頁確認恢復正常載入
+        await page.evaluate(() => { window.go.main.App.GetResearch = window.__perkinsGetResearchOrig; });
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
         // 恢復:把研究記錄關閉狀態留在專案(拋棄式測試專案,不需還原)
     } catch (e) {
         check('執行中斷', false, e.message);

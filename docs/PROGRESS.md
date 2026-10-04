@@ -14,11 +14,13 @@
   1. ask 記錄改為單一結束流程(defer logAsk):每次提問恰好一筆,涵蓋 App 前置失敗(未送出 sent=false、requests 空)、超預算、模型失敗、取消(result=cancelled)、成功。第三輪修補(App 層):App.AskAI 前置失敗(未選模型等)由 `logAskPremature` 記錄,測試從 App.AskAI 入口驗證(`TestAskAIPrematureFailureRecordsOnce`);破壞驗證:移除呼叫後 FAIL(got 0 筆)。
   2. proposalIds 改為本次 Ask 建立的提案 id 陣列(runTool 回傳 prID 收集),移除跨回合的 lastProposal;測試:純討論不誤記、一次兩個提案記兩個。
   3. requests 改為依序列出每次實際送出的請求快照(purpose: ask|compact、messages、reply),在 Chat 呼叫邊界保存;compact 加 compactCollect 收集器把濃縮請求記進同一筆 ask;迭代上限時未送出的工具結果不列入。§12.8 同步。
-  4. 開關一致性:後端 perkins.json 寫入成功才切換記憶體(`saveConfigWith`,失敗完整還原 Config;失敗值不會經其他設定保存落盤,測試以 perkins.json 換同名目錄製造真寫入失敗,涵蓋開啟/關閉兩向;破壞驗證:改回先改後寫 → FAIL);前端 await 成功才更新 Switch,失敗保持原值並顯示錯誤;載入與保存期間停用 Switch;GetResearch 載入失敗保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉。
+  4. 開關一致性:後端 perkins.json 寫入成功才切換記憶體(`saveConfigWith`,失敗完整還原 Config;失敗值不會經其他設定保存落盤)。第四輪測試補強(review-round3 第 2 點):`TestResearchToggleSaveFailureKeepsMemory` 改為開啟/關閉兩向都在**同一個作品**以 perkins.json 換同名目錄製造真寫入失敗;每向恢復合法 perkins.json 後以 SetName 成功走完 saveConfig,重開作品(project.Open)核對 Research 仍是失敗前的值;不再用另一個作品或會在參數驗證就返回的 SetVolumes(nil)。破壞驗證:移除 saveConfigWith 的失敗還原 → 開啟向 FAIL;前端 await 成功才更新 Switch,失敗保持原值並顯示錯誤;載入與保存期間停用 Switch;GetResearch 載入失敗保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉。
+  - 第四輪補強(review-round3 第 1、3 點):`TestAskAIPrematureFailureRecordsOnce` 改為完整隔離的 App 狀態(agent 非空、隔離 store),情境 A「尚未選擇模型」從 AskAI 入口走到 begin 拒絕並斷言錯誤內容、恰好一筆 ask(sent=false、requests 空);情境 B「端點錯誤」:prepare 的 clientFor("") 不會失敗,端點錯誤發生在交給 Agent 之後,以同一套端點/模型呼叫 Agent.Ask(封閉埠 127.0.0.1:1,不呼叫真模型),斷言恰好一筆(model=m、sent=true、requests 含失敗請求、error 含 dial)、App 層不重複。破壞驗證兩項:前置記錄只記 errNoProject → 情境 A FAIL;漏記端點錯誤(result=error 且 requests>0 不記)→ 情境 B FAIL。註:App.AskAI 的 goroutine 會呼叫 wails runtime EventsEmit,測試程序無法提供 wails context(直接終止程序),情境 B 因此經 prepare 後的同一 Agent 驗證,記錄路徑與 goroutine 內相同。
+  - E2E R2(E2E_SKIP_AI=1):受控 GetResearch Promise(覆寫 window.go.main.App.GetResearch)— 等待期間 Switch 停用;拒絕後仍停用且顯示 research-load-error,不冒充關閉。破壞驗證:改回舊 catch(setResearchOn(false))→ research-load-error 不出現,中斷 FAIL。
   5. Recorder 固定同一實例(SetResearch 不重建),SetEnabled 與 Log 共用同一把鎖,Enabled 在鎖內判斷;停用回傳後不得再寫(並行 goroutine 測試鎖定);配置 false 的實際 Recorder 不建 .perkins。`go test -race ./internal/research/` 通過。
   6. save 事件改用 CountText 計字數(beforeCount/afterCount),失敗時記 ok=false 與 error、不記 afterCount。
   7. §12.8 把 proposal_accept 與 proposal_reject 欄位分開列,與實作一致。
-- 驗證:`go test ./...` 全過;`npm run build` 通過;E2E **31/31 passed,略過 8 項(E2E_SKIP_AI=1)**。截圖 `shots/19-research-settings.png` 已目視。
+- 驗證:`go test ./...` 全過;`npm run build` 通過;E2E **33/33 passed,略過 8 項(E2E_SKIP_AI=1)**。截圖 `shots/19-research-settings.png`、`shots/26-research-load-error.png` 已目視。
 
 ## 2026-09-30 — 版本差異標出行內改動的字
 
