@@ -163,6 +163,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     const openFile = useCallback(async (rel: string, line?: number) => {
         try {
+            // 重開目前檔案:不重新讀檔,保留編輯器內容(含未存的字),只做定位
+            if (rel === latest.current.current) {
+                if (line) editor.current?.scrollToLine(line);
+                return;
+            }
             await save(); // 切換前自動存檔,避免遺失
             const content = await ReadFile(rel);
             // ReadFile 等待期間若又有打字(dirty 變 true),先存完才切換,避免丟字
