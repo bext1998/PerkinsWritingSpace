@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-05 — 第二批審查修補(review-1b,H 段)
+
+- **回覆縮短子項取消**(作者決定):原本「新 pending 提案+最後 assistant 氣泡>80 字→覆寫成『已建立提案』」會吃掉模型回覆中的其他資訊(限制、未處理項目、其他答案),字數不是「重述」的判準;整個縮短邏輯(含 askStartProposals 標記)移除,回覆完整以 Markdown 呈現。
+- **md-lite 區塊順序**(`lib/md-lite.tsx`):清單後遇到一般段落先結束清單(原先 intro→- item→closing 會被重排成 intro→closing→item;- first/paragraph/- second 的兩份清單會被合併)。單元測試補兩個順序案例與完整輸出順序斷言;E2E 的 Markdown 檢查改核對實際 DOM 有 strong/ul/li。破壞驗證:移除 flushList → 三項順序檢查 FAIL。
+- **內層包框(review-1b 第 3 點)**:assistant 回覆去掉整塊背景氣泡,改左分隔線+留白;提案卡去外框/獨立背景,以上下分隔線分層;保留替換文字輸入框輪廓、diff-del/diff-add 紅綠提示、衝突時的警示文字;作者訊息保留輕量背景區分說話者。E2E 加 H3 檢查(computed background 透明、無 rounded-lg)。破壞驗證:改回背景氣泡 → H3 第一項 FAIL。
+- **長單字書名**(`Bookshelf.tsx`):封面文字與書架列表書名標籤加 `overflow-wrap:anywhere`,無空白長英文名可斷行;封內文字容器改 pl-5 與書脊線(left-3)留間距。E2E 加 H4 檢查(長名卡間距≥20px、標籤不溢出、隔離 layout 驗證取實際 computed overflow-wrap 測 TheLastGallopAndTheForgottenKingdom 斷行)。破壞驗證:移除 anywhere → 隔離驗證 FAIL。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、md-lite 單元驗證 9 檢查 PASS、E2E(E2E_SKIP_AI=1)**73/73 passed,略過 8 項**。截圖 34-1b-chat-reply-dark、36-1b-chat-reply-light 已重拍(回覆無背景塊、提案卡無外框,深淺色)。
+
 ## 2026-10-05 — 介面打磨第二批(去 AI slop 的視覺問題,16/17/15/14/10/18)
 
 完成 SPEC §16 第 1 項第二批(依設計審查 16、15、14、10、17、18,作者拍板):

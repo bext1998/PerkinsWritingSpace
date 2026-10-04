@@ -76,6 +76,7 @@ export function MdLite({text}: {text: string}) {
         const m = line.match(/^\s*[-*]\s+(.*)$/);
         if (m) { flushPara(); list.push(m[1]); continue; }
         if (line.trim() === '') { flushPara(); flushList(); continue; }
+        flushList(); // 清單後遇到一般段落:先結束清單,維持區塊順序(review-1b 第 2 點)
         para.push(line.trim());
     }
     flushPara(); flushList();

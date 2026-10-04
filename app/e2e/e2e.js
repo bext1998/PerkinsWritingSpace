@@ -263,11 +263,47 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await shot('13-bookshelf');
         // 1B 視覺驗收(設計審查 16/17):書櫃首頁與自動書封特寫(深色)
         await shot('31-1b-bookshelf-dark');
-        const coverEl = await page.$('button[title*="manuscript"]:not([disabled])');
-        const bookCard = await page.$$('.group.relative button.h-\\[176px\\]');
-        if (bookCard[0]) {
-            const cb = await bookCard[0].boundingBox();
+        // H4(review-1b 第 4 點):含空白與無空白長英文名的書封/書名 render 驗證
+        // 最近清單第二項(TheLastGallop,無空白長名)特寫 + 封內文字不貼書脊線、標籤不溢出
+        const bookCards = await page.$$('.group.relative button.h-\\[176px\\]');
+        const titles = await Promise.all(bookCards.map(c => c.getAttribute('title').catch(() => '')));
+        const longIdx = titles.findIndex(t => (t || '').includes('TheLastGallop'));
+        const longNameCard = longIdx >= 0 ? bookCards[longIdx] : bookCards[bookCards.length - 1];
+        if (longNameCard) {
+            const cb = await longNameCard.boundingBox();
             await page.screenshot({path: path.join(SHOTS, '32-1b-cover-zoom.png'), clip: {x: Math.max(0, cb.x - 20), y: Math.max(0, cb.y - 20), width: cb.width + 40, height: cb.height + 70}});
+            // 封內文字與書脊線留間距 + 長名標籤不溢出(review-1b 第 4 點):全部以長名卡為對象
+            const cardIdx = longIdx >= 0 ? longIdx : bookCards.length - 1;
+            const h4 = await page.evaluate(idx => {
+                const cards = [...document.querySelectorAll('.group.relative')];
+                const card = cards[idx];
+                if (!card) return null;
+                const btn = card.querySelector('button');
+                const span = btn?.querySelector('span.line-clamp-2');
+                const tag = card.querySelector('p');
+                return {
+                    spanLeft: span ? span.getBoundingClientRect().left - btn.getBoundingClientRect().left : null,
+                    tagNoOverflow: tag ? tag.scrollWidth <= tag.clientWidth + 1 : null,
+                    tagH: tag ? tag.getBoundingClientRect().height : null,
+                };
+            }, cardIdx);
+            check('H4 封內文字與書脊線留間距', !!h4 && h4.spanLeft >= 20, JSON.stringify(h4));
+            check('H4 長名書名標籤不溢出(可斷行)', !!h4 && h4.tagNoOverflow, JSON.stringify(h4));
+            // 隔離 layout 驗證:無空白長英文名(TheLastGallopAndTheForgottenKingdom)在 124px 容器,
+            // overflow-wrap 取自 app 實際書名標籤的 computed style(隨實作連動,不硬寫);
+            // 移除 anywhere 的破壞會讓此檢查 FAIL(不斷行 → 溢出)。
+            const wrapOk = await page.evaluate(() => {
+                const realTag = document.querySelector('.group.relative p');
+                const ow = realTag ? getComputedStyle(realTag).overflowWrap : 'normal';
+                const d = document.createElement('div');
+                d.style.cssText = `position:absolute;left:-9999px;width:124px;line-height:1.35;font-size:12px;overflow-wrap:${ow};display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;`;
+                d.textContent = 'TheLastGallopAndTheForgottenKingdom';
+                document.body.appendChild(d);
+                const r = {overflowWrap: ow, h: d.getBoundingClientRect().height, noOverflow: d.scrollWidth <= d.clientWidth + 1};
+                d.remove();
+                return r;
+            });
+            check('H4 長單字可斷行(無空白長名兩行內、不水平溢出)', wrapOk.noOverflow && wrapOk.h <= 2 * 12 * 1.35 * 1.2, JSON.stringify(wrapOk));
         }
         // 淺色書櫃:切白紙 → 書櫃 → 切回
         await page.click('[data-testid=open-settings]');
@@ -596,8 +632,23 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.click('[data-testid=chat-fab]');
         await page.waitForSelector('[data-testid=assistant-turn]');
         await page.waitForTimeout(500); // 等動畫
-        check('1B 截圖準備:回覆以 Markdown 顯示且提案卡在場',
-            (await page.textContent('[data-testid=assistant-turn]')).includes('建議') && !!(await page.$('[data-testid=proposal]')));
+        // Markdown 檢查核對實際 DOM(review-1b 第 2 點):strong/ul/li 必須真的存在
+        const mdDom = await page.$eval('[data-testid=assistant-turn]', el => ({
+            strong: !!el.querySelector('strong'), ul: !!el.querySelector('ul'), li: el.querySelectorAll('li').length,
+        }));
+        check('1B 截圖準備:回覆以 Markdown 顯示(strong/ul/li 在 DOM)且提案卡在場',
+            mdDom.strong && mdDom.ul && mdDom.li >= 2 && !!(await page.$('[data-testid=proposal]')), JSON.stringify(mdDom));
+        // H3(review-1b 第 3 點):回覆不以整塊背景包框(透明背景);提案卡無獨立外框背景
+        const frame = await page.evaluate(() => {
+            const at = document.querySelector('[data-testid=assistant-turn]');
+            const pr = document.querySelector('[data-testid=proposal]');
+            const bg = at ? getComputedStyle(at).backgroundColor : null;
+            const prBg = pr ? getComputedStyle(pr).backgroundColor : null;
+            const prBorder = pr ? getComputedStyle(pr).borderTopWidth : null;
+            return {atBg: bg, atRounded: at ? at.className.includes('rounded-lg') : null, prBg, prBorder, prRounded: pr ? pr.className.includes('rounded-lg') : null};
+        });
+        check('H3 回覆無整塊背景包框', frame.atBg === 'rgba(0, 0, 0, 0)' && frame.atRounded === false, JSON.stringify(frame));
+        check('H3 提案卡無獨立外框背景', frame.prBg === 'rgba(0, 0, 0, 0)' && frame.prRounded === false, JSON.stringify(frame));
         await shot('34-1b-chat-reply-dark');
         // 淺色浮窗 + 資訊欄
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');

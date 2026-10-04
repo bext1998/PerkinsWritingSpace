@@ -176,24 +176,6 @@ export default function ChatWindow(props: Props) {
 
     useEffect(() => { bottom.current?.scrollIntoView({block: 'end'}); }, [turns, proposals.length]);
 
-    // 提案建立成功:回覆氣泡不重述完整替換內容,改成一行狀態(設計審查 10)。
-    // 條件:這次 ask 開始後新增了 pending 提案,且最後一個氣泡是(重述內容的)assistant 回覆。
-    useEffect(() => {
-        if (busy) return;
-        const fresh = proposals.some(pp => pp.status === 'pending' && !askStartProposals.current.has(pp.id));
-        if (!fresh) return;
-        setTurns(ts => {
-            const last = ts[ts.length - 1];
-            if (last?.role === 'assistant' && last.text.length > 80) {
-                return [...ts.slice(0, -1), {role: 'assistant', text: '已建立提案,見下方卡片。'}];
-            }
-            return ts;
-        });
-        // 標記已消費,避免後續 proposals 變化(接受/拒絕)再次觸發
-        askStartProposals.current = new Set(proposals.map(pp => pp.id));
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [proposals.length, busy]);
-
     // 開啟對話框時,把編輯器當下的選取帶入(§16 第 1 項 04;chat-fab 已透過 onPickSelection 讀取);
     // 選取來自哪個檔案由帶入當下的 doc 記錄。
     useEffect(() => {
@@ -243,15 +225,11 @@ export default function ChatWindow(props: Props) {
         priorSummaries: prior && withDoc && isChapter,
     });
 
-    // 對話開始時的提案 id:結束時若新增了提案,把模型的重述回覆縮成一行(設計審查 10)
-    const askStartProposals = useRef<Set<string>>(new Set());
-
     const send = async () => {
         if (!question.trim() || busy) return;
         if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
         try {
             await beforeAsk();
-            askStartProposals.current = new Set(proposals.map(pp => pp.id));
             await AskAI(params());
             const meta = [
                 selSent ? `選取 ${selSent.length} 字${selStale && keepSel ? '(仍要附加)' : ''}` : '',
@@ -397,8 +375,9 @@ export default function ChatWindow(props: Props) {
                                     {t.meta && <span className="mt-0.5 text-xs text-muted-foreground">{t.meta}</span>}
                                 </>
                             )}
+                            {/* assistant 回覆:不以整塊背景包框,以留白與分隔線建立層級(review-1b 第 3 點) */}
                             {t.role === 'assistant' && (
-                                <div className="rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm leading-relaxed" data-testid="assistant-turn">
+                                <div className="border-l-2 border-border py-1 pl-3 text-sm leading-relaxed" data-testid="assistant-turn">
                                     <MdLite text={t.text}/>
                                 </div>
                             )}
@@ -420,13 +399,13 @@ export default function ChatWindow(props: Props) {
                                 const changed = mine !== p.replacement;
                                 return (
                                     <div key={p.id} data-testid="proposal"
-                                         className={cn('rounded-lg border bg-background/60 p-2.5 text-sm', p.status === 'conflict' && 'border-warning')}>
+                                         className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
                                         <div className="mb-1.5 flex items-center gap-1 text-xs text-muted-foreground">
                                             <FileText className="h-3 w-3"/>{titleOf(p.target)}
                                             <span className="ml-auto">{p.model}</span>
                                         </div>
                                         <div className="diff-del whitespace-pre-wrap rounded px-2 py-1 font-serif text-[13px]">{p.original}</div>
-                                        <Textarea className="diff-add mt-1 min-h-[3.5rem] resize-y border-transparent font-serif text-[13px] focus-visible:ring-primary"
+                                        <Textarea className="diff-add mt-1 min-h-[3.5rem] resize-y rounded-md border border-border bg-transparent font-serif text-[13px] focus-visible:ring-primary"
                                                   value={mine} data-testid="proposal-edit"
                                                   disabled={p.status === 'conflict'}
                                                   onChange={e => setEdited(m => ({...m, [p.id]: e.target.value}))}/>

@@ -42,6 +42,22 @@ const t = (name, ok, html) => { console.log((ok ? 'PASS' : 'FAIL') + ' ' + name 
 }
 {
     const html = rds.renderToStaticMarkup(el('* 清單項\n*斜體*文字'));
-    t('清單+斜體', html.includes('<li>清單項</li>') && html.includes('<em>斜體</em>'), html);
+    t('清單+斜體(區塊順序:li 在 em 前)', html.indexOf('<li>清單項</li>') < html.indexOf('<em>斜體</em>') && html.includes('<em>斜體</em>'), html);
+}
+{
+    // 區塊順序(review-1b 第 2 點):清單後的一般段落不得被移到清單前
+    const html = rds.renderToStaticMarkup(el('intro\n- item\nclosing'));
+    const ok = html.indexOf('intro') < html.indexOf('<li>item</li>') && html.indexOf('<li>item</li>') < html.indexOf('closing');
+    t('清單後段落保持順序(intro→li→closing)', ok, html);
+}
+{
+    // 清單—段落—清單:兩份清單不得合併、段落順序正確
+    const html = rds.renderToStaticMarkup(el('- first\nparagraph\n- second'));
+    const liFirst = html.indexOf('<li>first</li>');
+    const liSecond = html.indexOf('<li>second</li>');
+    const para = html.indexOf('<p>paragraph</p>');
+    const uls = html.match(/<ul/g) || [];
+    const ok = uls.length === 2 && liFirst < para && para < liSecond;
+    t('清單-段落-清單順序(兩份清單)', ok, html);
 }
 process.exit(fails ? 1 : 0);

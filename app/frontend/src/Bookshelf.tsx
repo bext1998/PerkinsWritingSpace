@@ -25,10 +25,11 @@ export function GeneratedCover({name, className}: {name: string; className?: str
     return (
         <div className={cn('relative h-full w-full overflow-hidden', className)}
              style={{background: `hsl(${h} 38% 26%)`}}>
-            {/* 書脊線:靠左一條淡線 */}
+            {/* 書脊線:靠左一條淡線;書封文字與書脊線留間距(p-5),長單字可斷行(review-1b 第 4 點) */}
             <div className="absolute inset-y-0 left-3 w-px bg-white/20"/>
-            <div className="absolute inset-0 flex items-center justify-center p-3">
-                <span className="line-clamp-2 font-serif text-[13px] font-bold leading-snug tracking-wide text-[hsl(40_55%_85%)]">
+            <div className="absolute inset-0 flex items-center justify-center pl-5 pr-3">
+                <span className="line-clamp-2 font-serif text-[13px] font-bold leading-snug tracking-wide text-[hsl(40_55%_85%)]"
+                      style={{overflowWrap: 'anywhere'}}>
                     {name}
                 </span>
             </div>
@@ -101,7 +102,7 @@ export default function Bookshelf({onOpen, onSettings}: Props) {
                                             </span>
                                         )}
                                     </button>
-                                    <p className="mt-2 line-clamp-2 w-[124px] text-center text-xs text-muted-foreground">{r.name}</p>
+                                    <p className="mt-2 line-clamp-2 w-[124px] text-center text-xs text-muted-foreground" style={{overflowWrap: 'anywhere'}}>{r.name}</p>
                                     <Tip label="從書櫃移除(不會刪除檔案)" side="top">
                                         <button className="absolute -right-2 -top-2 hidden h-6 w-6 items-center justify-center rounded-full border bg-card text-muted-foreground group-hover:flex hover:text-destructive"
                                                 onClick={() => RemoveRecent(r.path).then(refresh)}>
