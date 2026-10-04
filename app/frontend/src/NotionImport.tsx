@@ -112,7 +112,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                     <td className="py-2 text-muted-foreground">{g.files.length}</td>
                                     <td className="w-40 py-2">
                                         <Select value={choices[g.key]} onValueChange={v => setChoices(c => ({...c, [g.key]: v}))}>
-                                            <SelectTrigger className="h-8"><SelectValue/></SelectTrigger>
+                                            <SelectTrigger className="h-8" data-testid={`group-select-${g.key || 'root'}`}><SelectValue/></SelectTrigger>
                                             <SelectContent>{TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                                         </Select>
                                         {expanded && (
@@ -127,6 +127,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                                                     return next;
                                                                 })}>
                                                             <SelectTrigger className="h-7 w-44 shrink-0 text-xs">
+                                                                {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
                                                                 {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
                                                                 <SelectValue placeholder={`跟隨資料夾(目前:${choices[g.key]})`}/>
                                                             </SelectTrigger>

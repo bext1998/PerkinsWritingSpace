@@ -323,12 +323,40 @@ const maybe = async (name, fn, detail = '') => {
         // 未覆寫頁(劉洋)的閉合選單應顯示「跟隨資料夾(目前:角色)」,隨群組去處即時更新
         const liuTrigger = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("劉洋")) button');
         check('N1c 閉合選單顯示跟隨資料夾(目前:X)', liuTrigger.includes('跟隨資料夾(目前:角色)'), liuTrigger.trim());
-        // 群組改略過:未覆寫頁顯示與匯入計數一起更新,已覆寫頁保持原值
-        await page.click('[data-testid=pages-人物] div:has(span:text-is("劉洋")) button');
-        await page.waitForSelector('[role=option]');
-        const grpOpts = await page.$$('[role=option]');
-        // 這裡打開的是劉洋的 Select;改用資料夾列的 Select(不在 pages-內)——改由展開前先測:
+        // 群組改略過:兩個跟隨頁(艾莉絲/劉洋)的閉合顯示變成「跟隨資料夾(目前:略過)」、匯入數變為 1(僅王都);
+        // 已覆寫頁保持原值(王都仍地點、草稿仍略過);再切回角色完成匯入與撤銷
+        await page.click('[data-testid=pages-人物] div:has(span:text-is("艾莉絲")) button'); // 開啟跟隨頁的 Select 以便選回角色(暫不選)
         await page.keyboard.press('Escape');
+        const groupTrigger = await page.$('[data-testid=pages-人物] >> xpath=ancestor::table >> button[data-radix-collection-item]');
+        // 資料夾列的 Select(不在 pages- 區塊內):表格第三欄的第一個 SelectTrigger
+        await page.click('[data-testid=group-select-人物]');
+        await page.waitForSelector('[role=option]', {timeout: 5000});
+        const groupOpts = await page.$$('[role=option]');
+        for (const o of groupOpts) {
+            if ((await o.textContent()).trim() === '略過') { await o.click(); break; }
+        }
+        await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        await page.waitForTimeout(300);
+        const aliceChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("艾莉絲")) button');
+        const liuChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("劉洋")) button');
+        check('C2 跟隨頁閉合顯示變為略過(艾莉絲)', aliceChip.includes('跟隨資料夾(目前:略過)'), aliceChip.trim());
+        check('C2 跟隨頁閉合顯示變為略過(劉洋)', liuChip.includes('跟隨資料夾(目前:略過)'), liuChip.trim());
+        const wtChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("王都")) button');
+        const cgChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("草稿")) button');
+        check('C2 已覆寫頁保持原值(王都=地點)', wtChip.includes('地點'), wtChip.trim());
+        check('C2 已覆寫頁保持原值(草稿=略過)', cgChip.includes('略過'), cgChip.trim());
+        let importBtnG = await page.textContent('button:has-text("匯入 ")');
+        check('C2 群組略過時匯入數變為 1', importBtnG.includes('匯入 1 頁'), importBtnG.trim());
+        check('C2 覆寫頁數不變(王都+草稿=2)', (await page.textContent('[data-testid=override-count-人物]')).includes('2 頁另行指定'));
+        // 切回角色
+        await page.click('[data-testid=group-select-人物]');
+        await page.waitForSelector('[role=option]', {timeout: 5000});
+        const groupOpts2 = await page.$$('[role=option]');
+        for (const o of groupOpts2) {
+            if ((await o.textContent()).trim() === '角色') { await o.click(); break; }
+        }
+        await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        await page.waitForTimeout(300);
         check('N1 資料夾列顯示覆寫頁數', (await page.textContent('[data-testid=override-count-人物]')).includes('2 頁另行指定'));
         const importBtnText = await page.textContent('button:has-text("匯入 ")');
         check('N1 匯入頁數按逐頁結果計算', importBtnText.includes('匯入 3 頁'), importBtnText.trim());

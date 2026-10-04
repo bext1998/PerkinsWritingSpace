@@ -10,10 +10,10 @@
 - E2E 新情境 N1:覆寫 `window.go.main.App.PickNotionExport`(wailsjs 呼叫當下才讀 window.go)繞過無頭模式無法操作的原生檔案對話框;fixture 在測試專案外建立 Notion 匯出(同資料夾三頁,檔名帶 32 位 hex id)。三頁分別跟隨(角色)/地點/略過 → 匯入 → 斷言王都 frontmatter 為地點、草稿不存在、同名艾莉絲未覆蓋、撤銷後王都消失。審查修補(b7d10a1):
 - check() 正規化 `!!ok`:非略過的 falsy(含 optional chaining 的 undefined)一律計失敗、退出碼非 0;只有 skip 產生略過記錄。
 - N1 新增第四頁「劉洋」(fixture 有四頁):先覆寫為地點(覆寫頁數 1、匯入 4 頁),再選回「跟隨資料夾」(覆寫清除、匯入計數回到 3)→ 匯入後劉洋在 canon/、frontmatter 為角色、撤銷後消失;艾莉絲保留作 B9 不覆蓋檢查。過程發現:e2e 的選項匹配原本用全等,「跟隨資料夾(目前:角色)」匹配不到,已改 startsWith。
-- 未覆寫頁的閉合 Select 顯示改為隨群組即時更新的「跟隨資料夾(目前:X)」(placeholder 動態),E2E 斷言閉合顯示含目前群組去處。
+- 未覆寫頁的閉合 Select 顯示改為隨群組即時更新的「跟隨資料夾(目前:X)」(placeholder 動態),E2E 斷言閉合顯示含目前群組去處。第三輪修補(C2):N1 新增「把人物群組改為略過」情境——兩個跟隨頁(艾莉絲/劉洋)閉合顯示變「跟隨資料夾(目前:略過)」、匯入數變 1、已覆寫頁保持原值(王都地點/草稿略過)、覆寫頁數不變,再切回角色完成匯入與撤銷;群組 Select 加 data-testid=group-select。破壞驗證兩項:(1) 忽略逐頁覆寫 → Go 測試 TestApplyPerPageOverrides/AgainstGroup FAIL;(2) placeholder 改回固定文字 → N1c 與 C2 跟隨頁顯示檢查 FAIL(41/44)。
 - E2E 新增 `E2E_SKIP_AI=1`(2026-10-05 作者回饋:本機模型吃大量記憶體):跳過所有向模型送出請求的步驟,被跳過的檢查印成「略過」,結尾統計「略過 N 項」,不算通過。
 - 踩坑記錄:`NOTION_SRC` 以 `path.dirname(PROJ)` 推導時,POSIX 風格路徑在 Windows 上會解析成 `
-otion-export`,Go 端報 `GetFileAttributesEx 
+otion-export`,Go 端報 `GetFileAttributesEx
 otion-export` 錯;改用 `path.resolve` + 明確基準(fixture 模式取 dir 上層、runtime 模式取 PROJ 上層)。
 - 驗證:`go test ./...` 全過(含 4 個新測試);`npm run build` 通過;E2E **33/33 通過,略過 8 項(E2E_SKIP_AI=1:模型回覆完成、模型建立提案並顯示卡片、A1 提案顯示前稿件未被改動、編輯後提示將寫入作者版本、B4 接受後寫入作者編輯的版本、B4 provenance 記錄 authorEdited、編輯器重新載入為磁碟內容、接受提案前的自動快照在版本清單)**。截圖 `shots/18-notion-perpage.png` 已目視:展開列表、覆寫頁數、逐頁 Select 與匯入頁數均正常。
 
