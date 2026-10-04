@@ -264,7 +264,6 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         // 1B 視覺驗收(設計審查 16/17):書櫃首頁(深色)
         await shot('31-1b-bookshelf-dark');
 
-        const PROJ2 = 'C:/Users/tiger/AppData/Local/Temp/perkins-e2e-bak/e2e-proj-1b';
         // H4(review-1b2):render 真實元件的長書名驗證 — 此時已在書櫃(13 之後);覆寫 ListRecent
         // 回傳兩筆受控資料(無空白與含空白的長英文名;路徑指向不存在的暫存位置,不開啟、
         // 不動作者的最近清單),reload 讓真實 Bookshelf/GeneratedCover 以受控資料 render
@@ -275,7 +274,7 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
                 {path: 'C:/__perkins_test__/no-space-long-name', name: 'TheLastGallopAndTheForgottenKingdom', cover: '', missing: true},
                 {path: 'C:/__perkins_test__/spaced-long-name', name: 'The Last Gallop and the Forgotten Kingdom', cover: '', missing: true},
             ]);
-        }, PROJ2);
+        }, PROJ);
         // 此時已在書櫃(13 之後);先開任意真實作品進編輯器,再回書櫃讓 Bookshelf 重新
         // mount,以覆寫後的 ListRecent render 受控卡片
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
@@ -342,8 +341,8 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
-        // 從書櫃重新開啟作品(受控清單中的真實卡;title 用真實路徑)
-        await page.click('button[title="' + PROJ2.replace(/\//g, '\\') + '"], button[title="' + PROJ2 + '"]');
+        // 從書櫃重新開啟作品(受控清單中的真實卡路徑 = 當輪 PROJ)
+        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
         if (!(await page.$('.cm-content'))) await page.click('[data-testid=chapter-row]:has-text("第一章")');
         check('從書櫃重新開啟作品', !!(await page.$('[data-testid=chapter-row]')));
