@@ -490,7 +490,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		req.Messages = msgs
 		snapshot := append([]llm.Message{}, msgs...)
 		reply, err := a.LLM.Chat(ctx, req, func(s string) { emit(Event{Kind: "delta", Text: s}) })
-		requests = append(requests, researchRequest{Purpose: "ask", Messages: snapshot})
+		requests = append(requests, researchRequest{Purpose: "ask", Messages: snapshot, Reply: reply.Content}) // 每次回覆都保存(含帶工具呼叫的中間回覆)
 		if err != nil {
 			result = "error"
 			if ctx.Err() != nil {
@@ -500,8 +500,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			return "", err
 		}
 		if len(reply.ToolCalls) == 0 {
-			replyText = reply.Content
-			requests[len(requests)-1].Reply = reply.Content
+			replyText = reply.Content // 已由上方保存到對應 request
 			a.mu.Lock()
 			a.History = append(a.History,
 				llm.Message{Role: "user", Content: p.Question},

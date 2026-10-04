@@ -11,10 +11,10 @@
 - **測試**:`internal/research`(關閉不建檔、開啟逐筆 append、共同欄位、寫入失敗回 error 不 panic)、`internal/agent`(預設關閉 ask 不建檔、開啟後 ask 筆含完整 messages/回覆/工具呼叫/proposal id、AI 工具讀不到 research.jsonl 且不進上下文、開關寫回 perkins.json 重開保留);`internal/proposal` 測試隨 Reject 簽名調整。
 - **E2E**(一律 E2E_SKIP_AI=1,不呼叫本機模型):R1 情境——預設關閉檔案不存在 → 設定頁開關 → 開章有 open_file、存檔有 save → 關閉後存檔不再新增 → 記錄不含逐字內文。check() 已正規化 `!!ok`:非略過的 falsy 一律計失敗、退出碼非 0。
 - 審查修補(c4f63c5,七點全修):
-  1. ask 記錄改為單一結束流程(defer logAsk):每次提問恰好一筆,涵蓋 App 前置失敗(未送出 sent=false、requests 空)、超預算、模型失敗、取消(result=cancelled)、成功;假 LLM 測試各驗證一筆。
+  1. ask 記錄改為單一結束流程(defer logAsk):每次提問恰好一筆,涵蓋 App 前置失敗(未送出 sent=false、requests 空)、超預算、模型失敗、取消(result=cancelled)、成功。第三輪修補(App 層):App.AskAI 前置失敗(未選模型等)由 `logAskPremature` 記錄,測試從 App.AskAI 入口驗證(`TestAskAIPrematureFailureRecordsOnce`);破壞驗證:移除呼叫後 FAIL(got 0 筆)。
   2. proposalIds 改為本次 Ask 建立的提案 id 陣列(runTool 回傳 prID 收集),移除跨回合的 lastProposal;測試:純討論不誤記、一次兩個提案記兩個。
   3. requests 改為依序列出每次實際送出的請求快照(purpose: ask|compact、messages、reply),在 Chat 呼叫邊界保存;compact 加 compactCollect 收集器把濃縮請求記進同一筆 ask;迭代上限時未送出的工具結果不列入。§12.8 同步。
-  4. 開關一致性:後端 perkins.json 寫入成功才切換記憶體;前端 await 成功才更新 Switch,失敗保持原值並顯示錯誤;載入與保存期間停用 Switch。
+  4. 開關一致性:後端 perkins.json 寫入成功才切換記憶體(`saveConfigWith`,失敗完整還原 Config;失敗值不會經其他設定保存落盤,測試以 perkins.json 換同名目錄製造真寫入失敗,涵蓋開啟/關閉兩向;破壞驗證:改回先改後寫 → FAIL);前端 await 成功才更新 Switch,失敗保持原值並顯示錯誤;載入與保存期間停用 Switch;GetResearch 載入失敗保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉。
   5. Recorder 固定同一實例(SetResearch 不重建),SetEnabled 與 Log 共用同一把鎖,Enabled 在鎖內判斷;停用回傳後不得再寫(並行 goroutine 測試鎖定);配置 false 的實際 Recorder 不建 .perkins。`go test -race ./internal/research/` 通過。
   6. save 事件改用 CountText 計字數(beforeCount/afterCount),失敗時記 ok=false 與 error、不記 afterCount。
   7. §12.8 把 proposal_accept 與 proposal_reject 欄位分開列,與實作一致。

@@ -706,6 +706,9 @@ func (a *App) end(cancel context.CancelFunc) {
 func (a *App) AskAI(p agent.AskParams) error {
 	ag, ctx, cancel, err := a.begin()
 	if err != nil {
+		// 前置失敗(尚未選模型、端點錯誤、上一個請求尚未結束)也記恰好一筆 ask(§12.8):
+		// 未送出 → sent=false、requests 空。成功進入 Agent 時由 Agent 的 defer 記錄,不重複。
+		a.logAskPremature(p, err)
 		return err
 	}
 	go func() {
@@ -718,6 +721,22 @@ func (a *App) AskAI(p agent.AskParams) error {
 		runtime.EventsEmit(a.ctx, "chat:done", done)
 	}()
 	return nil
+}
+
+// markAskSent:標記這次提問已交給 Agent(其 defer 會記錄),App 層不再記。
+func (a *App) markAskSent() {}
+
+// logAskPremature 記錄前置失敗的 ask 事件(§12.8)。
+func (a *App) logAskPremature(p agent.AskParams, err error) {
+	if a.research == nil || !a.research.Enabled() {
+		return
+	}
+	_ = a.research.Log("ask", map[string]any{
+		"model": "", "remote": false, "mode": p.Mode, "doc": p.Doc,
+		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
+		"sent": false, "requests": []any{}, "reply": "", "toolCalls": []any{}, "proposalIds": []string{},
+		"elapsedMs": 0, "result": "error", "error": err.Error(),
+	})
 }
 
 // DraftSummary 請模型草擬章節摘要;只回傳文字,不寫檔(B6)。

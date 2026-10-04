@@ -249,7 +249,9 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
     const [error, setError] = useState('');
     const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
     const [researchSaving, setResearchSaving] = useState(false);
-    useEffect(() => { GetCover().then(setCover); GetResearch().then(setResearchOn).catch(() => setResearchOn(false)); }, []);
+    const [researchError, setResearchError] = useState('');
+    // 研究記錄載入失敗:保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉
+    useEffect(() => { GetCover().then(setCover); GetResearch().then(setResearchOn).catch(e => { setResearchError(errText(e)); }); }, []);
 
     return (
         <div className="grid max-w-3xl gap-8">
@@ -282,9 +284,10 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                         開啟後,本作品的操作、送給 AI 的內容與 AI 回覆會記錄在 .perkins/research.jsonl,只存在這台電腦。
                         檔案位置:作品資料夾\.perkins\research.jsonl。
                     </p>
+                    {researchError && <p className="mt-1 text-xs text-destructive" data-testid="research-load-error">無法讀取研究記錄狀態:{researchError}</p>}
                 </div>
                 <Switch data-testid="research-switch" checked={researchOn === true}
-                        disabled={researchOn === null || researchSaving}
+                        disabled={researchOn === null || researchSaving || !!researchError}
                         onCheckedChange={async v => {
                             setResearchSaving(true);
                             try {

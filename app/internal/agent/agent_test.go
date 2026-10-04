@@ -854,15 +854,76 @@ func TestResearchDisabledRealRecorderAndConcurrentOff(t *testing.T) {
 
 // 意圖(第 4 點):SetResearch 保存失敗時,記憶體狀態不異動。
 func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
-	p, err := project.Create(t.TempDir(), "n")
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 以唯讀目錄模擬 perkins.json 寫入失敗(Windows 上可能不生效,至少驗證正常路徑)
-	if err := p.SetResearch(true); err != nil {
-		t.Fatalf("正常路徑應成功: %v", err)
+	// 可確定製造寫入失敗:把 perkins.json 換成**同名目錄**
+	os.Remove(filepath.Join(dir, "perkins.json"))
+	os.Mkdir(filepath.Join(dir, "perkins.json"), 0o755)
+
+	// 開啟失敗:Config 與磁碟不變
+	if err := p.SetResearch(true); err == nil {
+		t.Fatal("perkins.json 是目錄時應失敗")
+	}
+	if p.Config.Research {
+		t.Fatal("保存失敗時 Config.Research 應還原為 false")
+	}
+	// 關閉失敗:先把 Config.Research 改成 true(繞過保存)再讓保存失敗 → 應還原為 true(磁碟會在恢復後仍 true)
+	p.Config.Research = true
+	if err := p.SetResearch(false); err == nil {
+		t.Fatal("關閉保存應失敗")
 	}
 	if !p.Config.Research {
-		t.Fatal("保存成功後記憶體應更新")
+		t.Fatal("關閉保存失敗時 Config.Research 應還原為 true")
+	}
+	// 修好檔案後,確認失敗值沒有被其他設定保存落盤:SetStatus 走 saveConfig
+	os.Remove(filepath.Join(dir, "perkins.json"))
+	dir2 := t.TempDir()
+	p3, err := project.Create(dir2, "n2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3.Config.Research = true // 記憶體已開(模擬未保存的開啟意圖)
+	if err := p3.SetVolumes(nil); err == nil {
+		t.Fatal("空卷應失敗(至少需要一卷)")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir2, "perkins.json"))
+	if strings.Contains(string(b), "research") {
+		t.Fatalf("失敗的開關值不應經其他設定保存落盤: %s", b)
+	}
+}
+
+// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆;MaxIter=1 逐筆比對。
+func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.MaxIter = 1
+	s.replies = []llm.Message{
+		{Role: "assistant", Content: "先查資料", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+	}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("MaxIter=1 應因迭代上限停止")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆, got %d", len(evs))
+	}
+	var d struct {
+		Requests []struct {
+			Purpose  string        `json:"purpose"`
+			Messages []llm.Message `json:"messages"`
+			Reply    string        `json:"reply"`
+		} `json:"requests"`
+	}
+	json.Unmarshal(evs[0].Detail, &d)
+	if len(d.Requests) != 1 {
+		t.Fatalf("應一筆請求, got %d", len(d.Requests))
+	}
+	if d.Requests[0].Reply != "先查資料" {
+		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
 	}
 }
