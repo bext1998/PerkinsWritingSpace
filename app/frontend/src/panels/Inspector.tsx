@@ -7,7 +7,6 @@ import {Badge} from '@/components/ui/basic';
 import {Tip} from '@/components/ui/overlay';
 import {baseName} from '@/lib/utils';
 import {PanelProps} from './types';
-import {TYPE_ICON} from './BiblePanel';
 
 interface Props extends PanelProps {
     chapter: project.Entry | null;
@@ -56,10 +55,12 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                             </>
                         ) : (
                             <>
-                                <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
-                                    還沒有摘要。確認過的摘要會在之後的章節中作為「前情」提供給 AI,節省上下文。
-                                </p>
+                                <p className="mb-2 text-xs text-muted-foreground">尚無摘要</p>
                                 <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => onSummary(chapter.path)}>建立摘要</Button>
+                                <details className="mt-2 text-xs text-muted-foreground">
+                                    <summary className="cursor-pointer hover:text-foreground">摘要如何使用</summary>
+                                    <p className="pt-1 leading-relaxed">確認過的摘要會在之後的章節中作為「前情」提供給 AI,節省上下文。</p>
+                                </details>
                             </>
                         )}
                     </Section>
@@ -75,19 +76,19 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                         </Section>
                     )}
 
-                    <Section title="本章登場" icon={Users}>
+                    <Section title="本章提及的設定" icon={Users}>
                         {cast.length === 0 ? (
                             <p className="text-xs text-muted-foreground">沒有偵測到設定集裡的名稱。(存檔後更新)</p>
                         ) : (
                             <ul className="space-y-0.5" data-testid="cast">
                                 {cast.map(c => {
                                     const e = entityOf(c.path);
-                                    const Icon = TYPE_ICON[e?.type ?? '其他'] ?? Users;
                                     return (
                                         <li key={c.path} className="group flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
-                                            <Icon className="h-3.5 w-3.5 text-muted-foreground"/>
+                                            {/* 以類型文字區分(設計審查 18),不用圖示 */}
+                                            <span className="shrink-0 text-xs text-muted-foreground">{e?.type ?? '其他'}</span>
                                             <span className="flex-1 cursor-pointer truncate" onClick={() => openFile(c.path)}>{e?.name ?? baseName(c.path)}</span>
-                                            <span className="text-[10px] text-muted-foreground">×{c.count}</span>
+                                            <span className="text-xs tabular-nums text-muted-foreground">×{c.count}</span>
                                             <Tip label="附加到對話" side="left">
                                                 <button className="hidden text-muted-foreground hover:text-primary group-hover:block"
                                                         onClick={() => ask({attach: [c.path], nonce: 0})}>
@@ -113,7 +114,7 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                                 <li key={a.path} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
                                     onClick={() => openFile(a.path)}>
                                     <span className="flex-1 truncate">{titleOf(a.path)}</span>
-                                    <span className="text-[10px] text-muted-foreground">×{a.count}</span>
+                                    <span className="text-xs text-muted-foreground">×{a.count}</span>
                                 </li>
                             ))}
                         </ul>

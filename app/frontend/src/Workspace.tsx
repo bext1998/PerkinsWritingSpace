@@ -273,7 +273,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         {panel === 'checks' && <ChecksPanel {...panelProps} chapter={chapter?.path ?? null}/>}
                     </div>
                     {tree.warnings?.length > 0 && (
-                        <div className="max-h-24 overflow-y-auto border-t p-2 text-[11px] text-warning">
+                        <div className="max-h-24 overflow-y-auto border-t p-2 text-xs text-warning">
                             {tree.warnings.map(w => <p key={w}>{w}</p>)}
                         </div>
                     )}
@@ -313,7 +313,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                             <DropdownMenuLabel>複製本章為…</DropdownMenuLabel>
                                             {cfg?.platforms.map(p => (
                                                 <DropdownMenuItem key={p.id} onSelect={() => copyTo(chapter.path, p.id, p.name)}>
-                                                    {p.name}{!p.verified && <span className="ml-auto text-[10px] text-muted-foreground">未驗證</span>}
+                                                    {p.name}{!p.verified && <span className="ml-auto text-xs text-muted-foreground">未驗證</span>}
                                                 </DropdownMenuItem>
                                             ))}
                                         </DropdownMenuContent>
@@ -343,7 +343,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {/* 狀態列 */}
-                <footer className="flex h-7 shrink-0 items-center gap-4 border-t px-4 text-[11px] text-muted-foreground">
+                <footer className="flex h-7 shrink-0 items-center gap-4 border-t px-4 text-xs text-muted-foreground">
                     {chapter && <span data-testid="count-chapter">本章 {liveCount.toLocaleString()} 字</span>}
                     {volume && <span>本卷 {volumeCount.toLocaleString()} 字</span>}
                     <span>全書 {totalCount.toLocaleString()} 字</span>
@@ -375,7 +375,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {toast && (
                 <div data-testid="toast"
-                     className={cn('fixed bottom-10 left-1/2 z-[80] max-w-xl -translate-x-1/2 rounded-lg border px-4 py-2.5 text-sm shadow-xl',
+                     className={cn('fixed bottom-10 left-1/2 z-[80] max-w-xl -translate-x-1/2 rounded-lg border px-4 py-2.5 text-sm shadow-md',
                          toast.kind === 'error' ? 'border-destructive/50 bg-card text-destructive' : 'bg-card')}>
                     {toast.text}
                 </div>

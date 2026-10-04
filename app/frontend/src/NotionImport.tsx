@@ -87,7 +87,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                             <tr key={g.key} className="border-t">
                                 <td className="py-2 pr-3">
                                     <div>{g.label}</div>
-                                    <div className="truncate text-[11px] text-muted-foreground">{g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}</div>
+                                    <div className="truncate text-xs text-muted-foreground">{g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}</div>
                                 </td>
                                 <td className="py-2 text-muted-foreground">{g.files.length}</td>
                                 <td className="w-40 py-2">

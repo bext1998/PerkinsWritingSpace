@@ -67,7 +67,7 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         check('場景出現在側欄', !!(await page.$('aside li:has-text("營火")')));
         await page.waitForSelector('[data-testid=cast]', {timeout: 5000}).catch(() => {});
         const cast = await page.textContent('[data-testid=inspector]');
-        check('資訊欄列出本章登場(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
+        check('資訊欄列出本章提及的設定(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
         await shot('01-workspace');
 
         // 回歸:章節裡沒有任何設定實體 + 收合側欄 → 開啟 AI 視窗不能整個白屏。
@@ -255,11 +255,33 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
 
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
-        await page.waitForSelector('text=我的書櫃');
+        await page.waitForSelector('[data-testid=bookshelf-title]');
         // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
         await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
+        await page.waitForTimeout(400); // 等移除鈕/書封動畫收尾再拍
         await shot('13-bookshelf');
+        // 1B 視覺驗收(設計審查 16/17):書櫃首頁與自動書封特寫(深色)
+        await shot('31-1b-bookshelf-dark');
+        const coverEl = await page.$('button[title*="manuscript"]:not([disabled])');
+        const bookCard = await page.$$('.group.relative button.h-\\[176px\\]');
+        if (bookCard[0]) {
+            const cb = await bookCard[0].boundingBox();
+            await page.screenshot({path: path.join(SHOTS, '32-1b-cover-zoom.png'), clip: {x: Math.max(0, cb.x - 20), y: Math.max(0, cb.y - 20), width: cb.width + 40, height: cb.height + 70}});
+        }
+        // 淺色書櫃:切白紙 → 書櫃 → 切回
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        await shot('33-1b-bookshelf-light');
+        await page.click('[data-testid=open-settings]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
@@ -500,6 +522,48 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         check('U7 長章名下可點擊(點後變仍要附加狀態)', !!(await page.$('[data-testid=chips] span:has-text("仍要附加")')));
         await shot('25-u7-long-title');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // ===== 1B 視覺驗收:AI 浮窗含回覆與提案卡、資訊欄(深/淺各一;截圖等動畫結束) =====
+        // 回覆:DEV hook 注入(不呼叫模型);提案卡:寫入真實 .perkins/proposals/<id>.json 後由 refreshProposals 載入
+        const projWrite = (rel, content) => { fs.mkdirSync(path.dirname(P(rel)), {recursive: true}); fs.writeFileSync(P(rel), content); };
+        projWrite('.perkins/proposals/20261005-090000-abc123.json', JSON.stringify({
+            id: '20261005-090000-abc123', createdAt: '2026-10-05T09:00:00+08:00', model: '截圖用假提案', target: 'manuscript/第一章.md',
+            original: '天很黑。她很害怕。', replacement: '夜色像墨一樣漫開。她把手電筒擑得更緊。',
+            rationale: '讓開場更有畫面感。', assumptions: [], baseHash: 'x', start: 0, end: 0, status: 'pending',
+        }, null, 2));
+        await page.evaluate(() => {
+            window.__perkinsChatInject([
+                {role: 'user', text: '把開場改得更有畫面感', meta: '選取 9 字'},
+                {role: 'assistant', text: '建議**修改**開場段落:\n- 原句節奏平直\n- 以環境細節代替直述'},
+            ]);
+            window.__perkinsRefreshProposals();
+        });
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=assistant-turn]');
+        await page.waitForTimeout(500); // 等動畫
+        check('1B 截圖準備:回覆以 Markdown 顯示且提案卡在場',
+            (await page.textContent('[data-testid=assistant-turn]')).includes('建議') && !!(await page.$('[data-testid=proposal]')));
+        await shot('34-1b-chat-reply-dark');
+        // 淺色浮窗 + 資訊欄
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        await shot('35-1b-workspace-light');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForTimeout(500);
+        await shot('36-1b-chat-reply-light');
+        await page.keyboard.press('Escape');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await shot('37-1b-inspector-light');
+        await page.click('[data-testid=open-settings]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

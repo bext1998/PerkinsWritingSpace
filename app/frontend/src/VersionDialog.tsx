@@ -102,7 +102,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                             <li key={m.id} onClick={() => pick(m)}
                                 className={cn('cursor-pointer rounded px-2 py-1.5', sel?.id === m.id ? 'bg-accent' : 'hover:bg-accent/60')}>
                                 <div className="text-[13px]">{new Date(m.time).toLocaleString()}</div>
-                                <div className="truncate text-[11px] text-muted-foreground">{reasonText[m.reason] ?? m.reason}{m.label ? ` · ${m.label}` : ''}</div>
+                                <div className="truncate text-xs text-muted-foreground">{reasonText[m.reason] ?? m.reason}{m.label ? ` · ${m.label}` : ''}</div>
                             </li>
                         ))}
                     </ul>
@@ -112,7 +112,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                 <div className="mb-2 flex flex-wrap gap-1">
                                     {sel.files?.map(f => (
                                         <button key={f} onClick={() => showDiff(sel, f)}
-                                                className={cn('rounded border px-2 py-0.5 text-[11px]', f === file ? 'border-primary text-primary' : 'text-muted-foreground hover:text-foreground')}>
+                                                className={cn('rounded border px-2 py-0.5 text-xs', f === file ? 'border-primary text-primary' : 'text-muted-foreground hover:text-foreground')}>
                                             {titleOf(f)}
                                         </button>
                                     ))}

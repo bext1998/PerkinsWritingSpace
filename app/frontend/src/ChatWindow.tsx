@@ -16,6 +16,7 @@ import {
     SelectItem, SelectTrigger, SelectValue, Tip,
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
+import {MdLite} from '@/lib/md-lite';
 import type {Toast} from './Workspace';
 
 export interface ChatRequest {
@@ -71,7 +72,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
 }) {
     return (
         <span title={title} onClick={onClick}
-              className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]',
+              className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs',
                   warning ? 'max-w-[22rem]' : 'max-w-[12rem]',
                   warning ? 'border-warning/50 bg-warning/10 text-warning' :
                   dashed ? 'cursor-pointer border-dashed text-muted-foreground hover:border-primary hover:text-primary' : 'bg-secondary',
@@ -137,6 +138,16 @@ export default function ChatWindow(props: Props) {
         setTimeout(() => input.current?.focus(), 50);
     }, [request?.nonce]);
 
+    // 開發模式專用:E2E/截圖用 window.__perkinsChatInject(turns) 注入對話(不呼叫模型);
+    // 正式建置不存在。
+    useEffect(() => {
+        if (import.meta.env.DEV) {
+            (window as any).__perkinsChatInject = (arr: Turn[]) => setTurns(arr);
+            (window as any).__perkinsRefreshProposals = () => refreshProposals();
+            return () => { delete (window as any).__perkinsChatInject; delete (window as any).__perkinsRefreshProposals; };
+        }
+    }, []);
+
     useEffect(() => {
         const offEvent = EventsOn('chat:event', (e: ChatEvent) => {
             if (e.kind === 'delta') {
@@ -164,6 +175,24 @@ export default function ChatWindow(props: Props) {
     }, []);
 
     useEffect(() => { bottom.current?.scrollIntoView({block: 'end'}); }, [turns, proposals.length]);
+
+    // 提案建立成功:回覆氣泡不重述完整替換內容,改成一行狀態(設計審查 10)。
+    // 條件:這次 ask 開始後新增了 pending 提案,且最後一個氣泡是(重述內容的)assistant 回覆。
+    useEffect(() => {
+        if (busy) return;
+        const fresh = proposals.some(pp => pp.status === 'pending' && !askStartProposals.current.has(pp.id));
+        if (!fresh) return;
+        setTurns(ts => {
+            const last = ts[ts.length - 1];
+            if (last?.role === 'assistant' && last.text.length > 80) {
+                return [...ts.slice(0, -1), {role: 'assistant', text: '已建立提案,見下方卡片。'}];
+            }
+            return ts;
+        });
+        // 標記已消費,避免後續 proposals 變化(接受/拒絕)再次觸發
+        askStartProposals.current = new Set(proposals.map(pp => pp.id));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [proposals.length, busy]);
 
     // 開啟對話框時,把編輯器當下的選取帶入(§16 第 1 項 04;chat-fab 已透過 onPickSelection 讀取);
     // 選取來自哪個檔案由帶入當下的 doc 記錄。
@@ -214,11 +243,15 @@ export default function ChatWindow(props: Props) {
         priorSummaries: prior && withDoc && isChapter,
     });
 
+    // 對話開始時的提案 id:結束時若新增了提案,把模型的重述回覆縮成一行(設計審查 10)
+    const askStartProposals = useRef<Set<string>>(new Set());
+
     const send = async () => {
         if (!question.trim() || busy) return;
         if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
         try {
             await beforeAsk();
+            askStartProposals.current = new Set(proposals.map(pp => pp.id));
             await AskAI(params());
             const meta = [
                 selSent ? `選取 ${selSent.length} 字${selStale && keepSel ? '(仍要附加)' : ''}` : '',
@@ -311,11 +344,11 @@ export default function ChatWindow(props: Props) {
         <>
             {!open && (
                 <button data-testid="chat-fab"
-                        className="fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xl transition-transform hover:scale-105"
+                        className="fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-105"
                         onClick={() => { onPickSelection?.(); setOpen(true); }} title="AI 助手">
                     <MessageCircle className="h-6 w-6"/>
                     {(pending > 0 || busy) && (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-white">
+                        <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold text-white">
                             {busy ? <Loader2 className="h-3 w-3 animate-spin"/> : pending}
                         </span>
                     )}
@@ -323,13 +356,13 @@ export default function ChatWindow(props: Props) {
             )}
 
             <div ref={box} data-testid="chat-window"
-                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-xl border bg-card shadow-2xl', !open && 'hidden')}
+                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg', !open && 'hidden')}
                  style={{...style, width: 440, height: 620, minWidth: 340, minHeight: 360, maxWidth: '90vw', maxHeight: '90vh', resize: 'both'}}>
                 {/* 標題列(可拖曳) */}
                 <div className="flex h-11 shrink-0 cursor-move select-none items-center gap-2 border-b px-3" onMouseDown={startDrag}>
                     <Bot className="h-4 w-4 text-primary"/>
                     <span className="text-sm font-semibold">AI 助手</span>
-                    {mode === 'report' && <Badge variant="warning" className="text-[10px]">檢查報告模式</Badge>}
+                    {mode === 'report' && <Badge variant="warning" className="text-xs">檢查報告模式</Badge>}
                     <GripHorizontal className="mx-auto h-4 w-4 text-muted-foreground/40"/>
                     <Tip label="新對話" side="bottom">
                         <Button variant="ghost" size="iconSm" onMouseDown={e => e.stopPropagation()} onClick={reset}><SquarePen/></Button>
@@ -361,13 +394,15 @@ export default function ChatWindow(props: Props) {
                             {t.role === 'user' && (
                                 <>
                                     <div className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary/15 px-3 py-2 text-sm">{t.text}</div>
-                                    {t.meta && <span className="mt-0.5 text-[10px] text-muted-foreground">{t.meta}</span>}
+                                    {t.meta && <span className="mt-0.5 text-xs text-muted-foreground">{t.meta}</span>}
                                 </>
                             )}
                             {t.role === 'assistant' && (
-                                <div className="whitespace-pre-wrap rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm leading-relaxed" data-testid="assistant-turn">{t.text}</div>
+                                <div className="rounded-lg rounded-bl-sm bg-secondary px-3 py-2 text-sm leading-relaxed" data-testid="assistant-turn">
+                                    <MdLite text={t.text}/>
+                                </div>
                             )}
-                            {t.role === 'tool' && <div className="px-1 text-[11px] text-muted-foreground">· {t.text}</div>}
+                            {t.role === 'tool' && <div className="px-1 text-xs text-muted-foreground">· {t.text}</div>}
                             {t.role === 'notice' && (
                                 <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning" data-testid="notice">
                                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>{t.text}
@@ -386,7 +421,7 @@ export default function ChatWindow(props: Props) {
                                 return (
                                     <div key={p.id} data-testid="proposal"
                                          className={cn('rounded-lg border bg-background/60 p-2.5 text-sm', p.status === 'conflict' && 'border-warning')}>
-                                        <div className="mb-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                                        <div className="mb-1.5 flex items-center gap-1 text-xs text-muted-foreground">
                                             <FileText className="h-3 w-3"/>{titleOf(p.target)}
                                             <span className="ml-auto">{p.model}</span>
                                         </div>
@@ -396,7 +431,7 @@ export default function ChatWindow(props: Props) {
                                                   disabled={p.status === 'conflict'}
                                                   onChange={e => setEdited(m => ({...m, [p.id]: e.target.value}))}/>
                                         {changed && (
-                                            <div className="mt-1 flex items-center gap-2 text-[11px] text-primary">
+                                            <div className="mt-1 flex items-center gap-2 text-xs text-primary">
                                                 已修改 · 接受時會寫入你的版本
                                                 <button className="flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
                                                         onClick={() => setEdited(m => { const n = {...m}; delete n[p.id]; return n; })}>
@@ -475,7 +510,7 @@ export default function ChatWindow(props: Props) {
                                     {pickable.length === 0 && <p className="p-2 text-xs text-muted-foreground">沒有可附加的檔案。</p>}
                                     {pickable.map(g => (
                                         <div key={g.label} className="mb-2">
-                                            <div className="px-1 text-[11px] font-semibold text-muted-foreground">{g.label}</div>
+                                            <div className="px-1 text-xs font-semibold text-muted-foreground">{g.label}</div>
                                             {g.items.map(i => (
                                                 <label key={i.path} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent">
                                                     <Checkbox checked={attach.includes(i.path)} onCheckedChange={() => toggleAttach(i.path)}/>
@@ -550,7 +585,7 @@ export default function ChatWindow(props: Props) {
                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" data-testid="preview">
                         {/* 兩區分列(§16 第 1 項 07):本次直接送出 vs AI 工具可讀取範圍 */}
                         <div className="rounded-md border" data-testid="preview-direct">
-                            <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">本次直接送出</div>
+                            <div className="border-b bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">本次直接送出</div>
                             <div className="space-y-1 p-2 text-xs">
                                 {withDoc && doc && <p>· 目前文件:{titleOf(doc)}(全文)</p>}
                                 {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
@@ -563,7 +598,7 @@ export default function ChatWindow(props: Props) {
                             </div>
                         </div>
                         <div className="rounded-md border" data-testid="preview-tools">
-                            <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
+                            <div className="border-b bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
                             <div className="p-2 text-xs text-muted-foreground">
                                 · manuscript/ 全部章節、summaries/ 已確認的章節摘要(唯讀)
                                 · canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案
@@ -571,12 +606,13 @@ export default function ChatWindow(props: Props) {
                         </div>
                         {/* 完整原始訊息放在可展開區 */}
                         <details className="rounded-md border">
-                            <summary className="cursor-pointer px-2 py-1 text-[11px] font-semibold text-muted-foreground">原始訊息(完整)</summary>
+                            <summary className="cursor-pointer px-2 py-1 text-xs font-semibold text-muted-foreground">原始訊息(完整)</summary>
+                            {/* 內層不再包框:以分隔線與留白分層(設計審查 15) */}
                             <div className="p-2 pt-0">
                                 {preview?.messages.map((m, i) => (
-                                    <div key={i} className="mt-2 rounded-md border">
-                                        <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">{m.role}</div>
-                                        <pre className="whitespace-pre-wrap p-2 font-sans text-xs leading-relaxed">{m.content}</pre>
+                                    <div key={i} className={cn('py-2', i > 0 && 'border-t border-border/60')}>
+                                        <div className="text-xs font-semibold text-muted-foreground">{m.role}</div>
+                                        <pre className="whitespace-pre-wrap pt-1 font-sans text-xs leading-relaxed">{m.content}</pre>
                                     </div>
                                 ))}
                             </div>
