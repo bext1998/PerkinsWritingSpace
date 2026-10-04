@@ -238,11 +238,31 @@ const check = (name, ok, detail = '') => { results.push({name, ok, detail}); con
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('text=我的書櫃');
+        // 既有檢查原本直接用 page.$ 查詢,會在 ListRecent 資料回來前就判定而偶發失敗;先等列 render 再斷言
+        await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await shot('13-bookshelf');
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
+
+        // 存檔按鈕(SPEC §16 第 5 項):開一章、打字、點按鈕存檔
+        await page.click('[data-testid=chapter-row]:has-text("第二章")');
+        await page.waitForSelector('.cm-content');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('saveBtnTest');
+        await page.waitForTimeout(400);
+        const btn = await page.textContent('[data-testid=save-button]');
+        check('E3 未儲存時按鈕顯示「儲存」且可按', btn.trim() === '儲存' && !(await page.$('[data-testid=save-button][disabled]')), btn.trim());
+        await shot('13-save-button-dirty');
+        await page.click('[data-testid=save-button]');
+        await page.waitForTimeout(800);
+        const diskE3 = read('manuscript/第二章.md');
+        check('E3 點按鈕後檔案已寫入新字', diskE3.includes('saveBtnTest'), JSON.stringify(diskE3.slice(-40)));
+        const btn2 = await page.textContent('[data-testid=save-button]');
+        check('E3 存檔後按鈕變為「已儲存」且停用', btn2.includes('已儲存') && !!(await page.$('[data-testid=save-button][disabled]')), btn2.trim());
+        await shot('14-save-button');
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

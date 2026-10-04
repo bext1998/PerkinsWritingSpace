@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
     BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, NotebookPen, PanelLeftClose, PanelRightClose,
-    PanelRightOpen, ScrollText, Settings, Share2, Users,
+    PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
     ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, GetSettings, GetTree, ParseEntity, ReadFile,
@@ -135,16 +135,23 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         refreshIndex();
     }, [current, refreshCounts, refreshIndex]);
 
+    // Ctrl+S 與存檔按鈕共用:存檔期間停用按鈕,避免連點
+    const [saving, setSaving] = useState(false);
+    const saveNow = useCallback(() => {
+        setSaving(true);
+        save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail).finally(() => setSaving(false));
+    }, [save, notify, fail]);
+
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
-                save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail);
+                saveNow();
             }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [save, notify, fail]);
+    }, [saveNow]);
 
     // 本章字數(與後端同一套計算規則)
     useEffect(() => {
@@ -312,6 +319,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                     </DropdownMenu>
                                 </>
                             )}
+                            {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
+                            <Button size="sm"
+                                    data-testid="save-button"
+                                    variant={dirty ? 'default' : 'ghost'}
+                                    disabled={saving || !dirty}
+                                    onClick={saveNow}
+                                    title="儲存(Ctrl+S)">
+                                <Save/>{saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}
+                            </Button>
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"><History/>版本</Button>
                             <Tip label={inspector ? '收合資訊欄' : '展開資訊欄'} side="bottom">
                                 <Button variant="ghost" size="iconSm" onClick={() => setInspector(v => !v)}>
@@ -341,7 +357,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     <span>全書 {totalCount.toLocaleString()} 字</span>
                     {current && !chapter && <span>{liveCount.toLocaleString()} 字</span>}
                     <div className="flex-1"/>
-                    {current && <span>{dirty ? '未儲存 · Ctrl+S' : '已儲存'}</span>}
+                    {current && <span>{dirty ? '未儲存' : '已儲存'}</span>}
                     {activeProfile && <span>AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                 </footer>
             </main>
