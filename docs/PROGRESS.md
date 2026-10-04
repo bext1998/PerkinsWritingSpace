@@ -9,7 +9,15 @@
 - **03 還原分層**(`VersionDialog.tsx`):「還原此檔」為主要按鈕;「還原快照內全部檔案」移到「更多…」下拉。兩者點擊後原地確認區塊:快照時間+原因+說明、要還原的檔案、目前內容會先自動備份、「確定還原」「取消」(不用 window.confirm)。
 - **04 選取後直接問 AI**(`Editor.tsx`):有選取時編輯器右上浮動列「詢問這段」+「段落指令」(展開快速指令);點擊帶入當下選取;右鍵選單保留。AI 圓鈕開啟對話框時讀取當下選取(`onPickSelection`)。
 - **07 送出內容預覽**(`ChatWindow.tsx`):眼睛圖示改為文字按鈕「送出內容」;預覽分兩區:「本次直接送出」(目前文件、選取及來源、附加檔案、摘要、問題、報告模式)與「AI 工具可讀取範圍」(manuscript/ 全部、summaries/ 已確認、canon/ 僅附加者),標示端點位置(本機/雲端);完整原始訊息移到 `<details>` 可展開區。
-- E2E 移植 E2E_SKIP_AI=1(check 正規化 `!!ok`);新情境 U1–U5 共 20 項;書櫃檢查補 waitForSelector(已知 flaky race)。驗證:`go test ./...` 全過、`npm run build` 通過、E2E **47/47 passed,略過 8 項**。截圖 20/21/22/23 已目視:常駐新章鈕、還原確認區、選取浮動列、預覽兩區均正常。
+- E2E 移植 E2E_SKIP_AI=1(check 正規化 `!!ok`);新情境 U1–U7;書櫃檢查補 waitForSelector + waitForFunction(已知 flaky race,根因未明,屬書櫃列表渲染時機)。驗證:`go test ./...` 全過、`npm run build` 通過、E2E **60/60 passed,略過 8 項**。截圖 20/21/22/23/24/25 已目視:常駐新章鈕、還原確認區、選取浮動列、預覽兩區、無復活選取、長章名 chip 均正常。
+- 審查修補(review-1a 第 1–4 點,E 段):
+  - **移除選取不得復活**(`ChatWindow.tsx`):`clearSel()` 同時呼叫 `onClearLastSel?.()`(Workspace 清掉 `lastSel`),只有「新的選取」能重新取得重開時回填資格;E2E U6 以私人筆記選取情境驗證(移除後重開 AI 視窗無選取標籤、原始 messages 不含該段)。
+  - **長章名 chip**(`ChatWindow.tsx`):Chip 新增 `shrinkText`——truncate 區只放來源段文字,操作按鈕(仍要附加/移除)放 `shrink-0` 區域;警示 chip 放寬到 max-w-[22rem]。E2E U7 建立長章名章節,斷言來源段與「仍要附加」分離且按鈕完整可見可點。
+  - **工具可讀範圍說明**(`ChatWindow.tsx`):改為「canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案」;E2E U5 斷言含 outline/、notes/ 與完整說明字樣。
+  - **送出紀錄 meta**(`ChatWindow.tsx`):記錄送出當下實際附加的選取(`selSent`),非視窗開啟時的 `sel`;E2E U2 以 PreviewContext 原始 messages 核對預設不送出/明確點「仍要附加」才送。
+  - **還原前磁碟/編輯器狀態**:U3 加還原前後比對與 before-restore 備份斷言。
+  - 破壞驗證五項均成立:(1) 移除 `onClearLastSel` → U6 兩項 FAIL;(2) Chip 移除 shrinkText 機制 → U7(separated:false)+U2 FAIL;(3) 說明改回舊文字 → U5 新斷言 FAIL;(4) `selection` 改回 `sel` → U2「預設不送出」FAIL;(5) `restore-file` 略過確認直接還原 → U3 確認區不出現中斷 FAIL。
+- 已知 E2E 測試碼注意事項:`add-chapter-0` 點擊後按鈕被輸入框取代,playwright 穩定性檢查會誤判 timeout,改用 `page.evaluate` 直擊;`rail-manuscript`/`rail-docs` 是雙態按鈕,重複點會收合側欄,需先條件判斷;`page.evaluate` 內不能用 playwright 專屬的 `:has-text` selector;`--fixture` 重建時會清 perkins.json 的 lastOpen,未重建 fixture 重跑會直接進編輯器導致書櫃情境 timeout。
 
 ## 2026-09-30 — 版本差異標出行內改動的字## 2026-09-30 — 版本差異標出行內改動的字
 

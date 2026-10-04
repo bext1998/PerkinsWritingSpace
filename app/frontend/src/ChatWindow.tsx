@@ -46,6 +46,7 @@ interface Props {
     notify: (t: Toast) => void;
     onPickSelection?: () => void; // 開啟對話框前讀取編輯器當下的選取(§16 第 1 項 04)
     lastSel?: {sel: {text: string}; from: string | null} | null; // 最後一次的非空選取與來源(02)
+    onClearLastSel?: () => void; // 作者移除選取標籤時取消回填資格(review-1a 第 1 點)
 }
 
 interface ChatEvent {
@@ -64,17 +65,19 @@ interface Turn {
 
 const KIND_LABEL: Record<string, string> = {canon: '設定', outline: '大綱', notes: '筆記', manuscript: '章節'};
 
-function Chip({children, onRemove, dashed, onClick, className, title, warning}: {
+function Chip({children, onRemove, dashed, onClick, className, title, warning, shrinkText}: {
     children: React.ReactNode; onRemove?: () => void; dashed?: boolean; onClick?: () => void; className?: string; title?: string; warning?: boolean;
+    shrinkText?: string; // 有值時:只截短這段文字,children(操作按鈕)放不收縮區域(review-1a 第 2 點)
 }) {
     return (
         <span title={title} onClick={onClick}
               className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px]',
-                  warning ? 'max-w-[16rem]' : 'max-w-[12rem]',
+                  warning ? 'max-w-[22rem]' : 'max-w-[12rem]',
                   warning ? 'border-warning/50 bg-warning/10 text-warning' :
                   dashed ? 'cursor-pointer border-dashed text-muted-foreground hover:border-primary hover:text-primary' : 'bg-secondary',
                   className)}>
-            <span className="truncate">{children}</span>
+            <span className="truncate">{shrinkText ?? children}</span>
+            {shrinkText != null && <span className="shrink-0">{children}</span>}
             {onRemove && (
                 <button className="shrink-0 text-muted-foreground hover:text-foreground" onClick={e => { e.stopPropagation(); onRemove(); }}>
                     <X className="h-3 w-3"/>
@@ -85,7 +88,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning}: 
 }
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onPending, pending, notify, onPickSelection, lastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -181,6 +184,14 @@ export default function ChatWindow(props: Props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
+    // 移除選取標籤:同時取消「重開時回填」的資格(review-1a 第 1 點)
+    const clearSel = () => {
+        setSel(null);
+        setSelFrom(null);
+        setKeepSel(false);
+        onClearLastSel?.();
+    };
+
     // 建議附加:選取段落(沒有選取時為目前章節)中出現的設定實體。只是建議,作者點選才附加。
     useEffect(() => {
         if (!open) return;
@@ -210,7 +221,7 @@ export default function ChatWindow(props: Props) {
             await beforeAsk();
             await AskAI(params());
             const meta = [
-                sel ? `選取 ${sel.length} 字` : '',
+                selSent ? `選取 ${selSent.length} 字${selStale && keepSel ? '(仍要附加)' : ''}` : '',
                 attach.length ? `附加 ${attach.length} 個檔案` : '',
                 mode === 'report' ? '檢查報告模式' : '',
             ].filter(Boolean).join(' · ');
@@ -420,17 +431,17 @@ export default function ChatWindow(props: Props) {
                             : <Chip dashed onClick={() => setWithDoc(true)}><Plus className="inline h-3 w-3"/>目前文件</Chip>)}
                         {sel && (selStale ? (
                             // 來源不是目前文件:警示色 + 來源名 + 移除;預設不送出,點「仍要附加」才送
-                            <Chip warning onRemove={() => { setSel(null); setSelFrom(null); setKeepSel(false); }}
-                                  title={`這段選取來自「${titleOf(selFrom!)}」,不是目前開啟的檔案;送出時預設不附加`}>
-                                <TextSelect className="mr-0.5 inline h-3 w-3"/>
-                                選取 {sel.length} 字(來自〈{titleOf(selFrom!)}〉)
+                            // Chip 內文只截短來源段;「仍要附加」與移除在不收縮的區域(review-1a 第 2 點)
+                            <Chip warning onRemove={() => { clearSel(); }}
+                                  title={`這段選取來自「${titleOf(selFrom!)}」,不是目前開啟的檔案;送出時預設不附加`}
+                                  shrinkText={`選取 ${sel.length} 字(來自〈${titleOf(selFrom!)}〉)`}>
                                 {keepSel
-                                    ? <span className="ml-1 text-warning">仍要附加</span>
-                                    : <button className="ml-1 underline underline-offset-2 hover:text-foreground" data-testid="keep-sel"
+                                    ? <span className="shrink-0 text-warning">仍要附加</span>
+                                    : <button className="shrink-0 underline underline-offset-2 hover:text-foreground" data-testid="keep-sel"
                                               onMouseDown={e => e.stopPropagation()}
-                                              onClick={() => setKeepSel(true)}>仍要附加</button>}
+                                              onClick={e => { e.stopPropagation(); setKeepSel(true); }}>仍要附加</button>}
                             </Chip>
-                        ) : <Chip onRemove={() => { setSel(null); setSelFrom(null); }}><TextSelect className="mr-0.5 inline h-3 w-3"/>選取 {sel.length} 字</Chip>)}
+                        ) : <Chip onRemove={() => clearSel()}><TextSelect className="mr-0.5 inline h-3 w-3"/>選取 {sel.length} 字</Chip>)}
                         {isChapter && withDoc && (prior
                             ? <Chip onRemove={() => setPrior(false)}><ScrollText className="mr-0.5 inline h-3 w-3"/>前情摘要</Chip>
                             : <Chip dashed onClick={() => setPrior(true)}><Plus className="inline h-3 w-3"/>前情摘要</Chip>)}
@@ -554,8 +565,8 @@ export default function ChatWindow(props: Props) {
                         <div className="rounded-md border" data-testid="preview-tools">
                             <div className="border-b bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
                             <div className="p-2 text-xs text-muted-foreground">
-                                · manuscript/ 全部章節、summaries/ 已確認的章節摘要
-                                · canon/ 設定:只有你點選附加的檔案
+                                · manuscript/ 全部章節、summaries/ 已確認的章節摘要(唯讀)
+                                · canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案
                             </div>
                         </div>
                         {/* 完整原始訊息放在可展開區 */}

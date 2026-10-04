@@ -53,6 +53,8 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
     try {
         await page.goto('http://localhost:34115');
         await page.waitForSelector('text=E2E測試', {timeout: 30000});
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        await page.waitForFunction(() => document.querySelectorAll('[data-testid=chapter-row]').length === 3, {timeout: 30000});
         const rows = await page.$$('[data-testid=chapter-row]');
         check('B1 舊版 order 專案開啟後章節順序保留', rows.length === 3 && (await rows[0].textContent()).includes('第一章'));
         check('B1 只是開啟不改寫 perkins.json', hash('perkins.json') === cfgHash);
@@ -292,23 +294,27 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         const staleChip = await page.textContent('[data-testid=chips]');
         check('U2 標籤顯示選取來源為第一章', staleChip.includes('來自〈第一章〉'), staleChip);
         check('U2 警示色標籤', !!(await page.$('[data-testid=chips] .border-warning, [data-testid=chips] [class*=warning]')));
-        // 送出內容預覽:直接送出區不應含第一章的選取
+        // 送出內容預覽:從 PreviewContext 回傳的原始 messages(展開的 details)核對【作者選取的段落】
+        // (review-1a 第 4 點:不以 preview-direct 摘要為準,以實際送出內容為準)
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview-direct]');
-        const direct = await page.textContent('[data-testid=preview-direct]');
-        check('U2 預設不送出舊選取(預覽無第一章選取段)', !direct.includes('艾莉絲走進森林。天很黑。她很害怕。'), direct);
-        check('U2 預覽標示選取未附加', direct.includes('未附加'), direct);
+        await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
+        const msgs2 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
+        check('U2 預設不送出舊選取(原始 messages 無【作者選取的段落】)', !msgs2.some(t => t.includes('【作者選取的段落】')), `messages=${msgs2.length}`);
         await page.keyboard.press('Escape');
-        // 點「仍要附加」→ 預覽改含選取
+        // 點「仍要附加」→ 預覽的原始 messages 有精確全文
         await page.click('[data-testid=keep-sel]');
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview-direct]');
-        const direct2 = await page.textContent('[data-testid=preview-direct]');
-        check('U2 明確點仍要附加後才送出', direct2.includes('艾莉絲走進森林。天很黑。她很害怕。'), direct2);
+        await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
+        const msgs3 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
+        check('U2 明確點仍要附加後才送出(原始 messages 有精確全文)',
+            msgs3.some(t => t.includes('【作者選取的段落】') && t.includes('艾莉絲走進森林。天很黑。她很害怕。')), `messages=${msgs3.length}`);
         await page.keyboard.press('Escape');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
         // U3(03):還原分層 — 主要「還原此檔」需確認,取消不還原,確定後還原
+        const hashCH1U3 = hash('manuscript/第一章.md'); // 單檔還原時其他檔案未變
         // 先改稿:在第二章末尾打字(快照前的內容與目前不同,這樣 diff 才有差異、還原鈕可用)
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
@@ -340,22 +346,34 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.waitForSelector('[data-testid=restore-confirm]');
         const confirmTxt = await page.textContent('[data-testid=restore-confirm]');
         check('U3 確認區含快照時間與備份說明', confirmTxt.includes('快照') && confirmTxt.includes('自動備份'), confirmTxt);
+        // 存下還原前的磁碟/編輯器狀態(此時第二章磁碟被刪掉了新句)
+        const beforeCancel = read('manuscript/第二章.md');
         await page.click('[data-testid=restore-confirm-cancel]');
         await page.waitForTimeout(300);
         check('U3 取消後未還原(無確認區)', !(await page.$('[data-testid=restore-confirm]')));
+        check('U3 取消後磁碟與編輯器未變', read('manuscript/第二章.md') === beforeCancel);
         await page.click('[data-testid=restore-file]');
         await page.click('[data-testid=restore-confirm-go]');
         await page.waitForTimeout(1000);
         check('U3 確定後顯示已還原訊息', (await page.textContent('.max-w-5xl')).includes('已還原'));
+        // 確定後內容等於快照(快照含「還原前的新句」;刪句後的還原把它帶回)
+        check('U3 還原後磁碟等於快照內容(含新句)', read('manuscript/第二章.md').includes('還原前的新句'), JSON.stringify(read('manuscript/第二章.md').slice(-40)));
+        check('U3 編輯器也回到快照內容', (await page.textContent('.cm-content')).includes('還原前的新句'));
+        // 其他檔案未變(第一章此時為 fixture 原稿+staleGuard 已存的?第一章在 U4 還沒打字;以雜湊在 U3 開頭記下)
+        check('U3 單檔還原時其他檔案未變', hash('manuscript/第一章.md') === hashCH1U3);
+        // before-restore 備份含還原前內容:清單第一項(最新)應為「還原前備份」,其第二章含刪句後的內容
+        const newestReason = await page.$$eval('ul.w-56 li', els => els[0].textContent);
+        check('U3 before-restore 備份在清單頂', newestReason.includes('還原前備份'), newestReason);
         await shot('21-u3-restore');
         await page.keyboard.press('Escape');
 
         // U4(04):選取後浮動列出現;點「詢問這段」帶入選取開啟 AI 視窗(不送出)
+        // 用與前次不同的選取(雷恩行),並核對實際帶入的文字(review-1a 第 4 點)
         await page.keyboard.press('Escape'); // 關版本 dialog
         await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
-        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
-        await page.click('.cm-line:has-text("艾莉絲走進森林")');
+        await page.waitForSelector('.cm-line:has-text("雷恩點起營火")');
+        await page.click('.cm-line:has-text("雷恩點起營火")');
         await page.keyboard.press('Home');
         await page.keyboard.press('Shift+End');
         await page.waitForSelector('[data-testid=selection-bar]');
@@ -365,6 +383,14 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.waitForSelector('[data-testid=chat-window]:visible');
         const chip4 = await page.textContent('[data-testid=chips]');
         check('U4 帶入當下選取(標籤選取 N 字,無來源警示)', chip4.includes('選取') && !chip4.includes('來自'), chip4);
+        // 核對實際送出內容:PreviewContext 的原始 messages 含【作者選取的段落】與本次選取全文
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
+        const msgs4 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
+        check('U4 原始 messages 有【作者選取的段落】與當下選取全文',
+            msgs4.some(t => t.includes('【作者選取的段落】') && t.includes('雷恩點起營火。艾麗絲靠近火堆。')), `messages=${msgs4.length}`);
+        await page.keyboard.press('Escape');
         check('U4 未送出(無助手回覆)', !(await page.$('[data-testid=assistant-turn]')));
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
@@ -377,12 +403,103 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         check('U5 兩區分列(直接送出+工具可讀範圍)', !!(await page.$('[data-testid=preview-direct]')) && !!(await page.$('[data-testid=preview-tools]')));
         const toolsTxt = await page.textContent('[data-testid=preview-tools]');
         check('U5 工具區標示 manuscript/canon 範圍', toolsTxt.includes('manuscript') && toolsTxt.includes('canon'), toolsTxt);
+        // review-1a 第 3 點:工具區須明確說明 canon/outline/notes 只能讀「本次送出」的內容
+        check('U5 工具區說明 canon/outline/notes 限本次送出', toolsTxt.includes('outline/') && toolsTxt.includes('notes/') && toolsTxt.includes('只有你本次送出的目前文件或明確點選附加的檔案'), toolsTxt.slice(0, 120));
         const direct5 = await page.textContent('[data-testid=preview-direct]');
         check('U5 直接送出區含目前文件與問題', direct5.includes('目前文件') && direct5.includes('測試問題'), direct5);
         const dlg = await page.textContent('[role=dialog]');
         check('U5 預覽標示端點位置', dlg.includes('本機') || dlg.includes('雲端'), dlg.slice(0, 120));
         check('U5 原始訊息在可展開區', !!(await page.$('[role=dialog] details')));
+        // 截圖等動畫結束(建議修)
+        await page.waitForTimeout(250);
         await shot('23-u5-preview');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
+
+        // U6(review-1a 第 1 點):移除選取標籤/取消編輯器選取後,lastSel 不得回填
+        // 開私人筆記 → 選取 → 開 AI → 移除「目前文件」與「選取」標籤 → 取消編輯器選取 → 縮小再重開 → 以 PreviewContext messages 斷言不含該段
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await page.click('[data-testid=rail-notes], aside li:has-text("私人")').catch(() => {});
+        // 筆記在側欄 docs/notes 分頁;開大綱與筆記
+        if (!(await page.$('aside li:has-text("私人")'))) {
+            await page.click('[data-testid=rail-docs]');
+            await page.waitForSelector('aside li:has-text("私人")');
+        }
+        await page.click('aside li:has-text("私人")');
+        await page.waitForSelector('.cm-content:has-text("私人筆記")');
+        await page.click('.cm-line:has-text("反派是雷恩的哥哥")');
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Shift+End');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        // 移除「目前文件」與「選取」兩個標籤
+        await page.click('[data-testid=chips] span:has-text("目前:") button:has(svg.lucide-x)');
+        await page.click('[data-testid=chips] span:has-text("選取") button:has(svg.lucide-x)');
+        // 縮小 AI → 取消編輯器選取(點別行)→ 重開
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await page.click('.cm-line:has-text("私人筆記")'); // 點別行取消選取
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await page.waitForTimeout(400);
+        check('U6 已移除的選取不得復活(無選取標籤)', !(await page.$('[data-testid=chips] span:has-text("選取")')), await page.textContent('[data-testid=chips]'));
+        // 以 PreviewContext 的原始 messages 斷言不含該段
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview-direct]');
+        await page.evaluate(() => { const d = document.querySelector('[role=dialog] details'); if (d) d.open = true; });
+        const msgs6 = await page.$$eval('[role=dialog] details pre', els => els.map(e => e.textContent));
+        check('U6 原始 messages 不含私人筆記選取段', !msgs6.some(t => t.includes('反派是雷恩的哥哥')), `messages=${msgs6.length}`);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(250);
+        await shot('24-u6-no-revive');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // U7(review-1a 第 2 點):長章名 —「仍要附加」與移除按鈕仍可見可點
+        if (!(await page.$('[data-testid=chapter-row]:has-text("第一章")'))) await page.click('[data-testid=rail-manuscript]'); // 側欄沒開才點(toggle)
+        await page.waitForSelector('[data-testid=chapter-row]:has-text("第一章")');
+        // 建一個長章名(add-chapter-0 點擊後按鈕被輸入框取代,playwright 穩定性檢查會誤判 — 用 evaluate 直擊)
+        await page.evaluate(() => document.querySelector('[data-testid=add-chapter-0]').click());
+        await page.waitForSelector('[data-testid=chapter-name]');
+        await page.fill('[data-testid=chapter-name]', '第十二章森林深處的最後一場大戰');
+        await page.waitForTimeout(200);
+        check('U7 輸入框已填長章名', (await page.inputValue('[data-testid=chapter-name]')).includes('第十二章'), await page.inputValue('[data-testid=chapter-name]'));
+        await page.click('[data-testid=chapter-create]');
+        await page.waitForSelector('.cm-content:has-text("第十二章")');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('長章名選取測試句');
+        await page.waitForTimeout(400);
+        // 選取剛打的字
+        for (let i = 0; i < 8; i++) await page.keyboard.press('Shift+ArrowLeft');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        // 現在切到第一章,讓選取來源=長章名章(警示 chip);建立章節時側欄已開且在稿件面板,不必再 toggle
+        if (!(await page.$('[data-testid=chapter-row]:has-text("第一章")'))) await page.click('[data-testid=rail-manuscript]');
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+        const longChip = await page.$('[data-testid=chips] span:has-text("仍要附加") button, [data-testid=chips] button[data-testid=keep-sel]');
+        check('U7 長章名下「仍要附加」按鈕存在於 DOM', !!longChip);
+        // 可見性與可點擊性:按鈕的 boundingBox 在視窗內且能點擊成功
+        const bb = await page.$eval('[data-testid=keep-sel]', el => { const r = el.getBoundingClientRect(); return {x: r.x, y: r.y, w: r.width, visible: r.width > 0 && r.x >= 0}; });
+        check('U7 長章名下「仍要附加」可見(有寬度且在容器內)', bb.visible, JSON.stringify(bb));
+        // shrinkText 機制:章名文字被截短(truncate),但「仍要附加」文字完整不被截(review-1a 第 2 點)
+        const chipGeo = await page.evaluate(() => {
+            const chip = [...document.querySelectorAll('[data-testid=chips] span')].find(e => (e.textContent || '').includes('仍要附加'));
+            if (!chip) return null;
+            const chipR = chip.getBoundingClientRect();
+            // shrinkText 下:「仍要附加」在 .shrink-0 區(不收縮),truncate 區只剩來源段
+            const btn = [...chip.querySelectorAll('.shrink-0')].find(e => (e.textContent || '').includes('仍要附加'));
+            const btnR = btn?.getBoundingClientRect();
+            const trunc = chip.querySelector('span.truncate');
+            const truncText = trunc?.textContent || '';
+            // 截短機制的核心:truncate 區不含「仍要附加」,且來源段(或被 max-width 截短)與操作鈕分離
+            const separated = !truncText.includes('仍要附加');
+            return {chipW: chipR.width, btnText: btn?.textContent, btnVisible: btnR ? btnR.width > 0 && btnR.x >= 0 : false, truncText: truncText.slice(0, 30), separated};
+        });
+        check('U7 來源段與「仍要附加」分離且按鈕完整可見(shrinkText)', !!chipGeo && chipGeo.separated && chipGeo.btnVisible && (chipGeo.btnText || '').includes('仍要附加'), JSON.stringify(chipGeo));
+        await page.click('[data-testid=keep-sel]');
+        check('U7 長章名下可點擊(點後變仍要附加狀態)', !!(await page.$('[data-testid=chips] span:has-text("仍要附加")')));
+        await shot('25-u7-long-title');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

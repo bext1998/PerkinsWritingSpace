@@ -364,7 +364,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         remoteOk={remoteOk} setRemoteOk={setRemoteOk}
                         beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
                         pending={pending} notify={notify} onPickSelection={pickSelection}
-                        lastSel={lastSel}/>
+                        lastSel={lastSel}
+                        onClearLastSel={() => setLastSel(null)}/>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
                            onRestored={files => { reloadCurrent(files); refreshTree(); }}/>
