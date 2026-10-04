@@ -2,7 +2,14 @@
 
 ## 2026-10-05 — 編輯器看得見的存檔按鈕
 
-完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。
+完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。同日依審查意見修補三點(77d86f4 審查):
+
+- **存檔途中輸入不會被誤標已儲存**(既有 bug):`save` 以 `editVersion` ref(每次 onChange/applyHeader 加 1)記錄版本,SaveFile 完成後只有檔案與版本都沒變才清 dirty;期間又有編輯時保留「未儲存」讓下次存檔處理新版本。E2E 新增 E5 回歸情境:開發模式專用 `window.__perkinsSaveDelay(ms)`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)延遲 SaveFile 1.5s,存檔途中輸入 B,完成後斷言按鈕仍為「儲存」、狀態列「未儲存」、磁碟只有 A,再存一次後磁碟含 A+B。
+- **in-flight 防重入**:`save` 用 `saveInFlight` ref 協調,重複觸發(Ctrl+S/按鈕/自動存檔)等同一請求結束、仍 dirty 才再存,不並行兩個 SaveFile;`saving` 由這個 ref 推導,最後一個請求結束才解除(先結束的請求不會提早結束忙碌)。E5 驗證存檔中再按 Ctrl+S 的最終狀態與磁碟內容。
+- **E3 去除固定等待**:點擊前先斷言磁碟沒有標記字;以按鈕進入「儲存」/「已儲存且停用」作為完成訊號(waitForFunction/waitForSelector)後才讀磁碟。
+- 驗證:`npm run build`(含 tsc)通過、dist 無開發掛鉤;`go test ./...` 全過;E2E **44/44 通過**(LM Studio 本機模型正常回覆)。
+
+原實作內容:
 
 - `Workspace.tsx` 頂端工具列(與「摘要」「版本」同列)新增存檔按鈕(`data-testid=save-button`),章節檔與設定集檔都有:未儲存時主色「儲存」(lucide `Save` 圖示、title「儲存(Ctrl+S)」);存檔中顯示「儲存中…」並停用避免連點;已儲存時為低調 ghost 樣式且停用。Ctrl+S 與按鈕共用同一個 `saveNow`(呼叫既有 `save()`,成功 `notify`、失敗走 `fail`),未複製邏輯。狀態列改為只顯示「未儲存」(快捷鍵提示移到按鈕 tooltip);麵包屑旁小圓點保留。未加定時自動存檔(不在本項範圍)。
 - `app/e2e/e2e.js` 新增 E3 情境:開第二章、打字、斷言按鈕顯示「儲存」且可按、點按鈕後檔案含新字、按鈕變「已儲存」且停用。截圖 `shots/13-save-button-dirty.png`(未儲存)與 `shots/14-save-button.png`(已儲存)已實際目視,兩種狀態區分明顯,工具列未擠壞。

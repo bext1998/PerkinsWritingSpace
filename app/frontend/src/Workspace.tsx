@@ -28,6 +28,14 @@ import {Quick} from './quick';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
 
+// 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲,驗證存檔途中輸入的競態;
+// 正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
+const devSaveDelay = {ms: 0};
+
+if (import.meta.env.DEV) {
+    (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
+}
+
 interface Props {
     tree: project.Tree;
     setTree: (t: project.Tree) => void;
@@ -99,15 +107,37 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 存檔一律讀最新狀態:避免快捷鍵或其他回呼拿到舊的閉包,造成「顯示已儲存卻沒存」
     const latest = useRef({current, text, dirty});
     latest.current = {current, text, dirty};
+    // 編輯版本計數:每次 onChange/applyHeader 加 1;存檔完成時版本沒變才清 dirty,
+    // 存檔途中繼續打字不會被誤標為已儲存
+    const editVersion = useRef(0);
+    // in-flight 存檔:防重入,重複觸發(Ctrl+S/按鈕/自動存檔)等同一請求結束,不並行兩個 SaveFile
+    const saveInFlight = useRef<Promise<void> | null>(null);
+    const [saving, setSaving] = useState(false);
     const save = useCallback(async () => {
-        const {current, text, dirty} = latest.current;
-        if (current && dirty) {
+        if (saveInFlight.current) await saveInFlight.current.catch(() => {});
+        const doSave = async () => {
+            const {current, text, dirty} = latest.current;
+            if (!(current && dirty)) return;
+            const ver = editVersion.current;
+            if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
             await SaveFile(current, text);
-            latest.current = {...latest.current, dirty: false};
-            setDirty(false);
+            // 期間又有編輯(版本變了)或已切換檔案時,保留 dirty 讓下次存檔處理新版本
+            if (latest.current.current === current && editVersion.current === ver) {
+                latest.current = {...latest.current, dirty: false};
+                setDirty(false);
+            }
             refreshCounts();
             refreshIndex();
             if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
+        };
+        const p = doSave();
+        saveInFlight.current = p;
+        setSaving(true);
+        try {
+            await p;
+        } finally {
+            if (saveInFlight.current === p) saveInFlight.current = null;
+            setSaving(saveInFlight.current !== null); // 最後一個請求結束才解除
         }
     }, [refreshCounts, refreshIndex, refreshTree]);
 
@@ -135,11 +165,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         refreshIndex();
     }, [current, refreshCounts, refreshIndex]);
 
-    // Ctrl+S 與存檔按鈕共用:存檔期間停用按鈕,避免連點
-    const [saving, setSaving] = useState(false);
+    // Ctrl+S 與存檔按鈕共用;saving 由 save 層的 in-flight ref 推導,這裡只轉發結果通知
     const saveNow = useCallback(() => {
-        setSaving(true);
-        save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail).finally(() => setSaving(false));
+        save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail);
     }, [save, notify, fail]);
 
     useEffect(() => {
@@ -206,6 +234,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         if (!current) return;
         try {
             const next = await ApplyEntityHeader(latest.current.text, typ, name, aliases);
+            editVersion.current++;
             latest.current = {...latest.current, text: next, dirty: true};
             setText(next);
             setDirty(true);
@@ -342,7 +371,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
-                            onChange={t => { latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
+                            onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={setSelection}/>
                 ) : (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
