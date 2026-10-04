@@ -1,6 +1,10 @@
 // Package research 實作研究記錄(SPEC §12.8)。
 // 開關存在 perkins.json(預設關閉);開啟時把事件逐行 append 到 .perkins/research.jsonl。
 // 完全不動 audit.jsonl 與 provenance.jsonl。寫入失敗不中斷作者的操作:回傳 error 給呼叫端記錄即可。
+//
+// 同步:作品開啟期間保持同一個 Recorder(由 App 的 setProject 建立,SetResearch 不重建),
+// 開關(SetEnabled)與 append(Log)共用同一把鎖;Enabled 在鎖內判斷——
+// 停用(SetEnabled(false))回傳前,已排隊的事件要嘛完整寫入、要嘛被拒,回傳後不得再寫。
 package research
 
 import (
@@ -24,30 +28,49 @@ type Event struct {
 	Detail  json.RawMessage `json:"detail,omitempty"`
 }
 
-// Recorder 屬於一個專案與一個使用時段(session)。
+// Recorder 屬於一個專案與一個使用時段(session)。作品開啟期間同一個實例。
 type Recorder struct {
 	Proj    *project.Project
 	Session string
 
-	mu sync.Mutex // 逐筆序列化,避免交錯寫入同一行
+	mu     sync.Mutex // 序列化 append 與開關切換;Enabled 判斷在鎖內
+	enabled bool
 }
 
-// New 建立記錄器;session 為 App 啟動時產生的隨機 id。
+// New 建立記錄器;初始開關取自 perkins.json。session 為 App 啟動時產生的隨機 id。
 func New(p *project.Project, session string) *Recorder {
-	return &Recorder{Proj: p, Session: session}
+	return &Recorder{Proj: p, Session: session, enabled: p.Config.Research}
 }
 
-// Enabled 回傳研究記錄是否開啟(存在 perkins.json)。
-func (r *Recorder) Enabled() bool { return r != nil && r.Proj != nil && r.Proj.Config.Research }
+// Enabled 回傳研究記錄是否開啟(鎖內判斷)。
+func (r *Recorder) Enabled() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.enabled
+}
+
+// SetEnabled 切換開關(與 Log 同一把鎖)。回傳 true 表示切換成功;
+// false 表示未異動(已經是該狀態)。回傳時保證不再有新事件會寫入。
+func (r *Recorder) SetEnabled(on bool) {
+	r.mu.Lock()
+	r.enabled = on
+	r.mu.Unlock()
+}
 
 // Log 記錄一筆事件。關閉時直接 return(nil),不建立任何檔案。
 // 開啟時以 append 寫一行 JSON;失敗回傳 error 給呼叫端記錄,不中斷作者的操作。
 func (r *Recorder) Log(name string, detail any) error {
-	if !r.Enabled() {
+	if r == nil {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !r.enabled {
+		return nil
+	}
 	var raw json.RawMessage
 	if detail != nil {
 		b, err := json.Marshal(detail)

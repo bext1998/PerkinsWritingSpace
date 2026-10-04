@@ -248,6 +248,7 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
     const [cover, setCover] = useState('');
     const [error, setError] = useState('');
     const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
+    const [researchSaving, setResearchSaving] = useState(false);
     useEffect(() => { GetCover().then(setCover); GetResearch().then(setResearchOn).catch(() => setResearchOn(false)); }, []);
 
     return (
@@ -283,7 +284,15 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                     </p>
                 </div>
                 <Switch data-testid="research-switch" checked={researchOn === true}
-                        onCheckedChange={v => { setResearchOn(v); SetResearch(v).catch((e: unknown) => setError(errText(e))); }}/>
+                        disabled={researchOn === null || researchSaving}
+                        onCheckedChange={async v => {
+                            setResearchSaving(true);
+                            try {
+                                await SetResearch(v);
+                                setResearchOn(v); // 後端保存成功才更新畫面
+                            } catch (e) { setError(errText(e)); /* 失敗保持原值 */ }
+                            setResearchSaving(false);
+                        }}/>
             </div>
             <NotionImport onDone={() => {}}/>
         </div>

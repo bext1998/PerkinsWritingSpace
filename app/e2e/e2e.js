@@ -255,6 +255,8 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('text=我的書櫃');
+        // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
+        await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await shot('13-bookshelf');
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');

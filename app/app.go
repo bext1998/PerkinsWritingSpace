@@ -277,10 +277,17 @@ func (a *App) SaveFile(rel, content string) error {
 	}
 	before, _ := a.proj.ReadFile(rel)
 	err := a.proj.WriteFile(rel, content)
-	// 研究記錄:save 事件只記路徑與字數,不記內文(§12.8);寫入失敗不影響存檔本身
-	if logErr := a.research.Log("save", map[string]any{
-		"path": rel, "beforeLen": len([]rune(before)), "afterLen": len([]rune(content)),
-	}); logErr != nil {
+	// 研究記錄(§12.8):save 只記路徑與字數(CountText 規則),不記內文;
+	// 失敗時記 error、不記 afterCount(預計內容不等於已保存內容)。寫入失敗不影響存檔本身。
+	d := map[string]any{"path": rel, "beforeCount": CountText(before)}
+	if err == nil {
+		d["afterCount"] = CountText(content)
+		d["ok"] = true
+	} else {
+		d["ok"] = false
+		d["error"] = err.Error()
+	}
+	if logErr := a.research.Log("save", d); logErr != nil {
 		println("research log failed:", logErr.Error())
 	}
 	return err
@@ -297,6 +304,7 @@ func (a *App) GetResearch() bool {
 }
 
 // SetResearch 切換研究記錄(存在 perkins.json,隨作品走)。
+// 後端:perkins.json 寫入成功才切換記憶體狀態(失敗不異動);Recorder 為同一實例,不重建。
 func (a *App) SetResearch(on bool) error {
 	if a.proj == nil {
 		return errNoProject
@@ -304,10 +312,10 @@ func (a *App) SetResearch(on bool) error {
 	if err := a.proj.SetResearch(on); err != nil {
 		return err
 	}
-	a.research = research.New(a.proj, a.session)
-	if a.agent != nil {
-		a.agent.Research = a.research
+	if a.research == nil {
+		a.research = research.New(a.proj, a.session)
 	}
+	a.research.SetEnabled(on)
 	return nil
 }
 

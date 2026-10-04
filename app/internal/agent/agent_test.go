@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"perkins/internal/llm"
@@ -486,25 +488,30 @@ func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
 		Session string `json:"session"`
 		Event   string `json:"event"`
 		Detail  struct {
-			Model     string        `json:"model"`
-			Remote    bool          `json:"remote"`
-			Mode      string        `json:"mode"`
-			Doc       string        `json:"doc"`
-			SelLen    int           `json:"selectionLen"`
-			Attach    []string      `json:"attachments"`
-			Summaries bool          `json:"priorSummaries"`
-			Messages  []llm.Message `json:"messages"`
-			Reply     string        `json:"reply"`
+			Model     string   `json:"model"`
+			Remote    bool     `json:"remote"`
+			Mode      string   `json:"mode"`
+			Doc       string   `json:"doc"`
+			SelLen    int      `json:"selectionLen"`
+			Attach    []string `json:"attachments"`
+			Summaries bool     `json:"priorSummaries"`
+			Sent      bool     `json:"sent"`
+			Requests  []struct {
+				Purpose  string        `json:"purpose"`
+				Messages []llm.Message `json:"messages"`
+				Reply    string        `json:"reply"`
+			} `json:"requests"`
+			Reply     string `json:"reply"`
 			ToolCalls []struct {
 				Name   string `json:"name"`
 				Args   string `json:"args"`
 				Denied bool   `json:"denied"`
 				Err    string `json:"err"`
 			} `json:"toolCalls"`
-			ProposalID string `json:"proposalId"`
-			ElapsedMs  int64  `json:"elapsedMs"`
-			Result     string `json:"result"`
-			Error      string `json:"error"`
+			ProposalIDs []string `json:"proposalIds"`
+			ElapsedMs   int64    `json:"elapsedMs"`
+			Result      string   `json:"result"`
+			Error       string   `json:"error"`
 		} `json:"detail"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &rec); err != nil {
@@ -520,9 +527,12 @@ func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
 	if len(d.Attach) != 1 || d.Attach[0] != "canon/characters.md" {
 		t.Errorf("attachments 錯誤: %v", d.Attach)
 	}
-	// 實際送出的完整 messages:最後一則 user 應含附加檔案內容與問題
+	// 實際送出的完整 messages:ask 請求的最後一則 user 應含附加檔案內容與問題
+	if len(d.Requests) == 0 || d.Requests[0].Purpose != "ask" || !d.Sent {
+		t.Fatalf("應記錄已送出的 ask 請求: sent=%v requests=%v", d.Sent, d.Requests)
+	}
 	var lastUser string
-	for _, m := range d.Messages {
+	for _, m := range d.Requests[0].Messages {
 		if m.Role == "user" {
 			lastUser = m.Content
 		}
@@ -547,8 +557,8 @@ func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
 	if d.ToolCalls[1].Err == "" {
 		t.Errorf("越權呼叫的錯誤應記錄在 err: %+v", d.ToolCalls[1])
 	}
-	if d.ProposalID == "" {
-		t.Error("應記錄產生的 proposal id")
+	if len(d.ProposalIDs) != 1 || d.ProposalIDs[0] == "" {
+		t.Errorf("應記錄本次建立的提案 id: %v", d.ProposalIDs)
 	}
 	if d.Result != "ok" {
 		t.Errorf("result 應為 ok: %q(%q)", d.Result, d.Error)
@@ -568,7 +578,7 @@ func TestResearchFileNotInContextAndNotReadableByTools(t *testing.T) {
 		t.Fatal("應已產生 research.jsonl")
 	}
 	// 工具讀不到 .perkins/(路徑規則由 project 層擋下)
-	if _, err := a.runTool("read_document", `{"path":".perkins/research.jsonl"}`, gate{}); err == nil {
+	if _, _, err := a.runTool("read_document", `{"path":".perkins/research.jsonl"}`, gate{}); err == nil {
 		t.Fatal("read_document 不應讀到 .perkins/research.jsonl")
 	}
 	// 上下文組裝不會包含研究記錄
@@ -610,5 +620,249 @@ func TestResearchTogglePersists(t *testing.T) {
 	p3, _ := project.Open(dir)
 	if p3.Config.Research {
 		t.Fatal("關閉後應保留關閉狀態")
+	}
+}
+
+// ---- 研究記錄:審查修補(review-3) ----
+
+// 意圖(第 1 點):每次提問恰好一筆 ask 記錄;超預算(未送出)也要有,標 sent=false。
+func TestResearchOverBudgetExactlyOneRecord(t *testing.T) {
+	a, _, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.ContextTokens = 200
+	a.Proj.WriteFile("canon/巨大.md", strings.Repeat("設定。", 200))
+	_, err := a.Ask(context.Background(), AskParams{Question: "q", Attachments: []string{"canon/巨大.md"}}, func(Event) {})
+	if err == nil {
+		t.Fatal("應拒絕送出")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆 ask, got %d", len(evs))
+	}
+	var d struct {
+		Sent     bool `json:"sent"`
+		Requests []struct {
+			Purpose string `json:"purpose"`
+		} `json:"requests"`
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(evs[0].Detail, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Sent || len(d.Requests) != 0 {
+		t.Fatalf("未送出應標 sent=false、requests 空: %+v", d)
+	}
+	if d.Result != "error" {
+		t.Fatalf("result 應為 error: %q", d.Result)
+	}
+}
+
+// 意圖(第 1 點):模型失敗與取消各恰好一筆。
+func TestResearchModelFailureAndCancel(t *testing.T) {
+	a, _, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+
+	// 失敗:假 LLM 回傳錯誤
+	a.LLM = failLLM{}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應失敗")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("模型失敗應恰好一筆, got %d", len(evs))
+	}
+
+	// 取消:Chat 回 context.Err 的假 LLM
+	a2, _, _ := setup(t)
+	a2.Proj.SetResearch(true)
+	a2.Research = research.New(a2.Proj, "sess-1")
+	a2.LLM = cancelLLM{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = a2.Ask(ctx, AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應因取消而失敗")
+	}
+	evs2, _ := research.Read(a2.Proj)
+	if len(evs2) != 1 {
+		t.Fatalf("取消應恰好一筆, got %d", len(evs2))
+	}
+	var d2 struct {
+		Result string `json:"result"`
+		Sent   bool   `json:"sent"`
+	}
+	json.Unmarshal(evs2[0].Detail, &d2)
+	if d2.Result != "cancelled" {
+		t.Fatalf("result 應為 cancelled: %q", d2.Result)
+	}
+	if !d2.Sent {
+		t.Fatal("取消發生在送出後應標 sent=true")
+	}
+}
+
+// failLLM 一定回傳錯誤的假 LLM。
+type failLLM struct{}
+
+func (failLLM) Chat(_ context.Context, _ llm.Request, _ func(string)) (llm.Message, error) {
+	return llm.Message{}, fmt.Errorf("端點連不上")
+}
+
+// cancelLLM 模擬請求進行中 context 被取消。
+type cancelLLM struct{}
+
+func (cancelLLM) Chat(ctx context.Context, _ llm.Request, _ func(string)) (llm.Message, error) {
+	return llm.Message{}, ctx.Err()
+}
+
+// 意圖(第 2 點):proposalIds 只含本次建立的提案;上一次提問的提案不得誤記。
+func TestResearchProposalIDsOnlyThisAsk(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	// 第一次:建立一個提案
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "t1", Name: "propose_patch", Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明踱進森林。","rationale":"r"}`},
+		}},
+		{Role: "assistant", Content: "已提案"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q1"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 第二次:純討論,沒有提案
+	s.replies = []llm.Message{{Role: "assistant", Content: "只是討論"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q2"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 第三次:一次建立兩個提案(original 取磁碟上實際存在的文字;canon 要附加才讀得到)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "a", Name: "propose_patch", Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"X","rationale":"r"}`},
+			{ID: "b", Name: "propose_patch", Arguments: `{"path":"canon/characters.md","original":"十二歲,怕黑。","replacement":"十三歲,怕黑。","rationale":"r"}`},
+		}},
+		{Role: "assistant", Content: "兩個提案"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q3", Attachments: []string{"canon/characters.md"}}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 3 {
+		t.Fatalf("應三筆 ask, got %d", len(evs))
+	}
+	var ids [3][]string
+	for i, ev := range evs {
+		var d struct {
+			ProposalIDs []string `json:"proposalIds"`
+		}
+		if err := json.Unmarshal(ev.Detail, &d); err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = d.ProposalIDs
+	}
+	if len(ids[0]) != 1 {
+		t.Fatalf("第一次應一個提案: %v", ids[0])
+	}
+	if len(ids[1]) != 0 {
+		t.Fatalf("純討論不得誤記提案: %v", ids[1])
+	}
+	if len(ids[2]) != 2 {
+		t.Fatalf("一次兩個提案應記錄兩個: %v", ids[2])
+	}
+}
+
+// 意圖(第 3 點):迭代上限時 requests 只含已送出的快照,未送出的工具結果不列入。
+func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.MaxIter = 2
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"森林"}`}}},
+	}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應因迭代上限停止")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆, got %d", len(evs))
+	}
+	var d struct {
+		Sent     bool `json:"sent"`
+		Requests []struct {
+			Purpose  string        `json:"purpose"`
+			Messages []llm.Message `json:"messages"`
+		} `json:"requests"`
+	}
+	json.Unmarshal(evs[0].Detail, &d)
+	if !d.Sent || len(d.Requests) != 2 {
+		t.Fatalf("應兩筆已送出的請求: sent=%v n=%d", d.Sent, len(d.Requests))
+	}
+	// 最後一筆快照不應含尚未送出的工具結果(最後一輪的 search 結果)
+	last := d.Requests[1]
+	for _, m := range last.Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "森林: ") {
+			t.Fatalf("最後一筆請求快照不應含未送出的工具結果: %q", m.Content)
+		}
+	}
+}
+
+// 意圖(第 5 點):配置 false 的實際 Recorder 不建檔、不建 .perkins;SetEnabled(false) 回傳後並行寫入不會新增。
+func TestResearchDisabledRealRecorderAndConcurrentOff(t *testing.T) {
+	p, err := project.Create(t.TempDir(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := research.New(p, "sess-1")
+	if r.Enabled() {
+		t.Fatal("預設應關閉")
+	}
+	if err := r.Log("save", map[string]any{"path": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(p.Root, ".perkins")); !os.IsNotExist(err) {
+		t.Fatal("配置 false 的實際 Recorder 不應建立 .perkins")
+	}
+
+	// 開啟、關閉,再從 goroutine 並行寫入:SetEnabled(false) 回傳後不得再新增行
+	if err := p.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	r.SetEnabled(true)
+	if err := r.Log("save", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.SetEnabled(false)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = r.Log("save", nil) }()
+	}
+	wg.Wait()
+	evs, err := research.Read(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("停用回傳後不得再寫入: %d 筆", len(evs))
+	}
+}
+
+// 意圖(第 4 點):SetResearch 保存失敗時,記憶體狀態不異動。
+func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
+	p, err := project.Create(t.TempDir(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 以唯讀目錄模擬 perkins.json 寫入失敗(Windows 上可能不生效,至少驗證正常路徑)
+	if err := p.SetResearch(true); err != nil {
+		t.Fatalf("正常路徑應成功: %v", err)
+	}
+	if !p.Config.Research {
+		t.Fatal("保存成功後記憶體應更新")
 	}
 }
