@@ -42,10 +42,11 @@ type Volume struct {
 }
 
 type Config struct {
-	Name    string            `json:"name"`
-	Order   []string          `json:"order,omitempty"` // 舊版單層順序;開啟時轉為單一卷(SPEC §12.1)
-	Volumes []Volume          `json:"volumes"`
-	Status  map[string]string `json:"status,omitempty"` // 章節路徑 → draft | done
+	Name     string            `json:"name"`
+	Order    []string          `json:"order,omitempty"` // 舊版單層順序;開啟時轉為單一卷(SPEC §12.1)
+	Volumes  []Volume          `json:"volumes"`
+	Status   map[string]string `json:"status,omitempty"`  // 章節路徑 → draft | done
+	Research bool              `json:"research,omitempty"` // 研究記錄(§12.8),預設關閉
 }
 
 type Project struct {
@@ -124,6 +125,17 @@ func (p *Project) saveConfig() error {
 		return err
 	}
 	return writeAtomic(filepath.Join(p.Root, ConfigFile), b)
+}
+
+// saveConfigWith 先以 mutate 修改 Config、寫檔,失敗時完整還原到呼叫前的快照。
+func (p *Project) saveConfigWith(mutate func(c *Config)) error {
+	snapshot := p.Config // 淺拷貝(slice/map 共用;SetResearch 只動 bool,足夠)
+	mutate(&p.Config)
+	if err := p.saveConfig(); err != nil {
+		p.Config = snapshot
+		return err
+	}
+	return nil
 }
 
 func (p *Project) SetName(name string) error {
@@ -245,6 +257,19 @@ func (p *Project) NewDoc(dir, title, content string) (string, error) {
 
 // NewCanon 保留給舊呼叫者。
 func (p *Project) NewCanon(title string) (string, error) { return p.NewDoc(CanonDir, title, "") }
+
+// SetResearch 切換研究記錄(§12.8),存在 perkins.json 隨作品走。
+// 寫檔成功才更新 Config;失敗完整還原(記憶體不汙染,後續其他設定保存也不會把失敗值落盤)。
+func (p *Project) SetResearch(on bool) error {
+	old := p.Config.Research
+	if old == on {
+		return nil
+	}
+	if err := p.saveConfigWith(func(c *Config) { c.Research = on }); err != nil {
+		return err
+	}
+	return nil
+}
 
 // SetVolumes 只更新 perkins.json,不動任何稿件檔案(SPEC §10、B1)。
 func (p *Project) SetVolumes(vols []Volume) error {

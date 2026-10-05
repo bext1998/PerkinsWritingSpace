@@ -1,5 +1,27 @@
 # PROGRESS.md
 
+## 2026-10-05 — 研究記錄(研究模式)
+
+完成 SPEC §16 第 3 項,規格見新增的 §12.8(作者拍板:中等粒度、存在作品內預設關閉、另開 research.jsonl 不動 audit/provenance)。
+
+- **開關**:`project.Config.Research`(perkins.json,隨作品走);綁定 `GetResearch`/`SetResearch`。設定頁作品分頁有 Switch(`data-testid=research-switch`)與說明(記錄內容、只存本機、檔案位置),只在開啟作品時顯示。
+- **記錄器**:`app/internal/research` 套件,`Recorder.Log(event, detail)`;關閉時 no-op 不建立檔案,開啟時 append 一行 JSON 到 `.perkins/research.jsonl`;共同欄位 `ts`(RFC3339 含毫秒)、`event`、`session`(App 啟動時隨機產生,區分使用時段);寫入失敗回傳 error 給呼叫端記錄,不中斷存檔/AI 流程。
+- **事件**(全部在 Go 後端記錄):`ask`(agent 內部取得:model、remote、mode、doc、selection 字數、attachments、實際送出的完整 messages、AI 回覆、工具呼叫清單(名稱/參數/denied/err)、proposal id、耗時、結果 ok/error/cancelled)、`proposal_accept`/`proposal_reject`(id、target、authorEdited、原 replacement 與 Final、從建立到決定的耗時;Reject 簽名改回傳 `*Proposal`)、`save`(path、前後字數,不記內文)、`snapshot`/`restore`、`summary_draft`/`summary_save`、`copy_chapter`/`export_volume`、`open_file`(前端切檔時呼叫 `ResearchOpenFile`,後端只接受專案內既有的 manuscript/canon/notes/outline 路徑)。
+- **G1–G4**:`research.jsonl` 不在 project 路徑白名單內,AI 工具讀不到(測試鎖定);研究記錄不進入 AI 上下文(測試鎖定);研究記錄只寫 `.perkins/`,不碰稿件與 Canon。
+- **測試**:`internal/research`(關閉不建檔、開啟逐筆 append、共同欄位、寫入失敗回 error 不 panic)、`internal/agent`(預設關閉 ask 不建檔、開啟後 ask 筆含完整 messages/回覆/工具呼叫/proposal id、AI 工具讀不到 research.jsonl 且不進上下文、開關寫回 perkins.json 重開保留);`internal/proposal` 測試隨 Reject 簽名調整。
+- **E2E**(一律 E2E_SKIP_AI=1,不呼叫本機模型):R1 情境——預設關閉檔案不存在 → 設定頁開關 → 開章有 open_file、存檔有 save → 關閉後存檔不再新增 → 記錄不含逐字內文。check() 已正規化 `!!ok`:非略過的 falsy 一律計失敗、退出碼非 0。
+- 審查修補(c4f63c5,七點全修):
+  1. ask 記錄改為單一結束流程(defer logAsk):每次提問恰好一筆,涵蓋 App 前置失敗(未送出 sent=false、requests 空)、超預算、模型失敗、取消(result=cancelled)、成功。第三輪修補(App 層):App.AskAI 前置失敗(未選模型等)由 `logAskPremature` 記錄,測試從 App.AskAI 入口驗證(`TestAskAIPrematureFailureRecordsOnce`);破壞驗證:移除呼叫後 FAIL(got 0 筆)。
+  2. proposalIds 改為本次 Ask 建立的提案 id 陣列(runTool 回傳 prID 收集),移除跨回合的 lastProposal;測試:純討論不誤記、一次兩個提案記兩個。
+  3. requests 改為依序列出每次實際送出的請求快照(purpose: ask|compact、messages、reply),在 Chat 呼叫邊界保存;compact 加 compactCollect 收集器把濃縮請求記進同一筆 ask;迭代上限時未送出的工具結果不列入。§12.8 同步。
+  4. 開關一致性:後端 perkins.json 寫入成功才切換記憶體(`saveConfigWith`,失敗完整還原 Config;失敗值不會經其他設定保存落盤)。第四輪測試補強(review-round3 第 2 點):`TestResearchToggleSaveFailureKeepsMemory` 改為開啟/關閉兩向都在**同一個作品**以 perkins.json 換同名目錄製造真寫入失敗;每向恢復合法 perkins.json 後以 SetName 成功走完 saveConfig,重開作品(project.Open)核對 Research 仍是失敗前的值;不再用另一個作品或會在參數驗證就返回的 SetVolumes(nil)。破壞驗證:移除 saveConfigWith 的失敗還原 → 開啟向 FAIL;前端 await 成功才更新 Switch,失敗保持原值並顯示錯誤;載入與保存期間停用 Switch;GetResearch 載入失敗保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉。
+  - 第四輪補強(review-round3 第 1、3 點):`TestAskAIPrematureFailureRecordsOnce` 改為完整隔離的 App 狀態(agent 非空、隔離 store、測試開頭 `keyring.MockInit()` 隔離憑證庫,不碰作者的原生 keyring — review-round4 D3),情境 A「尚未選擇模型」從 AskAI 入口走到 begin 拒絕並斷言錯誤內容、恰好一筆 ask(sent=false、requests 空);情境 B「端點錯誤」:prepare 的 clientFor("") 不會失敗,端點錯誤發生在交給 Agent 之後,以同一套端點/模型呼叫 Agent.Ask(封閉埠 127.0.0.1:1,不呼叫真模型),斷言恰好一筆(model=m、sent=true、requests 含失敗請求、error 含 dial)、App 層不重複。破壞驗證兩項:前置記錄只記 errNoProject → 情境 A FAIL;漏記端點錯誤(result=error 且 requests>0 不記)→ 情境 B FAIL。註:App.AskAI 的 goroutine 會呼叫 wails runtime EventsEmit,測試程序無法提供 wails context(直接終止程序),情境 B 因此經 prepare 後的同一 Agent 驗證,記錄路徑與 goroutine 內相同。
+  - E2E R2(E2E_SKIP_AI=1):受控 GetResearch Promise(覆寫 window.go.main.App.GetResearch)— 等待期間 Switch 停用;拒絕後仍停用且顯示 research-load-error,不冒充關閉。破壞驗證:改回舊 catch(setResearchOn(false))→ research-load-error 不出現,中斷 FAIL。
+  5. Recorder 固定同一實例(SetResearch 不重建),SetEnabled 與 Log 共用同一把鎖,Enabled 在鎖內判斷;停用回傳後不得再寫(並行 goroutine 測試鎖定);配置 false 的實際 Recorder 不建 .perkins。`go test -race ./internal/research/` 通過。
+  6. save 事件改用 CountText 計字數(beforeCount/afterCount),失敗時記 ok=false 與 error、不記 afterCount。
+  7. §12.8 把 proposal_accept 與 proposal_reject 欄位分開列,與實作一致。
+- 驗證:`go test ./...` 全過;`npm run build` 通過;E2E **33/33 passed,略過 8 項(E2E_SKIP_AI=1)**。截圖 `shots/19-research-settings.png`、`shots/26-research-load-error.png` 已目視。
+
 ## 2026-10-05 — 第四輪審查修補(review-round4 E1/E4/E5,G 段)
 
 - **E1 取消選取不得回填**(`Workspace.tsx`):`onSelect` 收到 null(點別行取消選取)時同步清掉 `lastSel` 回填候選;E2E 新增 U8(未開 AI 時選取私人筆記→點別行取消→開 AI,PreviewContext messages 不含該段)。破壞驗證:移除清除 → U8 兩項 FAIL。

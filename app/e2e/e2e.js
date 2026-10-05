@@ -287,6 +287,74 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForSelector('[data-testid=chapter-row]');
         check('從書櫃重新開啟作品', true);
 
+        // 研究記錄(SPEC §16 第 3 項/§12.8):預設關閉;開啟後 open_file/save 逐筆記錄;關閉後不再新增
+        const rlog = () => { try { return fs.readFileSync(P('.perkins/research.jsonl'), 'utf8'); } catch { return ''; } };
+        check('R1 預設關閉時檔案不存在', !fs.existsSync(P('.perkins/research.jsonl')));
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=research-switch]');
+        await shot('19-research-settings');
+        await page.click('[data-testid=research-switch]');
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        // 開一章(open_file)→ 打字存檔(save)
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-content');
+        check('R1 開啟後有 open_file 記錄', rlog().includes('"open_file"'), rlog().slice(-100));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('researchLogText');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=toast]');
+        await page.waitForTimeout(500);
+        check('R1 存檔後有 save 記錄', rlog().includes('"save"'));
+        const rlogLines = rlog().trim().split('\n').length;
+        // 關掉開關 → 再存檔不再新增
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.click('[data-testid=research-switch]');
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('afterOff');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(800);
+        check('R1 關閉後存檔不再新增記錄', rlog().trim().split('\n').length === rlogLines, `before=${rlogLines} after=${rlog().trim().split('\n').length}`);
+        check('R1 記錄不含逐字內文', !rlog().includes('researchLogText') && !rlog().includes('afterOff'));
+
+        // R2(review-round3 第 3 點):受控 GetResearch Promise — 等待期間 Switch 停用;
+        // 拒絕後仍停用且顯示載入錯誤,不得冒充已關閉。以拋棄式測試專案驗證,不動作者設定。
+        // 先在開設定頁前覆寫綁定(綁定在呼叫時才解析 window.go,覆寫對後續呼叫生效)
+        await page.evaluate(() => {
+            window.__perkinsGetResearchOrig = window.go.main.App.GetResearch;
+            window.go.main.App.GetResearch = () => new Promise((resolve, reject) => {
+                window.__perkinsGetResearchGate = {resolve, reject};
+            });
+        });
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=research-switch]');
+        await page.waitForTimeout(300); // 等受控 Promise 掛入(useEffect 的 GetResearch 呼叫)
+        const disPending = await page.$eval('[data-testid=research-switch]', el => el.disabled);
+        check('R2 GetResearch 等待期間 Switch 停用', disPending === true, `disabled=${disPending}`);
+        await page.evaluate(() => window.__perkinsGetResearchGate.reject(new Error('測試載入失敗')));
+        await page.waitForSelector('[data-testid=research-load-error]', {timeout: 5000});
+        const loadErrTxt = await page.textContent('[data-testid=research-load-error]');
+        const disRejected = await page.$eval('[data-testid=research-switch]', el => el.disabled);
+        check('R2 拒絕後仍停用且顯示載入錯誤(不冒充關閉)', disRejected === true && loadErrTxt.includes('測試載入失敗'), `disabled=${disRejected} err=${loadErrTxt.slice(0, 60)}`);
+        await shot('26-research-load-error');
+        // 還原覆寫,重開設定頁確認恢復正常載入
+        await page.evaluate(() => { window.go.main.App.GetResearch = window.__perkinsGetResearchOrig; });
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        // 恢復:把研究記錄關閉狀態留在專案(拋棄式測試專案,不需還原)
+
         // ===== 介面打磨第一批(§16 第 1 項,01/02/03/04/07) =====
         // U1(01):每卷底部常駐「新增章節」→ 輸入框 + 建立/取消
         await page.click('[data-testid=add-chapter-0]');
