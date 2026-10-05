@@ -106,8 +106,8 @@ export function NewDoc(arg1, arg2, arg3) {
   return window['go']['main']['App']['NewDoc'](arg1, arg2, arg3);
 }
 
-export function NotionApply(arg1, arg2) {
-  return window['go']['main']['App']['NotionApply'](arg1, arg2);
+export function NotionApply(arg1, arg2, arg3) {
+  return window['go']['main']['App']['NotionApply'](arg1, arg2, arg3);
 }
 
 export function NotionScan(arg1) {
