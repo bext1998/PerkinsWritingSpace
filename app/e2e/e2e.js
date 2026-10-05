@@ -383,8 +383,11 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         // 開一章(open_file)→ 打字存檔(save)
+        // 重開目前檔案不會重讀也不記 open_file;先開第二章再回第一章,確保至少一次真正切換
+        await page.click('[data-testid=chapter-row]:has-text("第二章")');
+        await page.waitForSelector('.cm-content:has-text("天亮了")');
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
-        await page.waitForSelector('.cm-content');
+        await page.waitForSelector('.cm-content:has-text("森林")');
         check('R1 開啟後有 open_file 記錄', rlog().includes('"open_file"'), rlog().slice(-100));
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
