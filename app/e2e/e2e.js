@@ -1353,6 +1353,32 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
         await page.evaluate(() => window.__perkinsSaveDelay(0));
 
+        // (a4) 存檔途中繼續打字 → 存檔失敗:提示與「複製全文」必須是最新文字,
+        // 不能用存檔前(關閉流程開頭)取好的救援快照。
+        await stubConfirmQuit(ch1);
+        await page.evaluate(() => {
+            window.__copiedText = null;
+            navigator.clipboard.writeText = t => { window.__copiedText = t; return Promise.resolve(); };
+        });
+        await typeInEditor('rescueLateBefore');
+        await page.evaluate(() => window.__perkinsSaveDelay(2500)); // 存檔停住,留打字時間
+        await page.evaluate(() => window.__perkinsSaveFailOnce());  // 這輪寫入會失敗
+        await triggerClose();
+        await typeInEditor('rescueLateAfter'); // 存檔途中繼續打字
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 15000}).catch(() => {});
+        const lateText = await page.$eval('[data-testid=quit-rescue-text]', el => el.value).catch(() => '');
+        check('關閉保護 (a4) 存檔失敗時提示是最新文字(含存檔途中新打的字)',
+            lateText.includes('rescueLateBefore') && lateText.includes('rescueLateAfter'), `len=${lateText.length}`);
+        await page.click('[data-testid=quit-copy]', {timeout: 3000}).catch(() => {});
+        await page.waitForTimeout(300);
+        const lateCopied = await page.evaluate(() => window.__copiedText || '');
+        check('關閉保護 (a4) 複製全文也是最新文字',
+            lateCopied === lateText && lateCopied.includes('rescueLateAfter'), `len=${lateCopied.length}`);
+        check('關閉保護 (a4) 存檔失敗未放行', (await quitCalls()) === 0);
+        await page.click('[data-testid=quit-cancel]').catch(() => {});
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
+        await page.evaluate(() => window.__perkinsSaveDelay(0));
+
         // (b) 存檔失敗:顯示提示,取消不關、明確選「仍要關閉」才關
         await page.evaluate(() => {
             window.__perkinsSaveFail();
@@ -1455,25 +1481,25 @@ const maybe = async (name, fn, detail = '') => {
         });
         await page.click('[data-testid=win-close]', {timeout: 3000}).catch(() => {});
         check('標題欄 對話框開著時關閉鈕點得到', (await page.evaluate(() => window.__quitInvokes)) === 1);
-        // 剛剛對標題欄的點擊可能被 Radix 當成「點到外面」而關掉對話框;要驗的是「對話框開著時
-        // 提示與標題欄仍可點」,所以先確認對話框還開著,被關掉就重開。
+        // 剛剛對標題欄的點擊可能被 Radix 當成「點到外面」而關掉對話框;要驗的是「關閉提示出現
+        // 之前對話框確實開著」,被關掉就重開。
         if (!(await page.$('[role=dialog]'))) {
             await page.click('[data-testid=open-versions]');
             await page.waitForSelector('[role=dialog]', {timeout: 10000});
         }
+        const dialogOpenBefore = !!(await page.$('[role=dialog]'));
         // 複製全文:先換成可計數的剪貼簿替身(真實滑鼠點擊,不以 evaluate 直接呼叫)
         await page.evaluate(() => {
             window.__copyCalls = 0;
             navigator.clipboard.writeText = () => { window.__copyCalls++; return Promise.resolve(); };
         });
         // 明確套用 Radix modal 的「body pointer-events:none」條件:審查者回報的環境會如此,
-        // 本機 Radix 版本實測 body 沒有 inline pointer-events(可能因版本差異),不能依賴別人的行為。
+        // 本機 Radix 版本實測 body 不一定會被設成 none,不能依賴別人的版本行為。
         await page.evaluate(() => { document.body.style.pointerEvents = 'none'; });
         await stubConfirmQuit(null);
         await page.evaluate(() => window.__perkinsSaveFail());
         await triggerClose();
-        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
-        // 前置:確認此刻真的是「Radix modal 開著 + body 不可點」的條件下驗證點擊
+        const promptAppeared = await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).then(() => true).catch(() => false);
         const modalState = await page.evaluate(() => {
             const prompt = document.querySelector('[data-testid=quit-prompt]');
             const bar = document.querySelector('[data-testid=titlebar]');
@@ -1485,11 +1511,15 @@ const maybe = async (name, fn, detail = '') => {
             };
         });
         check('關閉提示 對話框開著且 body 不可點時,提示與標題欄拉回 pointer-events:auto',
-            modalState.dialog && modalState.bodyPE === 'none'
+            dialogOpenBefore && promptAppeared && modalState.dialog && modalState.bodyPE === 'none'
                 && modalState.promptPE === 'auto' && modalState.barPE === 'auto',
-            JSON.stringify(modalState));
-        check('關閉提示 開著對話框時焦點在提示上',
-            await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'quit-prompt-box'));
+            JSON.stringify({before: dialogOpenBefore, appeared: promptAppeared, ...modalState}));
+        // 焦點必須真的在提示內:提示自己是一個 Radix Dialog,會成為最上層 focus scope
+        const focusState = await page.evaluate(() => ({
+            inside: !!document.activeElement?.closest?.('[data-testid=quit-prompt-box]'),
+            where: document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? '',
+        }));
+        check('關閉提示 開著對話框時焦點在提示內', focusState.inside, JSON.stringify(focusState));
         await page.click('[data-testid=quit-copy]', {timeout: 3000}).catch(() => {});
         await page.waitForTimeout(300);
         check('關閉提示 開著對話框時「複製全文」點得到', (await page.evaluate(() => window.__copyCalls)) === 1);
@@ -1497,15 +1527,62 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
         check('關閉提示 開著對話框時「取消」點得到',
             !(await page.$('[data-testid=quit-prompt]')) && (await quitCalls()) === 0);
+
+        // 鍵盤:Tab 只能在提示內移動(焦點不能被原本的對話框搶回去)
+        await page.evaluate(() => window.__perkinsSaveFail());
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        const promptIds = ['quit-rescue-text', 'quit-copy', 'quit-cancel', 'quit-force'];
+        const trail = [];
+        for (let i = 0; i < 6; i++) {
+            await page.keyboard.press('Tab');
+            trail.push(await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? ''));
+        }
+        check('關閉提示 開著對話框時 Tab 只在提示內移動', trail.every(t => promptIds.includes(t)), JSON.stringify(trail));
+        let atForce = false;
+        for (let i = 0; i < 6 && !atForce; i++) {
+            await page.keyboard.press('Tab');
+            atForce = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'quit-force');
+        }
+        check('關閉提示 可用 Tab 移到「仍要關閉」', atForce);
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉提示 開著對話框時 Enter 觸發「仍要關閉」', (await quitCalls()) === 1);
+
+        // 滑鼠路徑也要成立(第一輪的要求):再來一輪用 page.click 點「仍要關閉」
         await page.evaluate(() => window.__perkinsSaveFail());
         await triggerClose();
         await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
         await page.click('[data-testid=quit-force]', {timeout: 3000}).catch(() => {});
-        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
-        check('關閉提示 開著對話框時「仍要關閉」點得到', (await quitCalls()) === 1);
-        await page.evaluate(() => { document.body.style.pointerEvents = ''; }); // 還原模擬的 Radix 條件
-        await page.keyboard.press('Escape'); // 收掉版本對話框,回到乾淨的編輯畫面
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 2, null, {timeout: 10000}).catch(() => {});
+        check('關閉提示 開著對話框時「仍要關閉」滑鼠點得到', (await quitCalls()) === 2);
+
+        // Escape = 取消:提示收起、不關視窗、不呼叫 ConfirmQuit,也不動底下開著的對話框
+        await page.evaluate(() => window.__perkinsSaveFail());
+        await triggerClose();
+        const escAppeared = await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).then(() => true).catch(() => false);
+        const callsBeforeEsc = await quitCalls();
+        const escActive = await page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? '');
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
+        const escGone = !(await page.$('[data-testid=quit-prompt]'));
+        const escDbg = await page.evaluate(() => ({
+            prompts: document.querySelectorAll('[data-testid=quit-prompt]').length,
+            hosts: document.querySelectorAll('[data-testid=quit-prompt-host]').length,
+        }));
+        const escCalls = await quitCalls();
+        const escBar = await page.isVisible('[data-testid=titlebar]');
+        check('關閉提示 Escape 等於取消(收起、未呼叫 ConfirmQuit、視窗還在)',
+            escAppeared && escGone && escCalls === callsBeforeEsc && escBar,
+            JSON.stringify({appeared: escAppeared, gone: escGone, before: callsBeforeEsc, after: escCalls, bar: escBar, active: escActive, ...escDbg}));
+
+        // 收尾:關掉可能還開著的版本對話框,確認 body 的 pointer-events 與畫面都回到可操作
+        await page.keyboard.press('Escape');
         await page.waitForSelector('[role=dialog]', {state: 'detached', timeout: 5000}).catch(() => {});
+        await page.evaluate(() => { document.body.style.pointerEvents = ''; }); // 還原模擬的 Radix 條件
+        await page.waitForTimeout(300);
+        check('關閉提示 收掉後 body 回復可點', await page.evaluate(() =>
+            getComputedStyle(document.body).pointerEvents === 'auto'));
 
         // (h) 聊天浮窗拖到最上方:停在標題欄底緣,拖曳列完整可見且可操作
         if (!(await page.isVisible('[data-testid=chat-window]'))) await page.click('[data-testid=chat-fab]');

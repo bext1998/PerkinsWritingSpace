@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-05 — PR #12 審查修補(第二輪)
+
+- **(1) 救援原文改在失敗當下才取**:`lib/quitGuard.tsx:63`(catch 分支)重讀 `reg.rescue()`,不再用存檔前(流程開頭)的快照;存檔途中新打的字會出現在提示與「複製全文」。回歸測試 `(a4)`:用 `__perkinsSaveDelay` 把存檔停住 → 繼續打字 → 讓這輪寫入失敗(`__perkinsSaveFailOnce`)→ 提示原文與複製內容都含新打的字、未放行。破壞驗證:改回存檔前的快照 → `(a4) 存檔失敗時提示是最新文字` 與 `(a4) 複製全文也是最新文字` FAIL。
+- **(2) 關閉提示改用 Radix Dialog**:`lib/quitGuard.tsx:76-129`(提示本體,含 `DialogPrimitive.Content` 與綁在內容節點上的 Escape 監聽)、`:143-155`(提示改由一個長命的獨立 React root 以一般 render 顯示/收起,同一時間最多一份)。Radix 會把新掛的 Dialog 當成最上層 focus scope 並暫停底下對話框的那層,焦點與 Tab 因此留在提示內;Escape 監聽綁在提示自己的內容節點(不靠 document/window 捕捉順序),按 Escape = 取消、不關視窗、不動底下對話框。回歸測試 `(g)`:開著版本對話框 → 觸發關閉且存檔失敗 → `document.activeElement` 在提示內、Tab 連續 6 次都在提示的按鈕/文字區間循環、Tab 可走到「仍要關閉」且 Enter 生效、滑鼠點「仍要關閉」也生效、Escape 收起提示且未呼叫 `ConfirmQuit`。破壞驗證:提示改回單層 fixed div(只有單次 `focus()`、無 Escape 處理)→ `Tab 只在提示內移動`(焦點被底下對話框搶回)與 `Escape 等於取消` FAIL。
+- **順帶修掉一個真 bug**:提示先前用 `createRoot` + `root.unmount()` 收起,實測會留下 Radix portal 的內容(提示 DOM 不消失、舊實例的監聽疊著),例如按「仍要關閉」後再觸發關閉時,舊提示會把新的 Escape 吃掉。改成同一個長命 root 以 `render(null)` 收起後不再發生(E2E 連 4 輪提示循環全過)。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、`wails build` 通過、`app/frontend/dist` 無 `__perkins*` 開發鉤子;E2E(E2E_SKIP_AI=1)**232/232 passed,略過 8 項**。
+- **如實記錄**:`複製到平台顯示結果`(既有檢查,與本次修改無關)在多次重跑中有時讀到上一個 toast(摘要已儲存),屬時序競爭,本次未動它。
+
 ## 2026-10-05 — PR #12 審查修補(第一輪)
 
 - **(必修 1) 關閉存檔途中新增的文字**:`lib/quitGuard.tsx:55` 的關閉存檔改用 Workspace 既有的序列化存檔迴圈(`Workspace.tsx:194` 的 `saveAll`,即 `save()`:等在途存檔 → 再存最新版本 → 存完還在 dirty 再一輪),確認最新內容落盤才 `ConfirmQuit()`。崩潰救援(單次寫入)與關閉存檔分工寫在 `quitGuard.tsx:1-10`、`Workspace.tsx:183-186`。回歸測試 `(a2)`:用 `__perkinsSaveDelay` 把存檔停住、關閉途中繼續打字 → `ConfirmQuit` 當下磁碟已含新字(`(a2)` 三項)。破壞驗證:拿掉存檔迴圈的 `editVersion` 再檢查(`Workspace.tsx:161`)→ `(a2) 放行當下…`(disk=true,false)與 `(a2) 磁碟最後確實有新字` 都 FAIL(新字真的掉),另兩個既有 E5 檢查也 FAIL。

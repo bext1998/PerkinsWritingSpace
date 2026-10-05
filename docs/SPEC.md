@@ -294,8 +294,9 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **關閉前存檔保護**:所有關閉途徑(標題欄關閉鈕、Alt+F4、工作列右鍵關閉)都經過 `options.App.OnBeforeClose`。尚未由前端確認時回傳 `true` 阻止關閉,並以事件 `perkins:close-request` 通知前端;新增綁定 `ConfirmQuit()` 供前端確認後呼叫,Go 設旗標後 `runtime.Quit()`,第二次進 `OnBeforeClose` 時放行。前端流程(掛在 React 樹外,`RootBoundary` 顯示錯誤畫面時仍有效):
   1. **崩潰後**:緊急存檔正在進行就等它結束;結果是失敗就用提示顯示模組層保存的救援原文(路徑、失敗原因、「複製全文」、「仍要關閉」、「取消」);已成功或確實沒有未存內容就放行。救援資料與 `saving`/`saved`/`failed` 狀態放在 React 樹外(Workspace 卸載後仍讀得到)。
   2. **正常情況**:走 Workspace 既有的序列化存檔迴圈(`saveAll`,等在途存檔、再存最新版本,存完還在 dirty 會再一輪),確認最新內容落盤才 `ConfirmQuit()`;沒有開作品或沒有未存內容就直接放行。
-  3. 存檔失敗 → 顯示提示(目標路徑、失敗原因、「複製全文」、「仍要關閉(未存內容會遺失)」、「取消」);作者明確選了仍要關閉才 `ConfirmQuit()`。不使用 `window.confirm`。在途存檔自己失敗(例如磁碟寫入失敗)也走同一條:不吞掉錯誤後補一次寫入就放行。
+  3. 存檔失敗 → 顯示提示(目標路徑、失敗原因、「複製全文」、「仍要關閉(未存內容會遺失)」、「取消」);作者明確選了仍要關閉才 `ConfirmQuit()`。不使用 `window.confirm`。存檔失敗要顯示提示的當下才讀最新救援內容(存檔途中新打的字不會漏在提示與複製之外);在途存檔自己失敗(例如磁碟寫入失敗)也走同一條:不吞掉錯誤後補一次寫入就放行。
   4. 存檔進行中或提示開著時重複按關閉不重複啟動流程;取消或流程結束(提示未開)後解鎖,不需外部重設。不加逾時自動放行,不靜默吞錯。
+- **關閉提示本身是 Radix Dialog**(不只是一塊 fixed div):用一個長命的獨立 React root,顯示/收起走一般 render(同一時間最多一份提示,不用 `root.unmount()`)。Radix 會把新掛上的 Dialog 當成最上層 focus scope,自動暫停底下開著的對話框的 focus scope,所以版本/摘要對話框開著時焦點與 Tab 仍在提示內(收起後底下一層自動 resume);Escape = 取消(監聽綁在提示自己的內容節點,不依賴 document/window 的捕捉順序,也不會被底下對話框的 Escape 處理搶走),點背景不關提示。
 - **已知取捨**:
   - Windows 11「滑過最大化鈕顯示貼齊版面(snap layouts)」選單會失去(該 UI 由原生標題列提供);內部標題欄無法重現。
   - `WM_NCCALCSIZE` 會移除標準邊框,但 Wails 保留 `WS_THICKFRAME` 並在 navigation completed 後設 `window.wails.flags.enableResize = true`;前端偵測到距邊界 6px 按下時送 `resize:<edge>`,Go 端以 `WM_NCLBUTTONDOWN` + `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/…` 交給系統縮放,因此邊緣縮放仍可用。
