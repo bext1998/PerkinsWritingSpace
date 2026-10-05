@@ -177,7 +177,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                             <TextSelect className="h-3.5 w-3.5"/>段落指令<ChevronRight className="h-3 w-3"/>
                         </button>
                         {subBar && (
-                            <div className="absolute right-0 top-full z-30 mt-1 min-w-[13rem] rounded-md border bg-popover p-1 shadow-xl">
+                            <div className="absolute right-0 top-full z-30 mt-1 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md">
                                 {QUICK_ACTIONS.map(q => (
                                     <div key={q.id} className={item}
                                          onClick={() => { const s = currentSelection(); if (s) { onAskAI(s, q); setSubBar(false); } }}>
@@ -190,7 +190,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                 </div>
             )}
             {menu && (
-                <div className="ctxmenu fixed z-50 min-w-[11rem] rounded-md border bg-popover p-1 text-popover-foreground shadow-xl"
+                <div className="ctxmenu fixed z-50 min-w-[11rem] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
                      style={{left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 220)}}
                      onClick={e => e.stopPropagation()}>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} data-testid="ask-ai"
@@ -201,7 +201,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                          onMouseEnter={() => setSub(true)} onMouseLeave={() => setSub(false)}>
                         <span className="w-4"/>快速指令<ChevronRight className="ml-auto h-4 w-4"/>
                         {sub && menu.sel && (
-                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-xl ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
                                 {QUICK_ACTIONS.map(q => (
                                     <div key={q.id} className={item} onClick={() => { onAskAI(menu.sel!, q); setMenu(null); }}>
                                         {q.label}

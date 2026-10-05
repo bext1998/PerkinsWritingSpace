@@ -1,5 +1,5 @@
 import {useMemo, useState} from 'react';
-import {Box, Flag, MapPin, Plus, Search, Tag, User, Sparkles} from 'lucide-react';
+import {Box, Flag, MapPin, Plus, Search, Tag, User} from 'lucide-react';
 import {NewDoc} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
@@ -10,7 +10,8 @@ import {
 import {cn} from '@/lib/utils';
 import {PanelProps, TYPE_ORDER} from './types';
 
-export const TYPE_ICON: Record<string, typeof User> = {角色: User, 地點: MapPin, 勢力: Flag, 道具: Box, 名詞: Tag, 其他: Sparkles};
+export const TYPE_ICON: Record<string, typeof User> = {角色: User, 地點: MapPin, 勢力: Flag, 道具: Box, 名詞: Tag};
+// 「其他」沒有具象圖示,列表以文字標示(設計審查 18);不再使用閃光圖示
 
 export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail}: PanelProps) {
     const [q, setQ] = useState('');
@@ -56,16 +57,15 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
             </div>
             {tree.canon.length === 0 && (
                 <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-                    還沒有設定。新增角色、地點、名詞後,稿件中出現這些名稱時就能自動建立登場索引,並在詢問 AI 時建議附加。
-                    也可以到「設定 › 作品」從 Notion 匯入。
+                    還沒有設定。新增角色、地點、名詞後會自動建立登場索引;也可到「設定 › 作品」從 Notion 匯入。
                 </p>
             )}
             {groups.map(g => {
-                const Icon = TYPE_ICON[g.type] ?? Sparkles;
+                const Icon = TYPE_ICON[g.type];
                 return (
                     <div key={g.type} className="mb-3">
                         <div className="mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
-                            <Icon className="h-3.5 w-3.5"/>{g.type}<span className="font-normal opacity-60">{g.items.length}</span>
+                            {Icon && <Icon className="h-3.5 w-3.5"/>}{g.type}<span className="font-normal opacity-60">{g.items.length}</span>
                         </div>
                         <ul>
                             {g.items.map(e => (
@@ -77,14 +77,14 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                                         {e.name}
                                         {e.aliases?.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{e.aliases.join('、')}</span>}
                                     </span>
-                                    <span className="text-[10px] text-muted-foreground" title="在稿件中出現的次數">{appearances(e.path) || ''}</span>
+                                    <span className="text-xs text-muted-foreground" title="在稿件中出現的次數">{appearances(e.path) || ''}</span>
                                 </li>
                             ))}
                         </ul>
                     </div>
                 );
             })}
-            <p className="mt-4 px-1 text-[11px] leading-relaxed text-muted-foreground/80">
+            <p className="mt-4 px-1 text-xs leading-relaxed text-muted-foreground/80">
                 設定只有在對話框附加後 AI 才看得到,而且 AI 只能提案、不能直接修改。
             </p>
 

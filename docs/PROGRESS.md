@@ -1,5 +1,37 @@
 # PROGRESS.md
 
+## 2026-10-05 — 長書名驗證改 render 真實元件(review-1b2,I 段)
+
+- H4 的臨時 div 驗證移除(它不 render GeneratedCover,只取標籤的 computed style,封面修補被破壞仍會通過);E2E 改為:覆寫 `window.go.main.App.ListRecent` 回傳受控資料(`TheLastGallopAndTheForgottenKingdom` 與 `The Last Gallop and the Forgotten Kingdom`,路徑指向不存在的暫存位置、missing=true 不開啟;另置入真實作品卡供驗證後重開),回書櫃讓真實 Bookshelf/GeneratedCover render,分別核對兩種長名的封面 span(斷行兩行、與書脊線間距≥20px)與下方書名標籤(兩行內、不溢出)。找不到測試卡片即 FAIL,不退回短名、不跳過。
+- 補拍 `32-1b-cover-zoom.png`(長名卡特寫)與 `38-1b-longname-covers.png`(兩筆受控長名+1 真實卡之書櫃全張,深色):無空白長名封面斷行兩行、書名標籤兩行省略、書脊線間距正常。
+- 破壞驗證兩項各自成立:只移除封面的 overflow-wrap → 封面斷行檢查 FAIL(spanH 退回單行 17.9px,標籤檢查仍 PASS);只移除標籤的 overflow-wrap → 標籤檢查 FAIL(tagNoOverflow=false,封面檢查仍 PASS)。
+- 不碰作者真實最近清單:只在頁面上覆寫綁定、結束前還原;settings.json 照常備份還原。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**75/75 passed,略過 8 項**。
+
+## 2026-10-05 — 第二批審查修補(review-1b,H 段)
+
+- **回覆縮短子項取消**(作者決定):原本「新 pending 提案+最後 assistant 氣泡>80 字→覆寫成『已建立提案』」會吃掉模型回覆中的其他資訊(限制、未處理項目、其他答案),字數不是「重述」的判準;整個縮短邏輯(含 askStartProposals 標記)移除,回覆完整以 Markdown 呈現。
+- **md-lite 區塊順序**(`lib/md-lite.tsx`):清單後遇到一般段落先結束清單(原先 intro→- item→closing 會被重排成 intro→closing→item;- first/paragraph/- second 的兩份清單會被合併)。單元測試補兩個順序案例與完整輸出順序斷言;E2E 的 Markdown 檢查改核對實際 DOM 有 strong/ul/li。破壞驗證:移除 flushList → 三項順序檢查 FAIL。
+- **內層包框(review-1b 第 3 點)**:assistant 回覆去掉整塊背景氣泡,改左分隔線+留白;提案卡去外框/獨立背景,以上下分隔線分層;保留替換文字輸入框輪廓、diff-del/diff-add 紅綠提示、衝突時的警示文字;作者訊息保留輕量背景區分說話者。E2E 加 H3 檢查(computed background 透明、無 rounded-lg)。破壞驗證:改回背景氣泡 → H3 第一項 FAIL。
+- **長單字書名**(`Bookshelf.tsx`):封面文字與書架列表書名標籤加 `overflow-wrap:anywhere`,無空白長英文名可斷行;封內文字容器改 pl-5 與書脊線(left-3)留間距。E2E 加 H4 檢查(長名卡間距≥20px、標籤不溢出、隔離 layout 驗證取實際 computed overflow-wrap 測 TheLastGallopAndTheForgottenKingdom 斷行)。破壞驗證:移除 anywhere → 隔離驗證 FAIL。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、md-lite 單元驗證 9 檢查 PASS、E2E(E2E_SKIP_AI=1)**73/73 passed,略過 8 項**。截圖 34-1b-chat-reply-dark、36-1b-chat-reply-light 已重拍(回覆無背景塊、提案卡無外框,深淺色)。
+
+## 2026-10-05 — 介面打磨第二批(去 AI slop 的視覺問題,16/17/15/14/10/18)
+
+完成 SPEC §16 第 1 項第二批(依設計審查 16、15、14、10、17、18,作者拍板):
+
+- **16 書櫃首頁**(`Bookshelf.tsx`):移除大品牌標題、英文 eyebrow「Agentic Writing」與口號;改為左對齊小標題列(「我的書櫃」+「開啟資料夾」「建立作品」同列右側);最近作品提到首屏上方;書架層板改低對比分隔線。
+- **17 自動書封**(`Bookshelf.tsx`、`style.css`):GeneratedCover 改單色底(hsl 依書名)+一條書脊線;移除漸層、金線、字影、複合內陰影;書名水平顯示、最多兩行(line-clamp-2);書架列表的書名標籤同樣兩行。`book-spine-shadow`/`shelf-plank` CSS 移除,SettingsPage 封面容器改用 border。作者自選封面圖不變。
+- **15 陰影與包框**:浮窗(ChatWindow)、Dialog(overlay.tsx)shadow-2xl → shadow-lg;AI 圓鈕與 toast shadow-xl → shadow-md;Editor 浮動列/右鍵選單同級降級;預覽原始訊息取消訊息內包框,改分隔線分層。未新增顏色。
+- **14 字級**(`ManuscriptPanel.tsx`、`Workspace.tsx` 等):移除 text-[10px]/text-[11px](全改 text-xs 12px 起跳);卷名獨立一行(13px 突出)、統計移到次行;章節字數定寬右對齊(tabular-nums);狀態列升 12px。
+- **10 AI 回覆 Markdown**(`lib/md-lite.tsx`、`ChatWindow.tsx`):自寫受限轉換(粗體/斜體/行內代碼/段落/清單),不允許原始 HTML(React 元素輸出,不經 innerHTML);未加新依賴。單元式驗證 `app/e2e/md-lite.test.mjs`(esbuild bundle + renderToStaticMarkup,不呼叫模型):粗體/清單/代碼跳脫/script 與 img onerror 不執行/未成對標記退回字面,7 檢查 PASS。提案建立成功時,重述型回覆縮為一行「已建立提案,見下方卡片。」(ask 開始時記提案 id,proposals 出現新 pending 且最後 assistant 氣泡過長時替換)。
+- **18 側欄教學文字**(`Inspector.tsx`、`BiblePanel.tsx`、`ChecksPanel.tsx`):「沒有摘要」空狀態縮為「尚無摘要」+「建立摘要」,詳細說明收進可展開「摘要如何使用」;「本章登場」改「本章提及的設定」,列表以類型文字(角色/地點/…)區分;移除「其他」的 Sparkles 閃光圖示(TYPE_ICON 不再含「其他」);檢查面板與設定集空狀態說明縮短。
+- ChatWindow 新增 DEV-only hook `__perkinsChatInject`/`__perkinsRefreshProposals`(E2E 截圖用,不呼叫模型;正式建置 dist 無此碼)。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**61/61 passed,略過 8 項**;md-lite 單元驗證 PASS;破壞驗證:移除粗體解析 → 粗體檢查 FAIL(還原後 PASS)。
+- 視覺截圖(深/淺各一,已目視):`31-1b-bookshelf-dark`、`33-1b-bookshelf-light`(小標題列+首屏書櫃)、`32-1b-cover-zoom`(單色書封+書脊線,書名水平兩行內)、`01-workspace`(深色工作區:卷名一行/統計次行、字級 12px+)、`12-light-theme`(淺色工作區)、`34-1b-chat-reply-dark`、`36-1b-chat-reply-light`(Markdown 回覆+提案卡,浮窗單層陰影)、`37-1b-inspector-light`(資訊欄:尚無摘要+摘要如何使用、本章提及的設定以類型文字)。
+- E2E 更新:書櫃等待改 `bookshelf-title`;資訊欄檢查名稱改「本章提及的設定」(斷言內容不變)。
+
+
 ## 2026-10-05 — 研究記錄(研究模式)
 
 完成 SPEC §16 第 3 項,規格見新增的 §12.8(作者拍板:中等粒度、存在作品內預設關閉、另開 research.jsonl 不動 audit/provenance)。

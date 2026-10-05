@@ -112,7 +112,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
 
     const platformsMenu = (onPick: (id: string, name: string) => void) => cfg?.platforms.map(p => (
         <DropdownMenuItem key={p.id} onSelect={() => onPick(p.id, p.name)}>
-            {p.name}{!p.verified && <span className="ml-auto pl-3 text-[10px] text-muted-foreground">未驗證</span>}
+            {p.name}{!p.verified && <span className="ml-auto pl-3 text-xs text-muted-foreground">未驗證</span>}
         </DropdownMenuItem>
     ));
 
@@ -137,10 +137,10 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                            onBlur={() => renameVolume(vi)}/>
                                 </form>
                             ) : (
-                                <span className="flex-1 truncate text-xs font-semibold tracking-wider text-muted-foreground"
-                                      onDoubleClick={() => { setRenaming(vi); setInput(v.title); }}>
-                                    {v.title || '未命名卷'}
-                                    <span className="ml-2 font-normal opacity-70">{done}/{v.chapters.length} 章 · {words.toLocaleString()} 字</span>
+                                <span className="flex-1 min-w-0" onDoubleClick={() => { setRenaming(vi); setInput(v.title); }}>
+                                    {/* 卷名獨立一行,統計移到次行(設計審查 14) */}
+                                    <span className="block truncate text-[13px] font-semibold tracking-wide text-foreground/85">{v.title || '未命名卷'}</span>
+                                    <span className="block text-xs text-muted-foreground">{done}/{v.chapters.length} 章 · {words.toLocaleString()} 字</span>
                                 </span>
                             )}
                             <DropdownMenu>
@@ -184,7 +184,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                                     ? <CircleCheck className="h-3.5 w-3.5 shrink-0 text-success"/>
                                                     : <CircleDashed className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60"/>}
                                                 <span className="flex-1 truncate">{c.title}</span>
-                                                <span className="text-[10px] text-muted-foreground group-hover:hidden">{(counts[c.path] ?? 0).toLocaleString()}</span>
+                                                <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground group-hover:hidden">{(counts[c.path] ?? 0).toLocaleString()}</span>
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
                                                         <button className="hidden h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-background group-hover:flex data-[state=open]:flex">
@@ -237,7 +237,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                             </form>
                         ) : (
                             /* 常駐的新章入口(不需 hover);卷選單內仍保留「新增章節」 */
-                            <button className="mx-2 mt-0.5 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md py-1.5 pl-7 text-xs text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                            <button className="mx-2 mt-0.5 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md py-1.5 pl-7 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                                     data-testid={`add-chapter-${vi}`}
                                     onClick={() => { setAdding(vi); setInput(''); setCollapsed(c => ({...c, [vi]: false})); }}>
                                 <Plus className="h-3.5 w-3.5"/>新增章節

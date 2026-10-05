@@ -35,7 +35,7 @@ function Field({label, hint, children}: {label: string; hint?: string; children:
         <div className="grid gap-1.5">
             <Label>{label}</Label>
             {children}
-            {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+            {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
         </div>
     );
 }
@@ -99,7 +99,7 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                             className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm', p.id === form.id ? 'bg-accent' : 'hover:bg-accent/60')}>
                         {p.remote ? <Cloud className="h-4 w-4 text-muted-foreground"/> : <Monitor className="h-4 w-4 text-muted-foreground"/>}
                         <span className="flex-1 truncate">{p.name}</span>
-                        {p.id === cfg.active && <Badge variant="secondary" className="text-[10px]">使用中</Badge>}
+                        {p.id === cfg.active && <Badge variant="secondary" className="text-xs">使用中</Badge>}
                     </button>
                 ))}
                 <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增端點</Button>
@@ -184,7 +184,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
                     <button key={x.id} onClick={() => setSel(i)}
                             className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm', i === sel ? 'bg-accent' : 'hover:bg-accent/60')}>
                         <span className="flex-1 truncate">{x.name}</span>
-                        {x.verified ? <Badge variant="success" className="text-[10px]">已驗證</Badge> : <Badge variant="outline" className="text-[10px] text-muted-foreground">未驗證</Badge>}
+                        {x.verified ? <Badge variant="success" className="text-xs">已驗證</Badge> : <Badge variant="outline" className="text-xs text-muted-foreground">未驗證</Badge>}
                     </button>
                 ))}
                 <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增平台</Button>
@@ -192,7 +192,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
             {p && (
                 <div className="grid grid-cols-2 gap-6">
                     <div className="grid content-start gap-4">
-                        <p className="rounded-md bg-muted p-2 text-[11px] leading-relaxed text-muted-foreground">
+                        <p className="rounded-md bg-muted p-2 text-xs leading-relaxed text-muted-foreground">
                             內建的平台規則是推測值,沒有實際貼上驗證過。實際發文後如果版面不對,請在這裡調整,確認無誤後打開「已驗證」。
                         </p>
                         <Field label="名稱"><Input value={p.name} onChange={e => update({name: e.target.value})}/></Field>
@@ -235,7 +235,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
                     <div className="grid content-start gap-2">
                         <Label>預覽(範例文字)</Label>
                         <pre className="min-h-[20rem] whitespace-pre-wrap rounded-md border bg-paper p-3 font-serif text-sm leading-relaxed" data-testid="platform-preview">{out}</pre>
-                        <p className="text-[11px] text-muted-foreground">作者筆記(&lt;!-- --&gt;)永遠不會被輸出。</p>
+                        <p className="text-xs text-muted-foreground">作者筆記(&lt;!-- --&gt;)永遠不會被輸出。</p>
                     </div>
                 </div>
             )}
@@ -256,7 +256,7 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
     return (
         <div className="grid max-w-3xl gap-8">
             <div className="grid grid-cols-[160px_1fr] gap-6">
-                <div className="h-[220px] w-[156px] overflow-hidden rounded-r-md rounded-l-sm book-spine-shadow">
+                <div className="h-[220px] w-[156px] overflow-hidden rounded-r-md rounded-l-sm border">
                     {cover ? <img src={cover} className="h-full w-full object-cover" alt=""/> : <GeneratedCover name={name || tree.name}/>}
                 </div>
                 <div className="grid content-start gap-4">

@@ -104,7 +104,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                             {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0"/> : <ChevronRight className="h-3.5 w-3.5 shrink-0"/>}
                                             <span>{g.label}</span>
                                         </button>
-                                        <div className="truncate text-[11px] text-muted-foreground">
+                                        <div className="truncate text-xs text-muted-foreground">
                                             {g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}
                                             {overridden > 0 && <span data-testid={`override-count-${g.key || 'root'}`}> · {overridden} 頁另行指定</span>}
                                         </div>

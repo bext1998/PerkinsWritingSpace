@@ -90,7 +90,7 @@ const maybe = async (name, fn, detail = '') => {
         check('場景出現在側欄', !!(await page.$('aside li:has-text("營火")')));
         await page.waitForSelector('[data-testid=cast]', {timeout: 5000}).catch(() => {});
         const cast = await page.textContent('[data-testid=inspector]');
-        check('資訊欄列出本章登場(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
+        check('資訊欄列出本章提及的設定(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
         await shot('01-workspace');
 
         // 回歸:章節裡沒有任何設定實體 + 收合側欄 → 開啟 AI 視窗不能整個白屏。
@@ -278,14 +278,97 @@ const maybe = async (name, fn, detail = '') => {
 
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
-        await page.waitForSelector('text=我的書櫃');
+        await page.waitForSelector('[data-testid=bookshelf-title]');
         // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
         await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
+        await page.waitForTimeout(400); // 等移除鈕/書封動畫收尾再拍
         await shot('13-bookshelf');
+        // 1B 視覺驗收(設計審查 16/17):書櫃首頁(深色)
+        await shot('31-1b-bookshelf-dark');
+
+        // H4(review-1b2):render 真實元件的長書名驗證 — 此時已在書櫃(13 之後);覆寫 ListRecent
+        // 回傳兩筆受控資料(無空白與含空白的長英文名;路徑指向不存在的暫存位置,不開啟、
+        // 不動作者的最近清單),reload 讓真實 Bookshelf/GeneratedCover 以受控資料 render
+        await page.evaluate(projPath => {
+            window.__perkinsListRecentOrig = window.go.main.App.ListRecent;
+            window.go.main.App.ListRecent = () => Promise.resolve([
+                {path: projPath, name: 'E2E測試', cover: '', missing: false}, // 真實作品:置入受控清單供 H4 後重開
+                {path: 'C:/__perkins_test__/no-space-long-name', name: 'TheLastGallopAndTheForgottenKingdom', cover: '', missing: true},
+                {path: 'C:/__perkins_test__/spaced-long-name', name: 'The Last Gallop and the Forgotten Kingdom', cover: '', missing: true},
+            ]);
+        }, PROJ);
+        // 此時已在書櫃(13 之後);先開任意真實作品進編輯器,再回書櫃讓 Bookshelf 重新
+        // mount,以覆寫後的 ListRecent render 受控卡片
         await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
-        await page.waitForSelector('[data-testid=chapter-row]');
-        check('從書櫃重新開啟作品', true);
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        await page.click('nav button:has(svg.lucide-house)');
+        await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
+        // 兩張受控測試卡片必須 render;找不到就 FAIL(不退回短名、不跳過)
+        await page.waitForSelector('.group.relative button.h-\\[176px\\]', {timeout: 10000});
+        const h4All = await page.evaluate(() => {
+            const cards = [...document.querySelectorAll('.group.relative')];
+            const out = {};
+            for (const name of ['TheLastGallopAndTheForgottenKingdom', 'The Last Gallop and the Forgotten Kingdom']) {
+                const card = cards.find(c => (c.querySelector('p')?.textContent || '') === name);
+                if (!card) { out[name] = null; continue; }
+                const btn = card.querySelector('button');
+                const span = btn?.querySelector('span.line-clamp-2');
+                const tag = card.querySelector('p');
+                const spanR = span?.getBoundingClientRect();
+                const btnR = btn?.getBoundingClientRect();
+                const tagR = tag?.getBoundingClientRect();
+                out[name] = {
+                    spanLeft: span && btnR ? spanR.left - btnR.left : null,
+                    spanH: spanR ? spanR.height : null,
+                    spanTwoLines: spanR ? spanR.height > 20 && spanR.height <= 2 * 17.55 + 2 : null, // 斷行兩行內(line-clamp-2 上限)
+                    tagNoOverflow: tag ? tag.scrollWidth <= tag.clientWidth + 1 : null,
+                    tagH: tagR ? tagR.height : null,
+                };
+            }
+            return out;
+        });
+        const noSpace = 'TheLastGallopAndTheForgottenKingdom';
+        const spaced = 'The Last Gallop and the Forgotten Kingdom';
+        check('H4 兩張長名測試卡片都已 render', !!h4All[noSpace] && !!h4All[spaced], JSON.stringify(Object.keys(h4All)));
+        // 封面:文字與書脊線留間距(≥20px)、長名斷行成兩行(高>一行且 ≤ 兩行上限)
+        check('H4 無空白長名:封面斷行兩行、與書脊線留間距',
+            !!h4All[noSpace] && h4All[noSpace].spanLeft >= 20 && h4All[noSpace].spanTwoLines, JSON.stringify(h4All[noSpace]));
+        check('H4 含空白長名:封面斷行兩行、與書脊線留間距',
+            !!h4All[spaced] && h4All[spaced].spanLeft >= 20 && h4All[spaced].spanTwoLines, JSON.stringify(h4All[spaced]));
+        // 下方書名標籤:兩行內(高≤兩行)且不水平溢出
+        check('H4 無空白長名:標籤兩行內且不溢出',
+            !!h4All[noSpace] && h4All[noSpace].tagNoOverflow && h4All[noSpace].tagH <= 2 * 18 * 1.3, JSON.stringify(h4All[noSpace]));
+        check('H4 含空白長名:標籤兩行內且不溢出',
+            !!h4All[spaced] && h4All[spaced].tagNoOverflow && h4All[spaced].tagH <= 2 * 18 * 1.3, JSON.stringify(h4All[spaced]));
+        // 補拍:兩張長名卡特寫(第一張無空白)
+        const testCards = await page.$$('.group.relative');
+        if (testCards[0]) {
+            const cb = await testCards[0].boundingBox();
+            await page.screenshot({path: path.join(SHOTS, '32-1b-cover-zoom.png'), clip: {x: Math.max(0, cb.x - 20), y: Math.max(0, cb.y - 20), width: Math.min(300, cb.width + 40 + 140), height: cb.height + 70}});
+        }
+        await shot('38-1b-longname-covers');
+        // 還原覆寫;書櫃仍 render 受控清單(含真實卡)— 點真實卡重開作品進編輯器
+        await page.evaluate(() => { window.go.main.App.ListRecent = window.__perkinsListRecentOrig; });
+        await page.waitForTimeout(200);
+        // 淺色書櫃:切白紙 → 書櫃 → 切回
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        await shot('33-1b-bookshelf-light');
+        await page.click('[data-testid=open-settings]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+        // 從書櫃重新開啟作品(受控清單中的真實卡路徑 = 當輪 PROJ)
+        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        if (!(await page.$('.cm-content'))) await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        check('從書櫃重新開啟作品', !!(await page.$('[data-testid=chapter-row]')));
 
         // 研究記錄(SPEC §16 第 3 項/§12.8):預設關閉;開啟後 open_file/save 逐筆記錄;關閉後不再新增
         const rlog = () => { try { return fs.readFileSync(P('.perkins/research.jsonl'), 'utf8'); } catch { return ''; } };
@@ -300,8 +383,11 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         // 開一章(open_file)→ 打字存檔(save)
+        // 重開目前檔案不會重讀也不記 open_file;先開第二章再回第一章,確保至少一次真正切換
+        await page.click('[data-testid=chapter-row]:has-text("第二章")');
+        await page.waitForSelector('.cm-content:has-text("天亮了")');
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
-        await page.waitForSelector('.cm-content');
+        await page.waitForSelector('.cm-content:has-text("森林")');
         check('R1 開啟後有 open_file 記錄', rlog().includes('"open_file"'), rlog().slice(-100));
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
@@ -646,6 +732,63 @@ const maybe = async (name, fn, detail = '') => {
         check('U7 長章名下可點擊(點後變仍要附加狀態)', !!(await page.$('[data-testid=chips] span:has-text("仍要附加")')));
         await shot('25-u7-long-title');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // ===== 1B 視覺驗收:AI 浮窗含回覆與提案卡、資訊欄(深/淺各一;截圖等動畫結束) =====
+        // 回覆:DEV hook 注入(不呼叫模型);提案卡:寫入真實 .perkins/proposals/<id>.json 後由 refreshProposals 載入
+        const projWrite = (rel, content) => { fs.mkdirSync(path.dirname(P(rel)), {recursive: true}); fs.writeFileSync(P(rel), content); };
+        projWrite('.perkins/proposals/20261005-090000-abc123.json', JSON.stringify({
+            id: '20261005-090000-abc123', createdAt: '2026-10-05T09:00:00+08:00', model: '截圖用假提案', target: 'manuscript/第一章.md',
+            original: '天很黑。她很害怕。', replacement: '夜色像墨一樣漫開。她把手電筒擑得更緊。',
+            rationale: '讓開場更有畫面感。', assumptions: [], baseHash: 'x', start: 0, end: 0, status: 'pending',
+        }, null, 2));
+        await page.evaluate(() => {
+            window.__perkinsChatInject([
+                {role: 'user', text: '把開場改得更有畫面感', meta: '選取 9 字'},
+                {role: 'assistant', text: '建議**修改**開場段落:\n- 原句節奏平直\n- 以環境細節代替直述'},
+            ]);
+            window.__perkinsRefreshProposals();
+        });
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=assistant-turn]');
+        await page.waitForTimeout(500); // 等動畫
+        // Markdown 檢查核對實際 DOM(review-1b 第 2 點):strong/ul/li 必須真的存在
+        const mdDom = await page.$eval('[data-testid=assistant-turn]', el => ({
+            strong: !!el.querySelector('strong'), ul: !!el.querySelector('ul'), li: el.querySelectorAll('li').length,
+        }));
+        check('1B 截圖準備:回覆以 Markdown 顯示(strong/ul/li 在 DOM)且提案卡在場',
+            mdDom.strong && mdDom.ul && mdDom.li >= 2 && !!(await page.$('[data-testid=proposal]')), JSON.stringify(mdDom));
+        // H3(review-1b 第 3 點):回覆不以整塊背景包框(透明背景);提案卡無獨立外框背景
+        const frame = await page.evaluate(() => {
+            const at = document.querySelector('[data-testid=assistant-turn]');
+            const pr = document.querySelector('[data-testid=proposal]');
+            const bg = at ? getComputedStyle(at).backgroundColor : null;
+            const prBg = pr ? getComputedStyle(pr).backgroundColor : null;
+            const prBorder = pr ? getComputedStyle(pr).borderTopWidth : null;
+            return {atBg: bg, atRounded: at ? at.className.includes('rounded-lg') : null, prBg, prBorder, prRounded: pr ? pr.className.includes('rounded-lg') : null};
+        });
+        check('H3 回覆無整塊背景包框', frame.atBg === 'rgba(0, 0, 0, 0)' && frame.atRounded === false, JSON.stringify(frame));
+        check('H3 提案卡無獨立外框背景', frame.prBg === 'rgba(0, 0, 0, 0)' && frame.prRounded === false, JSON.stringify(frame));
+        await shot('34-1b-chat-reply-dark');
+        // 淺色浮窗 + 資訊欄
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        await shot('35-1b-workspace-light');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForTimeout(500);
+        await shot('36-1b-chat-reply-light');
+        await page.keyboard.press('Escape');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await shot('37-1b-inspector-light');
+        await page.click('[data-testid=open-settings]');
+        await page.click('button:has-text("外觀")');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
 
         // 存檔按鈕(SPEC §16 第 5 項):開一章、打字、點按鈕存檔
         await page.click('[data-testid=chapter-row]:has-text("第二章")');
