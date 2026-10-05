@@ -16,6 +16,7 @@ import {
     SelectItem, SelectTrigger, SelectValue, Tip,
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
+import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {MdLite} from '@/lib/md-lite';
 import type {Toast} from './Workspace';
 
@@ -285,13 +286,13 @@ export default function ChatWindow(props: Props) {
         try { setCfg(await SetActiveModel(profileID, model)); } catch (e) { setError(errText(e)); }
     };
 
-    // 拖曳視窗
+    // 拖曳視窗:上界是標題欄底緣(不能拖到標題欄底下,否則拖曳列被蓋住就再也拿不回來)
     const startDrag = (e: React.MouseEvent) => {
         const rect = box.current!.getBoundingClientRect();
         const dx = e.clientX - rect.left, dy = e.clientY - rect.top;
         const move = (ev: MouseEvent) => setPos({
             x: Math.min(Math.max(0, ev.clientX - dx), window.innerWidth - 120),
-            y: Math.min(Math.max(0, ev.clientY - dy), window.innerHeight - 60),
+            y: Math.min(Math.max(TITLEBAR_HEIGHT, ev.clientY - dy), window.innerHeight - 60),
         });
         const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
         window.addEventListener('mousemove', move);

@@ -291,6 +291,9 @@ const maybe = async (name, fn, detail = '') => {
         const spBox = await page.locator('[data-testid=settings-page]').boundingBox();
         check('標題欄 設定頁仍可見且未被蓋住', !!tbBox && !!spBox && tbBox.height > 0 && spBox.y >= tbBox.y + tbBox.height - 1,
             JSON.stringify({titlebarBottom: tbBox && tbBox.y + tbBox.height, settingsTop: spBox && spBox.y}));
+        // 設定頁蓋住側欄 logo → 標題欄要補上小 logo(不是只看「有沒有開作品」)
+        check('標題欄 設定頁蓋住側欄 logo 時標題欄有小 logo', !!(await page.$('[data-testid=titlebar-logo]')));
+        await shot('56-titlebar-settings-logo');
         await shot('52-titlebar-settings');
         await shot('10-settings-models');
         await page.click('[data-testid=tab-platforms]');
@@ -304,6 +307,7 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         await shot('12-light-theme');
+        check('標題欄 離開設定頁回到作品畫面後收起小 logo', !(await page.$('[data-testid=titlebar-logo]')));
 
         // 淺色主題下的標題欄
         check('標題欄 淺色主題仍存在', await page.isVisible('[data-testid=titlebar]'));
@@ -328,6 +332,11 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('[data-testid=bookshelf-title]');
         // 書櫃沒有側欄 logo → 標題欄左側放小 logo,標題回到應用程式名稱
+        // 標題欄在 React 樹之外(模組層狀態),名稱更新落在 App 的 effect 之後,
+        // 因此先有限度等它更新再斷言(沒更新照樣 FAIL),不是放寬檢查
+        await page.waitForFunction(() =>
+            (document.querySelector('[data-testid=titlebar-title]')?.textContent || '').trim() === 'Perkins WritingSpace',
+            null, {timeout: 3000}).catch(() => {});
         check('標題欄 書櫃顯示應用程式名稱', (await page.textContent('[data-testid=titlebar-title]')).trim() === 'Perkins WritingSpace');
         check('標題欄 書櫃有小 logo', !!(await page.$('[data-testid=titlebar-logo]')));
         // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
@@ -1267,18 +1276,26 @@ const maybe = async (name, fn, detail = '') => {
             };
         }, probe || null);
         const triggerClose = () => page.evaluate(() => window.__perkinsCloseRequest());
-        const resetQuit = () => page.evaluate(() => window.__perkinsQuitReset());
+        const typeInEditor = async text => {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type(text);
+            await page.waitForTimeout(200);
+        };
+        // 重新載入整個頁面:崩潰段之後回到乾淨的模組狀態(DEV 鉤子與替身都會重設)
+        const freshWorkspace = async () => {
+            await page.reload();
+            await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+        };
 
         // (a) 有未存字:先寫入磁碟,之後才 ConfirmQuit
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
         await page.waitForSelector('.cm-content');
-        await page.click('.cm-content');
-        await page.keyboard.press('Control+End');
-        await page.keyboard.type('closeGuardMark');
-        await page.waitForTimeout(200);
+        await typeInEditor('closeGuardMark');
         check('關閉保護 (a) 前置:文字尚未寫入磁碟', !read(ch1).includes('closeGuardMark'));
         await stubConfirmQuit(ch1);
-        await resetQuit();
         await triggerClose();
         await page.waitForFunction(() => (window.__quitCalls || []).length >= 1, null, {timeout: 15000}).catch(() => {});
         const quitCall0 = await page.evaluate(() => window.__quitCalls[0]);
@@ -1288,20 +1305,52 @@ const maybe = async (name, fn, detail = '') => {
         check('關閉保護 (a) 只呼叫一次 ConfirmQuit', (await quitCalls()) === 1);
         check('關閉保護 (a) 未存文字確實落在磁碟', read(ch1).includes('closeGuardMark'));
 
+        // (a2) 存檔途中繼續打字:新字必須先落盤才 ConfirmQuit
+        // 回歸:關閉存檔必須走 Workspace 的序列化存檔迴圈(saveAll),不能只寫一次快照。
+        await stubConfirmQuit(ch1);
+        await page.evaluate(() => window.__perkinsSaveDelay(1200));
+        await typeInEditor('closeTypingBefore');
+        await page.click('[data-testid=save-button]'); // 存檔開始(刻意延遲),仍在存檔途中
+        await typeInEditor('closeTypingAfter');        // 存檔途中繼續打字
+        await triggerClose();
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 20000}).catch(() => {});
+        const typingCall = await page.evaluate(() => window.__quitCalls[0] || null);
+        check('關閉保護 (a2) 放行當下磁碟已含存檔途中新打的字',
+            !!typingCall && typeof typingCall.disk === 'string'
+                && typingCall.disk.includes('closeTypingAfter') && typingCall.disk.includes('closeTypingBefore'),
+            `disk=${typingCall && typingCall.disk ? [typingCall.disk.includes('closeTypingBefore'), typingCall.disk.includes('closeTypingAfter')] : 'null'}`);
+        check('關閉保護 (a2) 磁碟最後確實有新字', read(ch1).includes('closeTypingAfter'));
+        check('關閉保護 (a2) 只呼叫一次 ConfirmQuit', (await quitCalls()) === 1);
+        await page.evaluate(() => window.__perkinsSaveDelay(0));
+
         // (c) 存檔進行中連按三次關閉:只跑一次流程(存檔完成後才 ConfirmQuit 一次)
         await stubConfirmQuit(null);
-        await resetQuit();
         await page.evaluate(() => window.__perkinsSaveDelay(1200));
-        await page.click('.cm-content');
-        await page.keyboard.press('Control+End');
-        await page.keyboard.type('closeGuardConcurrent');
-        await page.waitForTimeout(200);
+        await typeInEditor('closeGuardConcurrent');
         await page.click('[data-testid=save-button]');
         await page.evaluate(() => { window.__perkinsCloseRequest(); window.__perkinsCloseRequest(); window.__perkinsCloseRequest(); });
         check('關閉保護 (c) 存檔進行中不呼叫 ConfirmQuit', (await quitCalls()) === 0);
         await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 15000}).catch(() => {});
         check('關閉保護 (c) 存檔完成後只呼叫一次 ConfirmQuit', (await quitCalls()) === 1);
         check('關閉保護 (c) 存檔中的文字已寫入磁碟', read(ch1).includes('closeGuardConcurrent'));
+        await page.evaluate(() => window.__perkinsSaveDelay(0));
+
+        // (a3) 在途存檔失敗不得被吞掉:關閉流程要走序列化存檔迴圈(錯誤才傳得到),
+        // 不能自己吞掉在途失敗再補一次寫入就默默放行。
+        await stubConfirmQuit(ch1);
+        await page.evaluate(() => window.__perkinsSaveDelay(2000)); // 確保關閉時該次存檔仍在途
+        await typeInEditor('closeFailInflight');
+        await page.evaluate(() => window.__perkinsSaveFailOnce()); // 下一次實際寫入失敗
+        await page.click('[data-testid=save-button]');             // 在途存檔(將失敗)
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        const inflightMsg = await page.textContent('[data-testid=quit-failed-msg]').catch(() => '');
+        const inflightText = await page.$eval('[data-testid=quit-rescue-text]', el => el.value).catch(() => '');
+        check('關閉保護 (a3) 在途存檔失敗時顯示提示,不默默關閉', (await quitCalls()) === 0);
+        check('關閉保護 (a3) 提示帶實際寫入失敗原因', inflightMsg.includes('開發模式模擬寫入失敗'), inflightMsg);
+        check('關閉保護 (a3) 救援原文含未落盤的文字', inflightText.includes('closeFailInflight'), `len=${inflightText.length}`);
+        await page.click('[data-testid=quit-cancel]').catch(() => {});
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
         await page.evaluate(() => window.__perkinsSaveDelay(0));
 
         // (b) 存檔失敗:顯示提示,取消不關、明確選「仍要關閉」才關
@@ -1311,11 +1360,7 @@ const maybe = async (name, fn, detail = '') => {
             window.confirm = () => { window.__confirmCalls++; return true; }; // 假設質:實作若用 confirm 就會被算到
         });
         await stubConfirmQuit(null);
-        await resetQuit();
-        await page.click('.cm-content');
-        await page.keyboard.press('Control+End');
-        await page.keyboard.type('closeGuardFail');
-        await page.waitForTimeout(200);
+        await typeInEditor('closeGuardFail');
         await triggerClose();
         await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000});
         const quitFailMsg = await page.textContent('[data-testid=quit-failed-msg]');
@@ -1328,23 +1373,23 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForTimeout(400);
         check('關閉保護 (b) 提示開著時重複關閉不重啟流程', (await quitCalls()) === 0 && (await page.$$('[data-testid=quit-prompt]')).length === 1);
         await shot('55-quit-save-failed');
-        await page.click('[data-testid=quit-force]');
-        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
-        check('關閉保護 (b) 明確選擇仍要關閉才呼叫 ConfirmQuit 一次', (await quitCalls()) === 1);
-        // 同樣失敗下改選取消:視窗必須留下来、不呼叫 ConfirmQuit
-        await stubConfirmQuit(null);
-        await resetQuit();
-        await page.evaluate(() => window.__perkinsSaveFail());
-        await triggerClose();
-        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000});
-        await page.click('[data-testid=quit-cancel]');
-        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000});
+        // 先取消(不重設任何旗標),再讓存檔失敗一次並直接再按關閉 → 提示必須重現,代表流程已解鎖
+        await page.click('[data-testid=quit-cancel]').catch(() => {});
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
         check('關閉保護 (b) 取消後仍未呼叫 ConfirmQuit', (await quitCalls()) === 0);
         check('關閉保護 (b) 取消後視窗仍在', await page.isVisible('[data-testid=titlebar]'));
+        check('關閉保護 (b) 取消後磁碟仍未寫入未存字', !read(ch1).includes('closeGuardFail'));
+        await page.evaluate(() => window.__perkinsSaveFail()); // 只重設「模擬失敗」,不動流程旗標
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        check('關閉保護 (b) 取消後直接再關閉,提示會重現且未呼叫 ConfirmQuit',
+            (await page.$$('[data-testid=quit-prompt]')).length === 1 && (await quitCalls()) === 0);
+        await page.click('[data-testid=quit-force]').catch(() => {});
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉保護 (b) 明確選擇仍要關閉才呼叫 ConfirmQuit 一次', (await quitCalls()) === 1);
 
         // (d) 根層錯誤畫面下仍能走完關閉流程(監聽在 React 樹之外)
         await stubConfirmQuit(null);
-        await resetQuit();
         await page.evaluate(() => window.__perkinsCrash('root'));
         await page.waitForSelector('[data-testid=root-error]', {timeout: 10000});
         check('關閉保護 (d) 錯誤畫面下標題欄仍在', await page.isVisible('[data-testid=titlebar]'));
@@ -1352,9 +1397,137 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
         check('關閉保護 (d) 錯誤畫面下關閉流程仍完成一次', (await quitCalls()) === 1);
 
+        // (e) 根層崩潰且緊急存檔「進行中」:關閉要等存檔結束才放行
+        await freshWorkspace();
+        await stubConfirmQuit(ch1);
+        await typeInEditor('crashSavingText');
+        await page.evaluate(() => window.__perkinsSaveDelay(1500));
+        await page.click('[data-testid=save-button]'); // 讓在途存檔停住
+        await page.evaluate(() => window.__perkinsCrash('root'));
+        await page.waitForSelector('[data-testid=root-error]', {timeout: 10000});
+        await triggerClose();
+        await page.waitForTimeout(400); // 先讓「立即放行」的錯誤實作有機會真的呼叫到(否則計數會偶爾讀到 0)
+        check('關閉保護 (e) 緊急存檔進行中不先放行', (await quitCalls()) === 0);
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 20000}).catch(() => {});
+        const crashSavingCall = await page.evaluate(() => window.__quitCalls[0] || null);
+        check('關閉保護 (e) 存檔結束後放行一次', (await quitCalls()) === 1);
+        check('關閉保護 (e) 放行當下磁碟已有最新文字',
+            !!crashSavingCall && typeof crashSavingCall.disk === 'string' && crashSavingCall.disk.includes('crashSavingText'),
+            `diskLen=${crashSavingCall && crashSavingCall.disk ? crashSavingCall.disk.length : 'null'}`);
+        await page.evaluate(() => window.__perkinsSaveDelay(0));
+
+        // (f) 根層崩潰且緊急存檔「失敗」:關閉要拿同一份救援原文出提示,不能直接放棄
+        await freshWorkspace();
+        await stubConfirmQuit(null);
+        await typeInEditor('crashFailText');
+        await page.evaluate(() => { window.__perkinsSaveFail(); window.__perkinsCrash('root'); });
+        await page.waitForSelector('[data-testid=root-error]', {timeout: 10000});
+        await page.waitForSelector('[data-testid=emergency-save][data-save-state=failed]', {timeout: 10000});
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        const crashPromptText = await page.$eval('[data-testid=quit-rescue-text]', el => el.value).catch(() => '');
+        check('關閉保護 (f) 崩潰存檔失敗後關閉顯示同一份救援原文', crashPromptText.includes('crashFailText'), `len=${crashPromptText.length}`);
+        const crashPromptMsg = await page.textContent('[data-testid=quit-failed-msg]').catch(() => '');
+        check('關閉保護 (f) 提示帶崩潰存檔的失敗原因', crashPromptMsg.includes('開發模式模擬存檔失敗'), crashPromptMsg);
+        check('關閉保護 (f) 未呼叫 ConfirmQuit', (await quitCalls()) === 0);
+        // 取消後不重設任何狀態,直接再按關閉:提示必須重現(不得把最後一次失敗當成已處理)
+        await page.click('[data-testid=quit-cancel]').catch(() => {});
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        check('關閉保護 (f) 取消後不重設再關閉,提示仍重現且未呼叫 ConfirmQuit',
+            (await page.$$('[data-testid=quit-prompt]')).length === 1 && (await quitCalls()) === 0);
+        await page.click('[data-testid=quit-force]').catch(() => {});
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉保護 (f) 明確選擇仍要關閉才呼叫 ConfirmQuit 一次', (await quitCalls()) === 1);
+
+        // (g) Radix 對話框開著時:標題欄關閉鈕與關閉提示的按鈕都要真的點得到
+        // Radix modal 會把 body 設成 pointer-events:none,用真實滑鼠點(page.click)才驗得出來。
+        await freshWorkspace();
+        await typeInEditor('dialogGuardText');
+        await page.click('[data-testid=open-versions]');
+        await page.waitForSelector('[role=dialog]', {timeout: 10000});
+        // 標題欄關閉鈕:用 WailsInvoke 替身攔下 "Q"(證明點擊真的送到按鈕),不真的送給 Go
+        await page.evaluate(() => {
+            window.__quitInvokes = 0;
+            const orig = window.WailsInvoke.bind(window);
+            window.WailsInvoke = m => { if (m === 'Q') { window.__quitInvokes++; return; } return orig(m); };
+        });
+        await page.click('[data-testid=win-close]', {timeout: 3000}).catch(() => {});
+        check('標題欄 對話框開著時關閉鈕點得到', (await page.evaluate(() => window.__quitInvokes)) === 1);
+        // 剛剛對標題欄的點擊可能被 Radix 當成「點到外面」而關掉對話框;要驗的是「對話框開著時
+        // 提示與標題欄仍可點」,所以先確認對話框還開著,被關掉就重開。
+        if (!(await page.$('[role=dialog]'))) {
+            await page.click('[data-testid=open-versions]');
+            await page.waitForSelector('[role=dialog]', {timeout: 10000});
+        }
+        // 複製全文:先換成可計數的剪貼簿替身(真實滑鼠點擊,不以 evaluate 直接呼叫)
+        await page.evaluate(() => {
+            window.__copyCalls = 0;
+            navigator.clipboard.writeText = () => { window.__copyCalls++; return Promise.resolve(); };
+        });
+        // 明確套用 Radix modal 的「body pointer-events:none」條件:審查者回報的環境會如此,
+        // 本機 Radix 版本實測 body 沒有 inline pointer-events(可能因版本差異),不能依賴別人的行為。
+        await page.evaluate(() => { document.body.style.pointerEvents = 'none'; });
+        await stubConfirmQuit(null);
+        await page.evaluate(() => window.__perkinsSaveFail());
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        // 前置:確認此刻真的是「Radix modal 開著 + body 不可點」的條件下驗證點擊
+        const modalState = await page.evaluate(() => {
+            const prompt = document.querySelector('[data-testid=quit-prompt]');
+            const bar = document.querySelector('[data-testid=titlebar]');
+            return {
+                dialog: !!document.querySelector('[role=dialog]'),
+                bodyPE: document.body.style.pointerEvents,
+                promptPE: prompt ? getComputedStyle(prompt).pointerEvents : 'missing',
+                barPE: bar ? getComputedStyle(bar).pointerEvents : 'missing',
+            };
+        });
+        check('關閉提示 對話框開著且 body 不可點時,提示與標題欄拉回 pointer-events:auto',
+            modalState.dialog && modalState.bodyPE === 'none'
+                && modalState.promptPE === 'auto' && modalState.barPE === 'auto',
+            JSON.stringify(modalState));
+        check('關閉提示 開著對話框時焦點在提示上',
+            await page.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'quit-prompt-box'));
+        await page.click('[data-testid=quit-copy]', {timeout: 3000}).catch(() => {});
+        await page.waitForTimeout(300);
+        check('關閉提示 開著對話框時「複製全文」點得到', (await page.evaluate(() => window.__copyCalls)) === 1);
+        await page.click('[data-testid=quit-cancel]', {timeout: 3000}).catch(() => {});
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000}).catch(() => {});
+        check('關閉提示 開著對話框時「取消」點得到',
+            !(await page.$('[data-testid=quit-prompt]')) && (await quitCalls()) === 0);
+        await page.evaluate(() => window.__perkinsSaveFail());
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000}).catch(() => {});
+        await page.click('[data-testid=quit-force]', {timeout: 3000}).catch(() => {});
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉提示 開著對話框時「仍要關閉」點得到', (await quitCalls()) === 1);
+        await page.evaluate(() => { document.body.style.pointerEvents = ''; }); // 還原模擬的 Radix 條件
+        await page.keyboard.press('Escape'); // 收掉版本對話框,回到乾淨的編輯畫面
+        await page.waitForSelector('[role=dialog]', {state: 'detached', timeout: 5000}).catch(() => {});
+
+        // (h) 聊天浮窗拖到最上方:停在標題欄底緣,拖曳列完整可見且可操作
+        if (!(await page.isVisible('[data-testid=chat-window]'))) await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const dragBar = await page.locator('[data-testid=chat-window] .cursor-move').first().boundingBox();
+        await page.mouse.move(dragBar.x + 60, dragBar.y + 16);
+        await page.mouse.down();
+        await page.mouse.move(dragBar.x + 60, 2, {steps: 8}); // 想拖到比標題欄更高
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+        const chatBox = await page.locator('[data-testid=chat-window]').boundingBox();
+        check('聊天浮窗 拖到最上方時停在標題欄底緣', !!chatBox && Math.abs(chatBox.y - 32) < 2, JSON.stringify({y: chatBox && chatBox.y}));
+        const dragBarAfter = await page.locator('[data-testid=chat-window] .cursor-move').first().boundingBox();
+        check('聊天浮窗 拖曳列完整可見(未被標題欄蓋住)',
+            !!dragBarAfter && dragBarAfter.y >= 32 - 1 && dragBarAfter.height >= 40,
+            JSON.stringify({y: dragBarAfter && dragBarAfter.y, h: dragBarAfter && dragBarAfter.height}));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)', {timeout: 3000}).catch(() => {});
+        await page.waitForTimeout(200);
+        check('聊天浮窗 拖曳列按鈕真的可操作', !(await page.isVisible('[data-testid=chat-window]')));
+        await shot('57-chat-dragged-top');
+
         // 最小視窗尺寸(900×600)下標題欄與主要版面仍在(MinWidth/MinHeight 的依據)
-        await page.click('[data-testid=reload-app]');
-        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
         await page.waitForSelector('.cm-content');
         await page.setViewportSize({width: 900, height: 600});

@@ -7,6 +7,7 @@
 //   E2E 用它們刻意讓某區下一次 render 拋錯、或模擬緊急存檔失敗。正式建置不存在。
 import * as React from 'react';
 import {Button} from '@/components/ui/button';
+import {setRailLogoVisible} from '@/lib/shellState';
 import {cn, errText} from '@/lib/utils';
 
 // 緊急存檔的救援資料:在呼叫 SaveFile 前就取好,存檔失敗時錯誤畫面靠它還原原文。
@@ -14,7 +15,10 @@ import {cn, errText} from '@/lib/utils';
 export type RescueData = {path: string; text: string} | null;
 
 export interface EmergencySave {
+    // 崩潰救援:單次寫入,不依賴 React state(Workspace 卸載後仍可呼叫)
     save: () => Promise<void>;
+    // 關閉流程:走 Workspace 的序列化存檔迴圈(等在途存檔、再存最新版本),存完還在 dirty 會再一輪
+    saveAll: () => Promise<void>;
     rescue: () => RescueData;
 }
 
@@ -36,12 +40,57 @@ export function setEmergencySaveFail(v: boolean) {
     failNextSave = v;
 }
 
-// 執行緊急存檔。錯誤畫面(RootBoundary)與關閉前存檔保護(quitGuard)共用同一個入口,
-// 失敗模擬才不會只有一邊生效。
-export function runEmergencySave(fn: EmergencySave): Promise<void> {
+// 執行一次存檔步驟。錯誤畫面(RootBoundary)、關閉流程(quitGuard)與崩潰救援共用同一個入口,
+// 失敗模擬才會三條路一致。
+export function runSaveStep(step: () => Promise<void>): Promise<void> {
     const failNow = failNextSave; // 開發模式專用,用過即清
     failNextSave = false;
-    return failNow ? Promise.reject(new Error('開發模式模擬存檔失敗')) : fn.save();
+    return failNow ? Promise.reject(new Error('開發模式模擬存檔失敗')) : step();
+}
+
+export function runEmergencySave(fn: EmergencySave): Promise<void> {
+    return runSaveStep(fn.save);
+}
+
+// ---- 緊急存檔的模組層狀態(React 樹外用) ----
+// 根層崩潰後 Workspace 會卸載、registerEmergencySave(null) 被呼叫;但救援原文與存檔進度
+// 仍必須在關閉流程裡看得到,否則作者一按關閉就直接丟掉未存的字。
+export type CrashSaveState = 'idle' | 'saving' | 'saved' | 'failed';
+export interface CrashSave {
+    state: CrashSaveState;
+    rescue: RescueData;
+    message: string;
+}
+
+let crashSave: CrashSave = {state: 'idle', rescue: null, message: ''};
+let crashSaveDone: Promise<void> | null = null;
+
+export function getCrashSave(): CrashSave {
+    return crashSave;
+}
+
+export function waitCrashSave(): Promise<void> {
+    return crashSaveDone ?? Promise.resolve();
+}
+
+// 由 RootBoundary.componentDidCatch 呼叫;回傳的 Promise 給錯誤畫面與關閉流程等待。
+// rescue 在此就快照起來,Workspace 卸載後仍拿得到未存原文。
+// 回傳的 Promise 永不出錯(失敗結果記在 crashSave.state),呼叫者一律在 then 後讀狀態,
+// 才不會把「已處理過的 rejected promise」誤判成成功。
+function startCrashSave(): Promise<void> | null {
+    const fn = emergencySave;
+    const rescue = fn?.rescue?.() ?? null;
+    if (!fn || !rescue) {
+        crashSave = {state: 'idle', rescue: null, message: ''};
+        crashSaveDone = null;
+        return null;
+    }
+    crashSave = {state: 'saving', rescue, message: ''};
+    crashSaveDone = runEmergencySave(fn).then(
+        () => { crashSave = {state: 'saved', rescue, message: ''}; },
+        (e: unknown) => { crashSave = {state: 'failed', rescue, message: errText(e)}; },
+    );
+    return crashSaveDone;
 }
 
 // 開發模式專用的拋錯旗標:E2E 透過 window.__perkinsCrash 設定,下一次 render 生效
@@ -126,19 +175,21 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
     }
 
     componentDidCatch() {
-        const fn = emergencySave;
-        // 先取救援資料(卸載後 latest ref 仍可讀,但不可依賴卸載後的 setState),再嘗試存檔
-        const rescue = fn?.rescue?.() ?? null;
-        if (!fn || !rescue) {
-            this.setState({save: null, rescue: null, copied: 'none'});
+        // 崩潰畫面沒有側欄 logo;救援原文與存檔進度同時寫進模組層給關閉流程讀。
+        setRailLogoVisible(false);
+        const p = startCrashSave();
+        const rescue = getCrashSave().rescue;
+        if (!p) {
+            this.setState({save: null, saveMsg: '', rescue: null, copied: 'none'});
             return;
         }
-        this.setState({save: 'saving', rescue, copied: 'none'});
-        const p: Promise<void> = runEmergencySave(fn);
-        p.then(
-            () => this.setState({save: 'saved'}),
-            (e: unknown) => this.setState({save: 'failed', saveMsg: errText(e)}),
-        );
+        this.setState({save: 'saving', saveMsg: '', rescue, copied: 'none'});
+        p.then(() => {
+            const done = getCrashSave();
+            this.setState(done.state === 'failed'
+                ? {save: 'failed', saveMsg: done.message}
+                : {save: 'saved', saveMsg: ''});
+        });
     }
 
     // 複製進行中(Promise 未結束):停用複製與放棄;結束前不可重載

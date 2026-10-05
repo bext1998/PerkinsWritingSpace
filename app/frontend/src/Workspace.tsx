@@ -31,13 +31,16 @@ import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/Erro
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
 
 // 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲、__perkinsReadDelay(ms)
-// 讓 ReadFile 延遲(重疊導覽回歸用);正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
+// 讓 ReadFile 延遲(重疊導覽回歸用)、__perkinsSaveFailOnce() 讓下一次實際寫入失敗
+// (驗證在途存檔失敗不會被吞掉);正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
 const devSaveDelay = {ms: 0};
 const devReadDelay = {ms: 0};
+const devSaveFailOnce = {once: false};
 
 if (import.meta.env.DEV) {
     (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
     (window as any).__perkinsReadDelay = (ms: number) => { devReadDelay.ms = ms; };
+    (window as any).__perkinsSaveFailOnce = () => { devSaveFailOnce.once = true; };
     (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
 }
 
@@ -48,6 +51,11 @@ async function trackedSaveFile(path: string, text: string) {
     s.inFlight++;
     s.maxInFlight = Math.max(s.maxInFlight, s.inFlight);
     try {
+        // E2E:模擬一次實際寫入失敗(驗證在途存檔的失敗不會被默默吞掉)
+        if (devSaveFailOnce.once) {
+            devSaveFailOnce.once = false;
+            throw new Error('開發模式模擬寫入失敗');
+        }
         return await SaveFile(path, text);
     } finally {
         s.inFlight--;
@@ -167,8 +175,14 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         return run;
     }, [refreshCounts, refreshIndex, refreshTree]);
 
+    // 關閉流程要拿到「最新一次 render 的 save」:閉包捕捉的是第一次 render 的版本,
+    // refreshCounts/refreshIndex/refreshTree 換掉後 save 會重建,用 ref 才不會存到過期的那份。
+    const saveRef = useRef(save);
+    saveRef.current = save;
+
     // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。
     // 用讀 latest ref 的同一套邏輯,但不依賴卸載後的 setState,只做 SaveFile 本身。
+    // 關閉流程走 saveAll(序列化存檔迴圈):崩潰救援只能單次寫入,關閉時 App 還掛著,要用同一條迴圈。
     useEffect(() => {
         registerEmergencySave({
             save: async () => {
@@ -177,6 +191,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 const {current, text, dirty} = latest.current;
                 if (current && dirty) await SaveFile(current, text);
             },
+            saveAll: () => saveRef.current(),
             rescue: () => {
                 const {current, text, dirty} = latest.current;
                 return current && dirty ? {path: current, text} : null;
