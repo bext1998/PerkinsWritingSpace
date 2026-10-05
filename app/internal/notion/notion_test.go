@@ -62,7 +62,7 @@ func TestApplyNeverOverwritesAndCanUndo(t *testing.T) {
 	p, _ := project.Create(dir, "n")
 	p.WriteFile("canon/雷恩.md", "作者原本寫的雷恩")
 
-	res, err := Apply(p, src, map[string]string{"角色": "角色", "": TargetNotes})
+	res, err := Apply(p, src, map[string]string{"角色": "角色", "": TargetNotes}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestApplyNeverOverwritesAndCanUndo(t *testing.T) {
 
 func TestSkipTargetImportsNothing(t *testing.T) {
 	p, _ := project.Create(t.TempDir(), "n")
-	res, err := Apply(p, fixture(t), map[string]string{"角色": TargetSkip})
+	res, err := Apply(p, fixture(t), map[string]string{"角色": TargetSkip}, nil)
 	if err != nil || len(res.Created) != 0 {
 		t.Fatalf("created=%v err=%v", res.Created, err)
 	}
@@ -127,5 +127,109 @@ func TestNestedZip(t *testing.T) {
 	}
 	if len(plan.Groups) != 1 || plan.Groups[0].Key != "角色" || plan.Groups[0].Files[0].Name != "艾莉絲" {
 		t.Fatalf("巢狀 zip 解析錯誤: %+v", plan.Groups)
+	}
+}
+
+// 逐頁覆寫:同一資料夾三頁分別匯入為角色/地點/略過,各落在正確位置與 frontmatter 類型。
+func TestApplyPerPageOverrides(t *testing.T) {
+	src := fixture(t)
+	p, _ := project.Create(t.TempDir(), "n")
+	// 角色 00000000/... — 從 fixture 取實際 Src
+	plan, err := Scan(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var aliceSrc, rainSrc string
+	for _, g := range plan.Groups {
+		for _, f := range g.Files {
+			switch f.Name {
+			case "艾莉絲":
+				aliceSrc = f.Src
+			case "雷恩":
+				rainSrc = f.Src
+			}
+		}
+	}
+	if aliceSrc == "" || rainSrc == "" {
+		t.Fatalf("fixture 缺頁面: %+v", plan)
+	}
+	pages := map[string]string{
+		aliceSrc: "角色",
+		rainSrc:  "地點",
+		"世界觀 " + hexID + ".md": TargetSkip,
+		"不存在的頁.md":    "角色", // key 不在掃描結果中:忽略,不報錯
+	}
+	res, err := Apply(p, src, map[string]string{"角色": TargetSkip, "": TargetSkip}, pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 2 {
+		t.Fatalf("created=%v", res.Created)
+	}
+	cAlice, err := p.ReadFile("canon/艾莉絲.md")
+	if err != nil {
+		t.Fatalf("角色頁應匯入: %v", err)
+	}
+	e := bible.Parse("canon/艾莉絲.md", cAlice)
+	if e.Type != "角色" {
+		t.Fatalf("覆寫為角色未生效: %+v", e)
+	}
+	cRain, err := p.ReadFile("canon/雷恩.md")
+	if err != nil {
+		t.Fatalf("地點頁應匯入: %v", err)
+	}
+	if e := bible.Parse("canon/雷恩.md", cRain); e.Type != "地點" {
+		t.Fatalf("覆寫為地點未生效: %+v", e)
+	}
+	if p.Exists("notes/世界觀.md") {
+		t.Fatal("略過的頁面不應匯入")
+	}
+	if _, err := Undo(p, res.ID); err != nil || len(res.Created) != 2 {
+		t.Fatalf("undo err=%v", err)
+	}
+	if p.Exists("canon/艾莉絲.md") || p.Exists("canon/雷恩.md") {
+		t.Fatal("撤銷後應移除")
+	}
+}
+
+// 群組略過、單頁指定類型:只匯入那一頁;群組有類型、單頁略過:其餘照常匯入。
+func TestApplyPerPageAgainstGroup(t *testing.T) {
+	src := fixture(t)
+	plan, _ := Scan(src)
+	var aliceSrc string
+	for _, g := range plan.Groups {
+		for _, f := range g.Files {
+			if f.Name == "艾莉絲" {
+				aliceSrc = f.Src
+			}
+		}
+	}
+
+	p1, _ := project.Create(t.TempDir(), "n1")
+	res, err := Apply(p1, src, map[string]string{"角色": TargetSkip, "": TargetNotes}, map[string]string{aliceSrc: "道具"})
+	if err != nil || len(res.Created) != 2 {
+		t.Fatalf("群組略過但單頁指定: created=%v err=%v", res.Created, err)
+	}
+	c, _ := p1.ReadFile("canon/艾莉絲.md")
+	if e := bible.Parse("canon/艾莉絲.md", c); e.Type != "道具" {
+		t.Fatalf("單頁覆寫未生效: %+v", e)
+	}
+	if _, err := p1.ReadFile("canon/雷恩.md"); !os.IsNotExist(err) {
+		t.Fatal("群組略過的雷恩不應匯入")
+	}
+	if n, _ := p1.ReadFile("notes/世界觀.md"); !strings.Contains(n, "魔法以艾莉絲為中心") {
+		t.Fatal("未覆寫的最上層頁面應跟隨群組去處")
+	}
+
+	p2, _ := project.Create(t.TempDir(), "n2")
+	res2, err := Apply(p2, src, map[string]string{"角色": "角色", "": TargetNotes}, map[string]string{aliceSrc: TargetSkip})
+	if err != nil || len(res2.Created) != 2 {
+		t.Fatalf("群組有類型但單頁略過: created=%v err=%v", res2.Created, err)
+	}
+	if _, err := p2.ReadFile("canon/雷恩.md"); err != nil {
+		t.Fatal("群組角色的雷恩應照常匯入")
+	}
+	if p2.Exists("canon/艾莉絲.md") {
+		t.Fatal("單頁略過不應匯入")
 	}
 }
