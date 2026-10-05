@@ -314,7 +314,7 @@ export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: 
     const changeTheme = (t: string) => { setTheme(t); SetTheme(t); };
 
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-background" data-testid="settings-page">
+        <div className="fixed inset-x-0 bottom-0 top-8 z-50 overflow-y-auto bg-background" data-testid="settings-page">
             <div className="mx-auto max-w-5xl px-10 py-8">
                 <div className="mb-6 flex items-center gap-3">
                     <Button variant="ghost" size="icon" onClick={onClose} data-testid="close-settings"><ArrowLeft/></Button>

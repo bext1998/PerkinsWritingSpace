@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
-import perkinsLogo from './assets/images/perkins-logo.png';
+import perkinsLogo from './assets/images/perkins-logo.svg';
 import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';

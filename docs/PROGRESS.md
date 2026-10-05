@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-05 — 客製視窗標題欄、關閉前存檔保護與向量版 logo
+
+- **向量版 logo**(`app/frontend/src/assets/images/perkins-logo.svg`,約 9 KB):金色遮罩用 vtracer 0.6.15 描邊、黑底圓角方塊依原稿 alpha 量測為 `x=103 y=135 w=1048 h=1002 rx=219.5` 直接畫 rect;只有兩色 `#000000` / `#FDB53D`。與原稿全尺寸比對:金色區域差 0.18%、透明度差 0.13%。側欄 `rail-logo` 改用 SVG,刪除 `perkins-logo.png`;exe 圖示不動。比對圖在 scratchpad(`logo-svg-compare.png`、`logo-svg-36px.png`、`logo-svg-20px.png`),截圖不進倉庫。
+- **客製標題欄**(`app/frontend/src/components/TitleBar.tsx`,32px):`main.go` 改 `Frameless: true` + `MinWidth: 900 / MinHeight: 600`。左側顯示「作品名 — Perkins WritingSpace」,沒開作品時加 20px 小 logo(作品畫面已有側欄 logo 不重複);右側最小化/最大化(還原)/關閉,關閉鈕 hover 紅底白字。拖曳用 `--wails-draggable: drag`、按鈕 `no-drag`,雙擊切換最大化。標題欄掛在 `RootBoundary` 之外(`main.tsx`),錯誤畫面也看得到、關得掉。設定頁改 `top-8`,不再蓋住標題欄。
+- **關閉前存檔保護**:`options.App.OnBeforeClose` → 未確認就回 true 阻止關閉並發 `perkins:close-request`;新綁定 `ConfirmQuit()` 設旗標後 `runtime.Quit()`,第二次 `OnBeforeClose` 放行。前端監聽在模組層(`lib/quitGuard.tsx`,React 樹外),沿用 `ErrorBoundary` 的緊急存檔;沒有未存內容或存檔成功 → `ConfirmQuit`;失敗 → 原地提示(路徑、原因、複製全文、仍要關閉、取消),不逾時放行。`setEmergencySaveFail` 現在由錯誤畫面與關閉流程共用(`runEmergencySave`)。
+- **Wails frameless 查證**(v2.12.0):(1) `on` 邊缘縮放:前端在距邊界 6px 按下時送 `resize:<edge>`(`internal/frontend/runtime/desktop/main.js:138-139`、`:167-203`),Go 以 `WM_NCLBUTTONDOWN` + `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/HTTOPLEFT/...` 交給系統(`internal/frontend/desktop/windows/frontend.go:688-696`、`:740-752`、`:888-894`);frameless 只是用 `WM_NCCALCSIZE` 藏起標準邊框,`WS_THICKFRAME` 仍保留(`internal/frontend/desktop/windows/window.go` WM_NCCALCSIZE 註解),navigation completed 後自動設 `window.wails.flags.enableResize = true`(`frontend.go:909`)。(2) 雙擊最大化:**Wails 沒有內建**(runtime 的 mousedown 只在 `e.detail===1` 時拖曳,無 dblclick 處理),由前端自行呼叫 `WindowToggleMaximise`。
+- 驗證:`go test ./...` 全過(含新增 `TestBeforeCloseBlocksUntilConfirmed`)、`npm run build` 通過、`wails build` 產出 `perkins.exe`;`app/frontend/dist` 已 grep 確認 `__perkinsCloseRequest`/`__perkinsQuitReset`/`__perkinsCrash` 等開發鉤子皆不存在(只剩真正的 `perkins:close-request`)。E2E(E2E_SKIP_AI=1)**197/197 passed,略過 8 項**;新增 26 項標題欄/關閉保護檢查,並以 6 輪破壞驗證(隱藏標題欄、寫死名稱、拿掉視窗鈕 testid、設定頁蓋住、logo 條件反轉、監聽改掛 App、存檔順序反轉、失敗也確認、拿掉防重入、寫錯檔、改用 window.confirm)確認會 FAIL。截圖:`50-titlebar-workspace-dark`、`51-titlebar-workspace-light`、`52-titlebar-settings`、`53-titlebar-bookshelf`、`54-titlebar-min-900x600`、`55-quit-save-failed`。
+- **限作者實機確認**(無頭瀏覽器碰不到原生視窗):邊缘拖曳縮放、雙擊/按鈕最大化與還原圖示切換、拖曳移動、最小化、Alt+F4 與工作列右鍵關閉會走到存檔流程、關閉提示在真 WebView 下的字型/尺寸、900×600 時編輯器工具列與狀態列會折成兩行(1920px 等寬螢幕下不折)、Windows 11 貼齊版面選單已失效。
+
 ## 2026-10-05 — 品牌套用(新圖示、側欄 logo、改名 Perkins WritingSpace / Perkins Bot)
 
 完成 SPEC §17 品牌與命名:

@@ -27,6 +27,8 @@ export function ClearCover():Promise<void>;
 
 export function CloseProject():Promise<void>;
 
+export function ConfirmQuit():Promise<void>;
+
 export function ConvertOptions():Promise<Array<main.Option>>;
 
 export function CopyChapter(arg1:string,arg2:string):Promise<string>;

@@ -279,3 +279,22 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **AI 助手名稱**:`Perkins Bot`。用於對話框標題與開啟按鈕的 title。泛指功能類別的「AI」字樣保留不改(例如「AI 模型」、「AI 一致性檢查」、「詢問 AI」與設定頁的說明文字)。
 - **圖示來源**:以作者 2026-09-30 選定的 `docs/perkins-icon-black-gold.png` 為原稿,產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(內含 16/24/32/48/64/128/256 各尺寸);側欄 logo 使用 128×128 縮小版 `app/frontend/src/assets/images/perkins-logo.png`。造型與主配色不變,細節見 `docs/BRAND_ICON.md`。
 - **刻意不改的內部識別**:`outputfilename`(維持 `perkins`,E2E 流程依賴 `perkins-dev.exe`)、Go module 與套件路徑 `perkins`、`%APPDATA%\Perkins` 設定目錄、專案內 `.perkins/` 與 `perkins.json`、keyring 服務名、`PERKINS_OPEN` 環境變數、`window.__perkins*` 開發鉤子。這些是磁碟與程式介面上的識別,改名會讓作者既有的設定、金鑰與作品讀不到。
+- **向量版 logo**:側欄與標題欄用 `app/frontend/src/assets/images/perkins-logo.svg`(兩色黑底圓角方塊 + 金色 P,由 PNG 原稿描圖);exe 圖示(`appicon.png`、`icon.ico`)仍用點陣原稿。
+
+### 17.1 視窗與關閉(2026-10-05)
+
+- **無原生標題欄**:`app/main.go` 設 `Frameless: true`(保留 Wails 預設的 frameless decorations);最小視窗尺寸 900×600。`outputfilename` 仍為 `perkins.exe`。視窗邊緣拖曳縮放仍可用(見下方取捨)。
+- **自畫標題欄**(`app/frontend/src/components/TitleBar.tsx`,高度 32px,疊在所有對話框之上):
+  - 左側顯示 `Perkins WritingSpace`;有開作品時顯示「作品名 — Perkins WritingSpace」。沒有側欄 logo 的畫面(書櫃、設定頁)左側加 20px 小 logo;作品編輯畫面已有側欄 logo,標題欄不重複放。
+  - 右側為最小化、最大化/還原、關閉三顆按鈕(各約 46×32);關閉鈕滑過變紅底白字;最大化/還原圖示依 `WindowIsMaximised` 與 `resize` 事件切換。
+  - 拖曳:空白處 `--wails-draggable: drag`,按鈕為 `no-drag`;雙擊拖曳區切換最大化(Wails v2.12 無內建雙擊,由前端自行呼叫 `WindowToggleMaximise`)。
+  - 顏色一律用既有主題 token,字級不小於 12px。
+- **關閉前存檔保護**:所有關閉途徑(標題欄關閉鈕、Alt+F4、工作列右鍵關閉)都經過 `options.App.OnBeforeClose`。尚未由前端確認時回傳 `true` 阻止關閉,並以事件 `perkins:close-request` 通知前端;新增綁定 `ConfirmQuit()` 供前端確認後呼叫,Go 設旗標後 `runtime.Quit()`,第二次進 `OnBeforeClose` 時放行。前端流程(掛在 React 樹外,`RootBoundary` 顯示錯誤畫面時仍有效):
+  1. 呼叫已註冊的緊急存檔(沿用 `ErrorBoundary` 的 `emergencySave`,不另寫一套);沒有開作品或沒有未存內容就直接確認關閉。
+  2. 存檔成功 → `ConfirmQuit()`。
+  3. 存檔失敗 → 顯示提示(目標路徑、失敗原因、「複製全文」、「仍要關閉(未存內容會遺失)」、「取消」);作者明確選了仍要關閉才 `ConfirmQuit()`。不使用 `window.confirm`。
+  4. 存檔進行中重複按關閉不重複啟動流程。不加逾時自動放行,不靜默吞錯。
+- **已知取捨**:
+  - Windows 11「滑過最大化鈕顯示貼齊版面(snap layouts)」選單會失去(該 UI 由原生標題列提供);內部標題欄無法重現。
+  - `WM_NCCALCSIZE` 會移除標準邊框,但 Wails 保留 `WS_THICKFRAME` 並在 navigation completed 後設 `window.wails.flags.enableResize = true`;前端偵測到距邊界 6px 按下時送 `resize:<edge>`,Go 端以 `WM_NCLBUTTONDOWN` + `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/…` 交給系統縮放,因此邊緣縮放仍可用。
+  - 關閉流程依賴前端回應;若前端 JS 完全失效,視窗無法關閉(工作列結束工作仍可強制結束)。這是「不逾時自動放行」的直接代價。

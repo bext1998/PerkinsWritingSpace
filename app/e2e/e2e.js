@@ -93,6 +93,14 @@ const maybe = async (name, fn, detail = '') => {
         check('資訊欄列出本章提及的設定(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
         await shot('01-workspace');
 
+        // 標題欄(SPEC §17.1):作品畫面看得到三顆視窗鈕,標題含作品名,且不重複放 logo
+        check('標題欄 作品畫面存在', await page.isVisible('[data-testid=titlebar]'));
+        check('標題欄 三顆視窗鈕存在', !!(await page.$('[data-testid=win-min]')) && !!(await page.$('[data-testid=win-max]')) && !!(await page.$('[data-testid=win-close]')));
+        const wsTitle = (await page.textContent('[data-testid=titlebar-title]')).trim();
+        check('標題欄 作品畫面標題含作品名', wsTitle.includes('E2E測試') && wsTitle.includes('Perkins WritingSpace'), wsTitle);
+        check('標題欄 作品畫面不重複放 logo', !(await page.$('[data-testid=titlebar-logo]')));
+        await shot('50-titlebar-workspace-dark');
+
         // 品牌(SPEC §17):側欄 logo 與 AI 助手名稱
         const logoState = () => page.evaluate(() => {
             const el = document.querySelector('[data-testid=rail-logo]');
@@ -278,6 +286,12 @@ const maybe = async (name, fn, detail = '') => {
         // 設定頁
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        // 設定頁不應蓋住標題欄
+        const tbBox = await page.locator('[data-testid=titlebar]').boundingBox();
+        const spBox = await page.locator('[data-testid=settings-page]').boundingBox();
+        check('標題欄 設定頁仍可見且未被蓋住', !!tbBox && !!spBox && tbBox.height > 0 && spBox.y >= tbBox.y + tbBox.height - 1,
+            JSON.stringify({titlebarBottom: tbBox && tbBox.y + tbBox.height, settingsTop: spBox && spBox.y}));
+        await shot('52-titlebar-settings');
         await shot('10-settings-models');
         await page.click('[data-testid=tab-platforms]');
         await page.waitForSelector('[data-testid=platform-preview]');
@@ -290,6 +304,10 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         await shot('12-light-theme');
+
+        // 淺色主題下的標題欄
+        check('標題欄 淺色主題仍存在', await page.isVisible('[data-testid=titlebar]'));
+        await shot('51-titlebar-workspace-light');
 
         // 淺色主題下的品牌 logo 與 AI 視窗標題(白色底也要清楚)
         const logoLight = await logoState();
@@ -309,11 +327,15 @@ const maybe = async (name, fn, detail = '') => {
         // 回書櫃
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('[data-testid=bookshelf-title]');
+        // 書櫃沒有側欄 logo → 標題欄左側放小 logo,標題回到應用程式名稱
+        check('標題欄 書櫃顯示應用程式名稱', (await page.textContent('[data-testid=titlebar-title]')).trim() === 'Perkins WritingSpace');
+        check('標題欄 書櫃有小 logo', !!(await page.$('[data-testid=titlebar-logo]')));
         // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
         await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
         await page.waitForTimeout(400); // 等移除鈕/書封動畫收尾再拍
         await shot('13-bookshelf');
+        await shot('53-titlebar-bookshelf');
         // 1B 視覺驗收(設計審查 16/17):書櫃首頁(深色)
         await shot('31-1b-bookshelf-dark');
 
@@ -1232,6 +1254,115 @@ const maybe = async (name, fn, detail = '') => {
         } else {
             check('E1 開發模式拋錯點存在', false, 'window.__perkinsCrash / __perkinsSaveFail 不存在(需以 wails dev 開發模式執行)');
         }
+
+        // ---- 關閉前存檔保護(SPEC §17.1) ----
+        // ConfirmQuit 是前端確認後才呼叫的綁定;E2E 用替身記錄呼叫,並在呼叫當下讀磁碟驗證「先存檔、後確認」。
+        const quitCalls = () => page.evaluate(() => (window.__quitCalls || []).length);
+        const stubConfirmQuit = probe => page.evaluate(p => {
+            window.__quitCalls = [];
+            window.go.main.App.ConfirmQuit = async () => {
+                let disk = null;
+                if (p) { try { disk = await window.go.main.App.ReadFile(p); } catch (e) { disk = 'ERR:' + e; } }
+                window.__quitCalls.push({disk});
+            };
+        }, probe || null);
+        const triggerClose = () => page.evaluate(() => window.__perkinsCloseRequest());
+        const resetQuit = () => page.evaluate(() => window.__perkinsQuitReset());
+
+        // (a) 有未存字:先寫入磁碟,之後才 ConfirmQuit
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-content');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('closeGuardMark');
+        await page.waitForTimeout(200);
+        check('關閉保護 (a) 前置:文字尚未寫入磁碟', !read(ch1).includes('closeGuardMark'));
+        await stubConfirmQuit(ch1);
+        await resetQuit();
+        await triggerClose();
+        await page.waitForFunction(() => (window.__quitCalls || []).length >= 1, null, {timeout: 15000}).catch(() => {});
+        const quitCall0 = await page.evaluate(() => window.__quitCalls[0]);
+        check('關閉保護 (a) ConfirmQuit 呼叫當下文字已在磁碟上',
+            typeof quitCall0.disk === 'string' && quitCall0.disk.includes('closeGuardMark'),
+            `diskLen=${quitCall0.disk ? quitCall0.disk.length : 'null'}`);
+        check('關閉保護 (a) 只呼叫一次 ConfirmQuit', (await quitCalls()) === 1);
+        check('關閉保護 (a) 未存文字確實落在磁碟', read(ch1).includes('closeGuardMark'));
+
+        // (c) 存檔進行中連按三次關閉:只跑一次流程(存檔完成後才 ConfirmQuit 一次)
+        await stubConfirmQuit(null);
+        await resetQuit();
+        await page.evaluate(() => window.__perkinsSaveDelay(1200));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('closeGuardConcurrent');
+        await page.waitForTimeout(200);
+        await page.click('[data-testid=save-button]');
+        await page.evaluate(() => { window.__perkinsCloseRequest(); window.__perkinsCloseRequest(); window.__perkinsCloseRequest(); });
+        check('關閉保護 (c) 存檔進行中不呼叫 ConfirmQuit', (await quitCalls()) === 0);
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 15000}).catch(() => {});
+        check('關閉保護 (c) 存檔完成後只呼叫一次 ConfirmQuit', (await quitCalls()) === 1);
+        check('關閉保護 (c) 存檔中的文字已寫入磁碟', read(ch1).includes('closeGuardConcurrent'));
+        await page.evaluate(() => window.__perkinsSaveDelay(0));
+
+        // (b) 存檔失敗:顯示提示,取消不關、明確選「仍要關閉」才關
+        await page.evaluate(() => {
+            window.__perkinsSaveFail();
+            window.__confirmCalls = 0;
+            window.confirm = () => { window.__confirmCalls++; return true; }; // 假設質:實作若用 confirm 就會被算到
+        });
+        await stubConfirmQuit(null);
+        await resetQuit();
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('closeGuardFail');
+        await page.waitForTimeout(200);
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000});
+        const quitFailMsg = await page.textContent('[data-testid=quit-failed-msg]');
+        check('關閉保護 (b) 提示含目標路徑與失敗原因',
+            quitFailMsg.includes(ch1) && quitFailMsg.includes('存檔失敗') && quitFailMsg.includes('開發模式模擬存檔失敗'), quitFailMsg);
+        check('關閉保護 (b) 未使用 window.confirm', (await page.evaluate(() => window.__confirmCalls ?? 0)) === 0);
+        check('關閉保護 (b) 存檔失敗時未呼叫 ConfirmQuit', (await quitCalls()) === 0);
+        // 提示開著時再按關閉:不得再開一份流程
+        await triggerClose();
+        await page.waitForTimeout(400);
+        check('關閉保護 (b) 提示開著時重複關閉不重啟流程', (await quitCalls()) === 0 && (await page.$$('[data-testid=quit-prompt]')).length === 1);
+        await shot('55-quit-save-failed');
+        await page.click('[data-testid=quit-force]');
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉保護 (b) 明確選擇仍要關閉才呼叫 ConfirmQuit 一次', (await quitCalls()) === 1);
+        // 同樣失敗下改選取消:視窗必須留下来、不呼叫 ConfirmQuit
+        await stubConfirmQuit(null);
+        await resetQuit();
+        await page.evaluate(() => window.__perkinsSaveFail());
+        await triggerClose();
+        await page.waitForSelector('[data-testid=quit-prompt]', {timeout: 10000});
+        await page.click('[data-testid=quit-cancel]');
+        await page.waitForSelector('[data-testid=quit-prompt]', {state: 'detached', timeout: 5000});
+        check('關閉保護 (b) 取消後仍未呼叫 ConfirmQuit', (await quitCalls()) === 0);
+        check('關閉保護 (b) 取消後視窗仍在', await page.isVisible('[data-testid=titlebar]'));
+
+        // (d) 根層錯誤畫面下仍能走完關閉流程(監聽在 React 樹之外)
+        await stubConfirmQuit(null);
+        await resetQuit();
+        await page.evaluate(() => window.__perkinsCrash('root'));
+        await page.waitForSelector('[data-testid=root-error]', {timeout: 10000});
+        check('關閉保護 (d) 錯誤畫面下標題欄仍在', await page.isVisible('[data-testid=titlebar]'));
+        await triggerClose();
+        await page.waitForFunction(() => (window.__quitCalls || []).length === 1, null, {timeout: 10000}).catch(() => {});
+        check('關閉保護 (d) 錯誤畫面下關閉流程仍完成一次', (await quitCalls()) === 1);
+
+        // 最小視窗尺寸(900×600)下標題欄與主要版面仍在(MinWidth/MinHeight 的依據)
+        await page.click('[data-testid=reload-app]');
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-content');
+        await page.setViewportSize({width: 900, height: 600});
+        await page.waitForTimeout(400);
+        check('標題欄 900×600 下仍在', await page.isVisible('[data-testid=titlebar]'));
+        check('標題欄 900×600 下有側欄 logo 與編輯器', !!(await page.$('[data-testid=rail-logo]')) && !!(await page.$('.cm-content')));
+        await shot('54-titlebar-min-900x600');
+        await page.setViewportSize({width: 1440, height: 900});
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

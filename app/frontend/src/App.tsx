@@ -3,6 +3,7 @@ import {GetSettings, GetTree} from '../wailsjs/go/main/App';
 import {project} from '../wailsjs/go/models';
 import {TooltipProvider} from '@/components/ui/overlay';
 import {CrashPoint, onCrashRequest} from '@/components/ErrorBoundary';
+import {setProjectName} from '@/lib/windowTitle';
 import Bookshelf from './Bookshelf';
 import Workspace from './Workspace';
 import SettingsPage from './SettingsPage';
@@ -24,6 +25,9 @@ function App() {
         document.documentElement.classList.toggle('dark', theme === 'dark');
         document.documentElement.classList.toggle('light', theme !== 'dark');
     }, [theme]);
+
+    // 標題欄(在 RootBoundary 之外)靠這個模組層狀態取得作品名稱
+    useEffect(() => { setProjectName(tree?.name ?? null); }, [tree]);
 
     // 開發模式:window.__perkinsCrash 設定拋錯旗標後,靠這裡強制重繪讓拋錯點生效
     useEffect(() => {

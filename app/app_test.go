@@ -143,3 +143,26 @@ func TestAskAIPrematureFailureRecordsOnce(t *testing.T) {
 		t.Fatalf("error 應為端點連線錯誤: %v", ev["error"])
 	}
 }
+
+// 意圖:關閉前的存檔保護不能被繞過(SPEC §17.1)。第一次關閉必須被阻止並通知前端,
+// 前端確認(ConfirmQuit 設旗標)之後才放行;每次都必須通知,前端才不會漏掉存檔視窗。
+func TestBeforeCloseBlocksUntilConfirmed(t *testing.T) {
+	app := NewApp()
+	var emits int
+	app.emitClose = func(context.Context) { emits++ }
+	ctx := context.Background()
+
+	if !app.beforeClose(ctx) {
+		t.Fatal("尚未確認時,第一次關閉應被阻止")
+	}
+	if !app.beforeClose(ctx) {
+		t.Fatal("尚未確認時,重複關閉仍應被阻止")
+	}
+	if emits != 2 {
+		t.Fatalf("每次關閉都應通知前端,got %d", emits)
+	}
+	app.allowQuit() // ConfirmQuit 會再呼叫 runtime.Quit,需真實 frontend context,測試只驗旗標轉換
+	if app.beforeClose(ctx) {
+		t.Fatal("已確認後應放行關閉")
+	}
+}

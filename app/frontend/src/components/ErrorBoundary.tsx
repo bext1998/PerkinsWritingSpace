@@ -24,11 +24,24 @@ export function registerEmergencySave(fn: EmergencySave | null) {
     emergencySave = fn;
 }
 
+// 關閉前存檔保護(SPEC §17.1)用:取得目前註冊的緊急存檔,不另寫一套存檔。
+export function getEmergencySave(): EmergencySave | null {
+    return emergencySave;
+}
+
 // 開發模式專用:下一次緊急存檔模擬失敗(E2E 用)
 let failNextSave = false;
 
 export function setEmergencySaveFail(v: boolean) {
     failNextSave = v;
+}
+
+// 執行緊急存檔。錯誤畫面(RootBoundary)與關閉前存檔保護(quitGuard)共用同一個入口,
+// 失敗模擬才不會只有一邊生效。
+export function runEmergencySave(fn: EmergencySave): Promise<void> {
+    const failNow = failNextSave; // 開發模式專用,用過即清
+    failNextSave = false;
+    return failNow ? Promise.reject(new Error('開發模式模擬存檔失敗')) : fn.save();
 }
 
 // 開發模式專用的拋錯旗標:E2E 透過 window.__perkinsCrash 設定,下一次 render 生效
@@ -120,10 +133,8 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
             this.setState({save: null, rescue: null, copied: 'none'});
             return;
         }
-        const failNow = failNextSave; // 開發模式專用,用過即清
-        failNextSave = false;
         this.setState({save: 'saving', rescue, copied: 'none'});
-        const p: Promise<void> = failNow ? Promise.reject(new Error('開發模式模擬存檔失敗')) : fn.save();
+        const p: Promise<void> = runEmergencySave(fn);
         p.then(
             () => this.setState({save: 'saved'}),
             (e: unknown) => this.setState({save: 'failed', saveMsg: errText(e)}),
