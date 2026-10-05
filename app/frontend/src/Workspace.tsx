@@ -1,7 +1,7 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
     BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, NotebookPen, PanelLeftClose, PanelRightClose,
-    PanelRightOpen, ScrollText, Settings, Share2, Users,
+    PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
     ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, GetSettings, GetTree, ParseEntity, ReadFile,
@@ -25,8 +25,33 @@ import {
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
+import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
+
+// 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲、__perkinsReadDelay(ms)
+// 讓 ReadFile 延遲(重疊導覽回歸用);正式建置時 DEV 為 false,此段與延遲檢查都會被刪除
+const devSaveDelay = {ms: 0};
+const devReadDelay = {ms: 0};
+
+if (import.meta.env.DEV) {
+    (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
+    (window as any).__perkinsReadDelay = (ms: number) => { devReadDelay.ms = ms; };
+    (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
+}
+
+// (DEV)SaveFile 包一層並行計數;正式建置時直接呼叫 SaveFile
+async function trackedSaveFile(path: string, text: string) {
+    if (!import.meta.env.DEV) return SaveFile(path, text);
+    const s = (window as any).__perkinsSaveStats;
+    s.inFlight++;
+    s.maxInFlight = Math.max(s.maxInFlight, s.inFlight);
+    try {
+        return await SaveFile(path, text);
+    } finally {
+        s.inFlight--;
+    }
+}
 
 interface Props {
     tree: project.Tree;
@@ -101,22 +126,84 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 存檔一律讀最新狀態:避免快捷鍵或其他回呼拿到舊的閉包,造成「顯示已儲存卻沒存」
     const latest = useRef({current, text, dirty});
     latest.current = {current, text, dirty};
-    const save = useCallback(async () => {
-        const {current, text, dirty} = latest.current;
-        if (current && dirty) {
-            await SaveFile(current, text);
-            latest.current = {...latest.current, dirty: false};
-            setDirty(false);
-            refreshCounts();
-            refreshIndex();
-            if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
-        }
+    // 編輯版本計數:每次 onChange/applyHeader 加 1;存檔完成時版本沒變才清 dirty,
+    // 存檔途中繼續打字不會被誤標為已儲存
+    const editVersion = useRef(0);
+    // 單一序列化寫入迴圈:同時最多一個 SaveFile;重複觸發(Ctrl+S/按鈕/自動存檔)回傳同一個
+    // Promise,所有呼叫者等到畫面上的字全部落盤才 resolve,「已儲存」通知自然正確。
+    // 迴圈每輪記下當輪的 current+text 配對,切檔後以新的 latest 判斷,不會寫錯檔。
+    const saveInFlight = useRef<Promise<void> | null>(null);
+    const [saving, setSaving] = useState(false);
+    const save = useCallback((): Promise<void> => {
+        if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
+        // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
+        // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
+        if (!(latest.current.current && latest.current.dirty)) return Promise.resolve();
+        let run!: Promise<void>; // 閉包 finally 要比對自身;前置檢查保證 IIFE 先在 await 掛起,賦值必在 finally 前
+        run = (async () => {
+            setSaving(true);
+            try {
+                while (latest.current.current && latest.current.dirty) {
+                    const {current, text} = latest.current;
+                    const ver = editVersion.current;
+                    if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
+                    await trackedSaveFile(current, text);
+                    // 期間又有編輯(版本變了)或已切換檔案時,保留 dirty 讓下一輪存新版本
+                    if (latest.current.current === current && editVersion.current === ver) {
+                        latest.current = {...latest.current, dirty: false};
+                        setDirty(false);
+                    }
+                    refreshCounts();
+                    refreshIndex();
+                    if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
+                }
+            } finally {
+                if (saveInFlight.current === run) saveInFlight.current = null;
+                setSaving(false);
+            }
+        })();
+        saveInFlight.current = run;
+        return run;
     }, [refreshCounts, refreshIndex, refreshTree]);
 
+    // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。
+    // 用讀 latest ref 的同一套邏輯,但不依賴卸載後的 setState,只做 SaveFile 本身。
+    useEffect(() => {
+        registerEmergencySave({
+            save: async () => {
+                // 若正在存檔,先等它結束,避免較舊的在途寫入晚於緊急存檔落盤而蓋掉最新內容
+                if (saveInFlight.current) await saveInFlight.current.catch(() => {});
+                const {current, text, dirty} = latest.current;
+                if (current && dirty) await SaveFile(current, text);
+            },
+            rescue: () => {
+                const {current, text, dirty} = latest.current;
+                return current && dirty ? {path: current, text} : null;
+            },
+        });
+        return () => registerEmergencySave(null);
+    }, []);
+
+    // 導覽序號:每個在途 openFile 記下自己的 seq;await 後 seq 已不是最新就直接返回,
+    // 不得套用讀檔結果(過期導覽會把作者在等待期間輸入的字替換成舊稿)
+    const navSeq = useRef(0);
     const openFile = useCallback(async (rel: string, line?: number) => {
+        const seq = ++navSeq.current;
+        const stale = () => seq !== navSeq.current;
         try {
+            // 重開目前檔案:不重新讀檔,保留編輯器內容(含未存的字),只做定位
+            if (rel === latest.current.current) {
+                if (line) editor.current?.scrollToLine(line);
+                return;
+            }
             await save(); // 切換前自動存檔,避免遺失
+            if (stale()) return;
+            if (import.meta.env.DEV && devReadDelay.ms > 0) await new Promise(r => setTimeout(r, devReadDelay.ms));
             const content = await ReadFile(rel);
+            if (stale()) return;
+            // ReadFile 等待期間若又有打字(dirty 變 true),先存完才切換,避免丟字
+            if (latest.current.dirty) await save();
+            if (stale()) return;
             loaded.current = rel;
             setCurrent(rel);
             setText(content);
@@ -137,16 +224,21 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         refreshIndex();
     }, [current, refreshCounts, refreshIndex]);
 
+    // Ctrl+S 與存檔按鈕共用;saving 由 save 層的 in-flight ref 推導,這裡只轉發結果通知
+    const saveNow = useCallback(() => {
+        save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail);
+    }, [save, notify, fail]);
+
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                 e.preventDefault();
-                save().then(() => notify({text: '已儲存', kind: 'ok'})).catch(fail);
+                saveNow();
             }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [save, notify, fail]);
+    }, [saveNow]);
 
     // 本章字數(與後端同一套計算規則)
     useEffect(() => {
@@ -207,6 +299,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         if (!current) return;
         try {
             const next = await ApplyEntityHeader(latest.current.text, typ, name, aliases);
+            editVersion.current++;
             latest.current = {...latest.current, text: next, dirty: true};
             setText(next);
             setDirty(true);
@@ -259,6 +352,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {/* 可收合的側欄 */}
             {panel && (
+                <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
                 <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
                     <div className="flex h-12 items-center justify-between border-b px-4">
                         <span className="truncate font-serif text-[15px] font-semibold" title={tree.name}>{tree.name}</span>
@@ -278,6 +372,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         </div>
                     )}
                 </aside>
+                <CrashPoint area="sidebar"/>
+                </AreaBoundary>
             )}
 
             {/* 主編輯區 */}
@@ -320,6 +416,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                     </DropdownMenu>
                                 </>
                             )}
+                            {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
+                            <Button size="sm"
+                                    data-testid="save-button"
+                                    variant={dirty ? 'default' : 'ghost'}
+                                    disabled={saving || !dirty}
+                                    onClick={saveNow}
+                                    title="儲存(Ctrl+S)">
+                                <Save/>{saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}
+                            </Button>
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"><History/>版本</Button>
                             <Tip label={inspector ? '收合資訊欄' : '展開資訊欄'} side="bottom">
                                 <Button variant="ghost" size="iconSm" onClick={() => setInspector(v => !v)}>
@@ -334,7 +439,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
-                            onChange={t => { latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
+                            onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
                                 // 選取時記回填候選;取消選取(null)時一併清除(review-round4 E1):
@@ -355,23 +460,31 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     <span>全書 {totalCount.toLocaleString()} 字</span>
                     {current && !chapter && <span>{liveCount.toLocaleString()} 字</span>}
                     <div className="flex-1"/>
-                    {current && <span>{dirty ? '未儲存 · Ctrl+S' : '已儲存'}</span>}
+                    {current && <span>{dirty ? '未儲存' : '已儲存'}</span>}
                     {activeProfile && <span>AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                 </footer>
             </main>
 
             {inspector && current && (
-                <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
-                           scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
+                <AreaBoundary area="inspector" fallbackClassName="w-[280px] shrink-0 justify-center overflow-y-auto border-l bg-sidebar">
+                    <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
+                               scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
+                    <CrashPoint area="inspector"/>
+                </AreaBoundary>
             )}
 
-            <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
-                        docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
-                        remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                        beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
-                        pending={pending} notify={notify} onPickSelection={pickSelection}
-                        lastSel={lastSel}
-                        onClearLastSel={() => setLastSel(null)}/>
+            {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流 */}
+            <AreaBoundary area="chat"
+                          fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
+                <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
+                            docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
+                            remoteOk={remoteOk} setRemoteOk={setRemoteOk}
+                            beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
+                            pending={pending} notify={notify} onPickSelection={pickSelection}
+                            lastSel={lastSel}
+                            onClearLastSel={() => setLastSel(null)}/>
+                <CrashPoint area="chat"/>
+            </AreaBoundary>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
                            onRestored={files => { reloadCurrent(files); refreshTree(); }}/>
