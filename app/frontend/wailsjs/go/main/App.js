@@ -34,6 +34,10 @@ export function CloseProject() {
   return window['go']['main']['App']['CloseProject']();
 }
 
+export function ConfirmQuit() {
+  return window['go']['main']['App']['ConfirmQuit']();
+}
+
 export function ConvertOptions() {
   return window['go']['main']['App']['ConvertOptions']();
 }

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -40,11 +41,41 @@ type App struct {
 	mu     sync.Mutex
 	agent  *agent.Agent
 	cancel context.CancelFunc
+
+	// 關閉保護(SPEC §17.1):所有關閉途徑先過 beforeClose,前端確認後 ConfirmQuit 放行
+	quitConfirmed atomic.Bool
+	emitClose     func(context.Context) // 預設 runtime.EventsEmit;測試時可替換,避免需要真實 frontend context
 }
 
+// closeRequestEvent 是 Go 通知前端「收到關閉請求、請先存檔」的事件名。
+const closeRequestEvent = "perkins:close-request"
+
 func NewApp() *App {
-	return &App{session: randomID()}
+	return &App{
+		session:   randomID(),
+		emitClose: func(ctx context.Context) { runtime.EventsEmit(ctx, closeRequestEvent) },
+	}
 }
+
+// beforeClose 由 Wails 在所有關閉途徑呼叫(自畫關閉鈕、Alt+F4、工作列右鍵關閉)。
+// 前端尚未確認存檔前回傳 true 阻止關閉並通知前端;ConfirmQuit 設旗標後放行。
+func (a *App) beforeClose(ctx context.Context) bool {
+	if a.quitConfirmed.Load() {
+		return false
+	}
+	if a.emitClose != nil {
+		a.emitClose(ctx)
+	}
+	return true
+}
+
+// ConfirmQuit 由前端在存檔完成、或作者明確選擇放棄未存內容後呼叫。
+func (a *App) ConfirmQuit() {
+	a.allowQuit()
+	runtime.Quit(a.ctx)
+}
+
+func (a *App) allowQuit() { a.quitConfirmed.Store(true) }
 
 // randomID 產生研究記錄的 session id(區分不同使用時段)。
 func randomID() string {

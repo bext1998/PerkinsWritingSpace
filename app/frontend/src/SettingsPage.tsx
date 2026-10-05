@@ -8,6 +8,7 @@ import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Badge, Input, Label, Switch} from '@/components/ui/basic';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/overlay';
+import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
 import {GeneratedCover} from './Bookshelf';
 import NotionImport from './NotionImport';
@@ -314,7 +315,8 @@ export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: 
     const changeTheme = (t: string) => { setTheme(t); SetTheme(t); };
 
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-background" data-testid="settings-page">
+        <div style={{top: TITLEBAR_HEIGHT}}
+             className="fixed inset-x-0 bottom-0 z-50 overflow-y-auto bg-background" data-testid="settings-page">
             <div className="mx-auto max-w-5xl px-10 py-8">
                 <div className="mb-6 flex items-center gap-3">
                     <Button variant="ghost" size="icon" onClick={onClose} data-testid="close-settings"><ArrowLeft/></Button>
