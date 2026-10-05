@@ -1,5 +1,16 @@
 # PROGRESS.md
 
+## 2026-10-05 — 品牌套用(新圖示、側欄 logo、改名 Perkins WritingSpace / Perkins Bot)
+
+完成 SPEC §17 品牌與命名:
+
+- **應用程式圖示**:以 `docs/perkins-icon-black-gold.png` 產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(Pillow 產生,內含 16/24/32/48/64/128/256 七個尺寸,非單一尺寸縮放)。16px 版筆尖會糊成一小塊(原稿細節過細),24px 以上可辨;未改造型,已回報。
+- **側欄 logo**:`Workspace.tsx` 圖示列最上方的大寫 P 方塊換成 `app/frontend/src/assets/images/perkins-logo.png`(128×128 縮小版),維持 36×36,加 `alt` 與 `data-testid=rail-logo`;不再套 bg-primary/15。深淺主題下皆清楚。
+- **改名**:視窗標題(`app/main.go`)、`app/wails.json` 的 `info.productName`/`productVersion`(0.2.0)、`app.go` 開啟資料夾對話框標題、`SettingsPage.tsx` 啟動說明改為 `Perkins WritingSpace`;AI 助手顯示名稱改為 `Perkins Bot`(`ChatWindow.tsx` 視窗標題與開啟按鈕 title)。泛指功能類別的「AI」字樣保留。內部識別(outputfilename、Go module、`%APPDATA%\Perkins`、`.perkins/`、`perkins.json`、keyring、`PERKINS_OPEN`、`window.__perkins*`)刻意不改。
+- **`app/build/windows/info.json` 補字串表 `FileVersion` 與 fixed `product_version`**:Wails 預設模板缺 `FileVersion`,導致 .NET `FileVersionInfo`(PowerShell `(Get-Item).VersionInfo`)的 `GetVersionInfoForCodePage` 因 `_fileVersion` 為空而回傳 false,把 ProductName 等其他欄位一併清空;補上後 PowerShell 可讀到 ProductName/FileDescription/ProductVersion。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、`wails build` 產出 `app/build/bin/perkins.exe`(ProductName = Perkins WritingSpace)、E2E(E2E_SKIP_AI=1)**171/171 passed,略過 8 項**。
+- E2E 新增 7 項品牌檢查(側欄 logo 是已載入的 img 且 36×36、開啟按鈕 title、AI 視窗標題深/淺色為 Perkins Bot、頁面不再出現「AI 助手」、淺色 logo 仍載入);破壞驗證:改回 P 字方塊 + 「AI 助手」→ 7 項全部 FAIL(169/171、164/171),還原後 171/171。截圖 `40-brand-rail-dark`、`41-brand-rail-light`、`42-brand-chat-title-dark`、`43-brand-chat-title-light`。
+
 ## 2026-10-05 — 長書名驗證改 render 真實元件(review-1b2,I 段)
 
 - H4 的臨時 div 驗證移除(它不 render GeneratedCover,只取標籤的 computed style,封面修補被破壞仍會通過);E2E 改為:覆寫 `window.go.main.App.ListRecent` 回傳受控資料(`TheLastGallopAndTheForgottenKingdom` 與 `The Last Gallop and the Forgotten Kingdom`,路徑指向不存在的暫存位置、missing=true 不開啟;另置入真實作品卡供驗證後重開),回書櫃讓真實 Bookshelf/GeneratedCover render,分別核對兩種長名的封面 span(斷行兩行、與書脊線間距≥20px)與下方書名標籤(兩行內、不溢出)。找不到測試卡片即 FAIL,不退回短名、不跳過。

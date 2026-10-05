@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
+import perkinsLogo from './assets/images/perkins-logo.png';
 import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
@@ -330,7 +331,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         <div className="flex h-full">
             {/* 圖示列:齒輪固定在左下角 */}
             <nav className="flex w-[60px] shrink-0 flex-col items-center gap-1 border-r bg-rail py-3">
-                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15 font-serif text-lg font-bold text-primary">P</div>
+                <img src={perkinsLogo} alt="Perkins WritingSpace" data-testid="rail-logo" className="mb-3 h-9 w-9"/>
                 {railBtn('manuscript', '稿件', BookOpen)}
                 {railBtn('bible', '設定集', Users)}
                 {railBtn('docs', '大綱與筆記', NotebookPen)}

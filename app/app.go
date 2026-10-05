@@ -89,7 +89,7 @@ var errNoProject = errors.New("尚未開啟專案")
 
 // PickAndOpenProject 讓作者選資料夾並開啟;取消則回傳 nil。
 func (a *App) PickAndOpenProject() (*project.Tree, error) {
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "開啟 Perkins 專案資料夾"})
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "開啟 Perkins WritingSpace 專案資料夾"})
 	if err != nil || dir == "" {
 		return nil, err
 	}

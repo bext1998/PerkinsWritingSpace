@@ -93,6 +93,25 @@ const maybe = async (name, fn, detail = '') => {
         check('資訊欄列出本章提及的設定(含無 frontmatter 的舊設定)', cast.includes('艾莉絲') && cast.includes('雷恩'));
         await shot('01-workspace');
 
+        // 品牌(SPEC §17):側欄 logo 與 AI 助手名稱
+        const logoState = () => page.evaluate(() => {
+            const el = document.querySelector('[data-testid=rail-logo]');
+            return el ? {tag: el.tagName, naturalWidth: el.naturalWidth, w: el.offsetWidth, h: el.offsetHeight} : null;
+        });
+        const logoDark = await logoState();
+        check('品牌 側欄 logo 是已載入的圖片', !!logoDark && logoDark.tag === 'IMG' && logoDark.naturalWidth > 0, JSON.stringify(logoDark));
+        check('品牌 側欄 logo 尺寸 36×36', !!logoDark && logoDark.w === 36 && logoDark.h === 36, JSON.stringify(logoDark));
+        const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'title');
+        check('品牌 開啟按鈕標題為 Perkins Bot', fabTitle === 'Perkins Bot', String(fabTitle));
+        await shot('40-brand-rail-dark');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const chatTitleDark = (await page.textContent('[data-testid=chat-title]')).trim();
+        check('品牌 AI 視窗標題為 Perkins Bot', chatTitleDark === 'Perkins Bot', chatTitleDark);
+        check('品牌 頁面不再出現「AI 助手」', !(await page.textContent('body')).includes('AI 助手'));
+        await shot('42-brand-chat-title-dark');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
         // 回歸:章節裡沒有任何設定實體 + 收合側欄 → 開啟 AI 視窗不能整個白屏。
         // 成因是 SuggestAttachments 回傳 null(Go nil slice)而前端對它 .filter,見 docs/PITFALLS.md。
         const errs0 = errors.length;
@@ -271,6 +290,17 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         await shot('12-light-theme');
+
+        // 淺色主題下的品牌 logo 與 AI 視窗標題(白色底也要清楚)
+        const logoLight = await logoState();
+        check('品牌 淺色主題側欄 logo 仍已載入', !!logoLight && logoLight.tag === 'IMG' && logoLight.naturalWidth > 0, JSON.stringify(logoLight));
+        await shot('41-brand-rail-light');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const chatTitleLight = (await page.textContent('[data-testid=chat-title]')).trim();
+        check('品牌 淺色主題 AI 視窗標題為 Perkins Bot', chatTitleLight === 'Perkins Bot', chatTitleLight);
+        await shot('43-brand-chat-title-light');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=open-settings]');
         await page.click('button:has-text("外觀")');
         await page.click('button:has-text("夜間書房")');
