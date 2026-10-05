@@ -997,7 +997,7 @@ func (a *App) PickNotionExport(zipFile bool) (string, error) {
 
 func (a *App) NotionScan(src string) (*notion.Plan, error) { return notion.Scan(src) }
 
-func (a *App) NotionApply(src string, choices map[string]string) (*notion.Result, error) {
+func (a *App) NotionApply(src string, choices map[string]string, pages map[string]string) (*notion.Result, error) {
 	if a.proj == nil {
 		return nil, errNoProject
 	}
@@ -1006,7 +1006,7 @@ func (a *App) NotionApply(src string, choices map[string]string) (*notion.Result
 	if _, err := s.Take("Notion 匯入前", "before-import", nil); err != nil {
 		return nil, fmt.Errorf("快照失敗,未匯入: %w", err)
 	}
-	return notion.Apply(a.proj, src, choices)
+	return notion.Apply(a.proj, src, choices, pages)
 }
 
 func (a *App) NotionUndo(id string) ([]string, error) {

@@ -22,6 +22,74 @@
   7. §12.8 把 proposal_accept 與 proposal_reject 欄位分開列,與實作一致。
 - 驗證:`go test ./...` 全過;`npm run build` 通過;E2E **33/33 passed,略過 8 項(E2E_SKIP_AI=1)**。截圖 `shots/19-research-settings.png`、`shots/26-research-load-error.png` 已目視。
 
+## 2026-10-05 — Notion 匯入可逐頁分類
+
+完成 SPEC §16 第 2 項:同一資料夾裡的角色、地點、名詞可以分開歸類。
+
+- 後端:`notion.Apply` 新增第三參數 `pages map[string]string`(key = `File.Src`,value 與群組同一套值);頁面有覆寫就用覆寫,否則用所屬群組去處;key 不在掃描結果中時忽略。允許「群組略過、單頁指定類型」與「群組有類型、單頁略過」。`App.NotionApply(src, choices, pages)` 同步更新,wailsjs 綁定已重新生成。B9 不變:同名不覆蓋、匯入前快照、可撤銷。
+- Go 測試(`notion_test.go`):同資料夾三頁分別匯入角色/地點/略過、群組略過但單頁指定、群組有類型但單頁略過、不存在的 key 忽略。
+- 前端 `NotionImport.tsx`:資料夾列可展開(ChevronRight/Down),逐頁 Select 預設「跟隨資料夾(目前:X)」,清空回跟隨;覆寫頁數顯示「N 頁另行指定」;「匯入 N 頁」按逐頁結果計算(略過不算);展開區 max-h + 捲動。
+- E2E 新情境 N1:覆寫 `window.go.main.App.PickNotionExport`(wailsjs 呼叫當下才讀 window.go)繞過無頭模式無法操作的原生檔案對話框;fixture 在測試專案外建立 Notion 匯出(同資料夾三頁,檔名帶 32 位 hex id)。三頁分別跟隨(角色)/地點/略過 → 匯入 → 斷言王都 frontmatter 為地點、草稿不存在、同名艾莉絲未覆蓋、撤銷後王都消失。審查修補(b7d10a1):
+- check() 正規化 `!!ok`:非略過的 falsy(含 optional chaining 的 undefined)一律計失敗、退出碼非 0;只有 skip 產生略過記錄。
+- N1 新增第四頁「劉洋」(fixture 有四頁):先覆寫為地點(覆寫頁數 1、匯入 4 頁),再選回「跟隨資料夾」(覆寫清除、匯入計數回到 3)→ 匯入後劉洋在 canon/、frontmatter 為角色、撤銷後消失;艾莉絲保留作 B9 不覆蓋檢查。過程發現:e2e 的選項匹配原本用全等,「跟隨資料夾(目前:角色)」匹配不到,已改 startsWith。
+- 未覆寫頁的閉合 Select 顯示改為隨群組即時更新的「跟隨資料夾(目前:X)」(placeholder 動態),E2E 斷言閉合顯示含目前群組去處。第三輪修補(C2):N1 新增「把人物群組改為略過」情境——兩個跟隨頁(艾莉絲/劉洋)閉合顯示變「跟隨資料夾(目前:略過)」、匯入數變 1、已覆寫頁保持原值(王都地點/草稿略過)、覆寫頁數不變,再切回角色完成匯入與撤銷;群組 Select 加 data-testid=group-select。破壞驗證兩項:(1) 忽略逐頁覆寫 → Go 測試 TestApplyPerPageOverrides/AgainstGroup FAIL;(2) placeholder 改回固定文字 → N1c 與 C2 跟隨頁顯示檢查 FAIL(41/44)。
+- E2E 新增 `E2E_SKIP_AI=1`(2026-10-05 作者回饋:本機模型吃大量記憶體):跳過所有向模型送出請求的步驟,被跳過的檢查印成「略過」,結尾統計「略過 N 項」,不算通過。
+- 踩坑記錄:`NOTION_SRC` 以 `path.dirname(PROJ)` 推導時,POSIX 風格路徑在 Windows 上會解析成 `
+otion-export`,Go 端報 `GetFileAttributesEx
+otion-export` 錯;改用 `path.resolve` + 明確基準(fixture 模式取 dir 上層、runtime 模式取 PROJ 上層)。
+- 驗證:`go test ./...` 全過(含 4 個新測試);`npm run build` 通過;E2E **33/33 通過,略過 8 項(E2E_SKIP_AI=1:模型回覆完成、模型建立提案並顯示卡片、A1 提案顯示前稿件未被改動、編輯後提示將寫入作者版本、B4 接受後寫入作者編輯的版本、B4 provenance 記錄 authorEdited、編輯器重新載入為磁碟內容、接受提案前的自動快照在版本清單)**。截圖 `shots/18-notion-perpage.png` 已目視:展開列表、覆寫頁數、逐頁 Select 與匯入頁數均正常。
+
+## 2026-10-05 — 錯誤防護(ErrorBoundary)
+
+完成 SPEC §16 第 0 項:render 期間未捕捉錯誤不再讓視窗全白。同日依審查意見修補四點(ea4d024 審查):
+
+- **救援資料**:緊急存檔改註冊 `{save, rescue}`,`rescue()` 在呼叫 SaveFile 前先取好 `{path, text}`(不可寫入 log 或檔案)。存檔失敗時錯誤畫面顯示目標路徑、唯讀可全選的 textarea 放原文與「複製全文」(`navigator.clipboard.writeText`),不做另存救援檔。
+- **重新載入時序**:存檔中(`data-save-state=saving`)停用「重新載入」;存檔失敗時按鈕文字改為「放棄未存內容並重新載入」。
+- **區域 fallback 版面**:chat fallback 改為右下 fixed 小卡片(不佔版面流);inspector fallback 保留 `w-[280px] shrink-0`;側欄保留 272px;錯誤文字可斷行。E1 對 sidebar/inspector/chat 各別觸發,斷言 `.cm-editor` 寬度前後差 < 3px 且仍可輸入。
+- **E2E 競態**:`emergency-save` 加 `data-save-state`,E2 等 `saved` 再讀磁碟;新增 E4 情境:開發模式專用 `window.__perkinsSaveFail`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)模擬存檔失敗,驗證 textarea 內容等於未存原文(磁碟內容+輸入字)、唯讀、複製全文、放棄重載後檔案無未存字。另移植已核准的「書櫃顯示最近的作品」waitForSelector 穩定性修正。**已知問題(2026-10-05,原因未明)**:「書櫃顯示最近的作品」檢查仍偶發失敗(a958a55 修補後的第三輪執行再次失敗),加 waitForSelector 未證明消除 race;候選原因:剛關閉設定頁啟動的 GetTree 可能在 onClose 清空 tree 後才回傳,把書櫃卸載回作品畫面;CloseProject/SetTheme 未等待完成,ListRecent 讀取可能遇到空檔或不完整 JSON。待以可控請求順序的回歸情境驗證後再修,勿視為已解決。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **57/57 通過**(四輪執行:一輪 LM Studio 模型未產生提案卡屬模型 flakiness,與本變更無關)。
+
+**第二輪審查修補(a958a55 複審)**:
+
+- 救援畫面視覺權重:「複製全文」改為主要按鈕(default);「放棄未存內容並重新載入」降為次要(ghost,文字用 destructive 色),且改為兩段式:第一次點擊原地顯示「尚未儲存的原文將無法取回,確定要放棄?」加「確定放棄並重新載入」與「取消」(不用 window.confirm),確認後才 reload;存檔成功時的「重新載入」維持一次點擊。
+- **複製防護(PR #4 審查;第二輪審查後重寫回歸)**:複製 Promise 進行中停用「複製全文」(copyAll 防重入,連按不啟動第二個 Promise)、第一段放棄與確認段「確定放棄並重新載入」都依同一狀態停用,confirmAbandon 也檢查狀態(按鈕 disabled 屬性繞不過 handler 防護);複製失敗後仍可手動全選複製或明確確認放棄。E4a 回歸情境:受控剪貼簿替身(覆寫 writeText 記錄呼叫數與捕捉文字、釋放時才寫真剪貼簿)——進確認段後複製 → 確認按鈕與複製按鈕停用、繞過 disabled 的點擊不重載;防重入兩層驗證:繞過 disabled 的 handler 呼叫 + DEV 直接呼叫 copyAll 兩次,writeText 呼叫數均為 1;**破壞驗證成立:移除防重入後「直接呼叫兩次」檢查 FAIL(calls=3)**;釋放後顯示已複製、替身捕捉的文字等於未存原文、放棄恢復可用。
+- E4 新增斷言:剪貼簿 `navigator.clipboard.readText()` 與救援 textarea 完整比對;兩段式放棄(第一次點擊不重載、取消可回救援畫面、確定後才重載)與按鈕樣式(default/ghost+destructive)。「存檔中不能重載」的直接驗證未補(延遲掛鉤在另一分支)。
+
+原實作內容:
+
+- `app/frontend/src/components/ErrorBoundary.tsx`(新):`RootBoundary`(最外層,錯誤畫面 + 重新載入按鈕,`componentDidCatch` 先呼叫緊急存檔再顯示畫面,存檔成功/失敗都寫在畫面上)與 `AreaBoundary`(區域防護,顯示簡短錯誤 + 「重試」重設 boundary 狀態)。未引入新依賴。
+- `main.tsx` 最外層包 `RootBoundary`;`Workspace.tsx` 內 `ChatWindow`、`Inspector`、側欄(aside)各自包 `AreaBoundary`,並把讀 `latest` ref 的存檔邏輯註冊到模組層級 `emergencySave`(只做 `SaveFile`,不依賴卸載後的 setState)。
+- 開發模式拋錯點:`main.tsx` 在 `import.meta.env.DEV` 下掛 `window.__perkinsCrash(area)`,讓 `chat`/`inspector`/`sidebar`/`root` 對應區塊下一次 render 拋錯;`App.tsx` 監聽拋錯事件強制重繪。正式建置已以 `grep -r __perkinsCrash app/frontend/dist` 確認不存在。
+- `app/e2e/e2e.js` 新增兩個情境:E1(chat 區崩潰 → 編輯器仍在、未存的字仍在、ChatWindow 區顯示錯誤、重試後恢復)、E2(root 崩潰 → 錯誤畫面顯示「未儲存的內容已存檔」、磁碟檔案含未存的字、重新載入後稿件保留)。刻意拋錯在 dev 模式會被 React 重拋到 window 成 pageerror,屬預期,不計入「頁面沒有 JavaScript 錯誤」。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **42/42 通過**(含既有情境無退步,LM Studio 本機模型正常回覆)。備註:「書櫃顯示最近的作品」首次執行曾失敗一次,第二輪(同程式碼)通過,判斷為既有檢查在書櫃非同步載入 `ListRecent` 時的偶發 race,與本變更無關。
+
+## 2026-10-05 — 編輯器看得見的存檔按鈕
+
+完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。同日依審查意見修補三點(77d86f4 審查),再依第二輪複審(1f3ce46)重構存檔層:
+
+- **save() 改為單一序列化寫入迴圈**(1f3ce46 複審第 1 點):重複觸發(Ctrl+S/按鈕/自動存檔)回傳同一個 Promise,迴圈持續到畫面上的字全部落盤才結束;同時最多一個 SaveFile,忙碌狀態由這個迴圈的生命週期推導。修掉上一版「各 waiter 醒來後各自再啟動一筆寫入」的並行寫入缺陷(受控驗證曾達同時 3 筆)。踩過的坑:無事可存時若仍建立 IIFE,它會同步跑完,finally 先清 null、外層又把已結束的 Promise 指回 ref,之後每次 save() 都回傳過期 Promise、永遠不再寫入;已改為前置檢查 `current && dirty`,無事可存直接 resolve 不建立 Promise。
+- **openFile 防丟字**(複審第 2 點):`await save()` → ReadFile(目標) → 若等待期間又打字(dirty 再變 true)再 `await save()` 一次,然後才同步切換 setCurrent/setText/清 dirty。
+- **「已儲存」通知與狀態一致**(複審第 3 點):所有呼叫者等到畫面全文落盤才 resolve,saveNow 的通知不再有「僅舊版本已存、仍有新修改」的誤導。
+- E5 改寫:存檔延遲中輸入新字並連按 Ctrl+S 三次,斷言最終磁碟含全部文字、按鈕「已儲存」、`window.__perkinsSaveStats`(DEV 包住)記錄的 SaveFile 最大並行數為 1;延遲中點另一章,切換前在原章輸入的字(含存檔途中補的字)都在原章檔案、目標章逐位元組不變。
+- **導覽序號防重疊**(PR #5 審查第 1 項):`openFile` 加 `navSeq` ref,每個在途請求記下自己的序號;每個 await 後、套用讀檔結果前,序號已不是最新就直接返回,不 setCurrent/setText/清 dirty。E7 回歸:開發模式專用 `__perkinsReadDelay`(DEV 包住)延遲讀檔——A→B→C 快速切換最後停在 C;在途導覽回來後編輯器仍是第一章、期間輸入的 `staleGuard` 仍在且為未儲存,存檔後磁碟不丟字。
+- **E6 恆真斷言移除**(審查第 2 項):點場景前存下完整編輯器文字,點後逐字比較(不再 `|| true`),並斷言仍為未儲存。
+- **重開目前檔案不重讀**(第三輪複審 ebd8107,只修第 1 點):`openFile(rel)` 當 rel 等於目前檔案時直接返回,保留編輯器內容(含未存的字),只做場景定位;避免「讀檔等待期間又打字,存了新字後卻把舊稿放回編輯器」的丟字。場景列點擊加 `stopPropagation`,避免冒泡重複導覽。E6 回歸情境:同章打字(不存)→ 點同章章節列與場景列 → 新字仍在編輯器且磁碟未存 → 存檔後磁碟保有新字。
+- E2E 移植 `E2E_SKIP_AI=1`(同第 2 項分支的作法,作者回饋:本機模型吃大量記憶體):本分支 E2E 以 E2E_SKIP_AI=1 執行,略過模型相關檢查。48/48 通過,略過 8 項(check 已正規化 !!ok,非略過的 falsy 一律計失敗)。
+
+第一輪修補(77d86f4 審查):
+
+- **存檔途中輸入不會被誤標已儲存**(既有 bug):`save` 以 `editVersion` ref(每次 onChange/applyHeader 加 1)記錄版本,SaveFile 完成後只有檔案與版本都沒變才清 dirty;期間又有編輯時保留「未儲存」讓下次存檔處理新版本。E2E 新增 E5 回歸情境:開發模式專用 `window.__perkinsSaveDelay(ms)`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)延遲 SaveFile 1.5s,存檔途中輸入 B,完成後斷言按鈕仍為「儲存」、狀態列「未儲存」、磁碟只有 A,再存一次後磁碟含 A+B。
+- **in-flight 防重入**:`save` 用 `saveInFlight` ref 協調,重複觸發(Ctrl+S/按鈕/自動存檔)等同一請求結束、仍 dirty 才再存,不並行兩個 SaveFile;`saving` 由這個 ref 推導,最後一個請求結束才解除(先結束的請求不會提早結束忙碌)。E5 驗證存檔中再按 Ctrl+S 的最終狀態與磁碟內容。
+- **E3 去除固定等待**:點擊前先斷言磁碟沒有標記字;以按鈕進入「儲存」/「已儲存且停用」作為完成訊號(waitForFunction/waitForSelector)後才讀磁碟。
+- 驗證:`npm run build`(含 tsc)通過、dist 無開發掛鉤;`go test ./...` 全過;E2E 44/44 通過(當時以本機模型執行;之後改用 E2E_SKIP_AI=1)。
+
+原實作內容:
+
+- `Workspace.tsx` 頂端工具列(與「摘要」「版本」同列)新增存檔按鈕(`data-testid=save-button`),章節檔與設定集檔都有:未儲存時主色「儲存」(lucide `Save` 圖示、title「儲存(Ctrl+S)」);存檔中顯示「儲存中…」並停用避免連點;已儲存時為低調 ghost 樣式且停用。Ctrl+S 與按鈕共用同一個 `saveNow`(呼叫既有 `save()`,成功 `notify`、失敗走 `fail`),未複製邏輯。狀態列改為只顯示「未儲存」(快捷鍵提示移到按鈕 tooltip);麵包屑旁小圓點保留。未加定時自動存檔(不在本項範圍)。
+- `app/e2e/e2e.js` 新增 E3 情境:開第二章、打字、斷言按鈕顯示「儲存」且可按、點按鈕後檔案含新字、按鈕變「已儲存」且停用。截圖 `shots/13-save-button-dirty.png`(未儲存)與 `shots/14-save-button.png`(已儲存)已實際目視,兩種狀態區分明顯,工具列未擠壞。
+- 順手修正既有 E2E 檢查的 flaky race:「書櫃顯示最近的作品」原本在 `ListRecent` 資料回來前就用 `page.$` 判定(三輪執行兩次偶發失敗、已用 probe 驗證書櫃資料實際有 render);改為先 `waitForSelector` 再斷言,不弱化檢查內容。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **37/37 通過**(LM Studio 本機模型正常回覆)。
+
 ## 2026-09-30 — 版本差異標出行內改動的字
 
 「版本」對話框原本只能整行標紅/綠(中文一段一行,改一個字也整段標色)。`snapshot.LineDiff` 現在會把相鄰的刪除行與新增行配對,以字元 LCS 標出實際變動的字;共同字不到一半(整段改寫)或行太長時仍整行標色。提案卡片的原文/替換對照未改(替換是可編輯的輸入框)。Go 測試與 `tsc` 通過;**畫面未實機 render,請開「版本」看一次**。

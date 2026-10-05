@@ -7,11 +7,17 @@
 // 需要本機 LM Studio 與 Perkins 設定中已選好的模型(提案流程);需要 Microsoft Edge。
 // 注意:wails dev 使用真實的 %APPDATA%\Perkins\settings.json(書櫃清單會加入測試專案),必要時先備份。
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+// Notion 匯出 fixture:放在測試專案之外的暫存處,同一資料夾三頁,檔名帶 32 位 hex id
+// runtime 模式由 PROJ 推出;--fixture 模式由 dir 推出(兩者同層,同一個資料夾)。
+// 用 resolve 保證絕對路徑(Windows 後端不吃「\notion-export」這種相對路徑)
+let NOTION_SRC = path.resolve(path.dirname(process.env.PROJ || path.join(os.tmpdir(), 'perkins-e2e', 'proj')), 'notion-export');
 
 if (process.argv[2] === '--fixture') {
     const dir = process.argv[3];
+    NOTION_SRC = path.resolve(path.dirname(dir), 'notion-export');
     const w = (rel, s) => { fs.mkdirSync(path.dirname(path.join(dir, rel)), {recursive: true}); fs.writeFileSync(path.join(dir, rel), s); };
     fs.rmSync(dir, {recursive: true, force: true});
     // 舊版單層 order:驗證升級後順序保留(B1)
@@ -24,28 +30,44 @@ if (process.argv[2] === '--fixture') {
     w('canon/雷恩.md', '# 雷恩\n\n隊長。\n');
     w('notes/私人.md', '私人筆記:反派是雷恩的哥哥。\n');
     w('outline/第二卷.md', '第二卷大綱:王都陷落。\n');
+    // Notion 匯出:同一資料夾(人物)三頁,檔名帶 32 位 hex id;放在測試專案之外的暫存處
+    const nid = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+    const ndir = path.join(path.dirname(dir), 'notion-export');
+    fs.rmSync(ndir, {recursive: true, force: true});
+    const wn = (rel, s) => { fs.mkdirSync(path.dirname(path.join(ndir, rel)), {recursive: true}); fs.writeFileSync(path.join(ndir, rel), s); };
+    wn('人物 ' + nid + '/艾莉絲 ' + nid + '.md', '# 艾莉絲\n\n年齡: 17\n\n怕黑。\n');
+    wn('人物 ' + nid + '/王都 ' + nid + '.md', '# 王都\n\n王國的首都。\n');
+    wn('人物 ' + nid + '/草稿 ' + nid + '.md', '# 草稿\n\n還沒想好。\n');
+    wn('人物 ' + nid + '/劉洋 ' + nid + '.md', '# 劉洋\n\n王國的將軍。\n');
+    console.log('notion fixture ready:', ndir);
     console.log('fixture ready:', dir);
     process.exit(0);
 }
 
 const {chromium} = require('playwright-core');
 const PROJ = process.env.PROJ;
+// NOTION_SRC 已在 --fixture 分支前定義(同層 notion-export/)
 const SHOTS = path.join(__dirname, 'shots');
 fs.mkdirSync(SHOTS, {recursive: true});
 const P = rel => path.join(PROJ, ...rel.split('/'));
 const read = rel => fs.readFileSync(P(rel), 'utf8');
 const hash = rel => crypto.createHash('sha256').update(fs.readFileSync(P(rel))).digest('hex');
 const results = [];
-// check 正規化結果:非略過的 falsy 一律計失敗(避免 undefined 之類印 FAIL 卻不計入、退出碼 0)
 const check = (name, ok, detail = '') => { ok = !!ok; results.push({name, ok, detail}); console.log(`${ok ? 'PASS' : 'FAIL'} ${name} ${detail}`); };
 // E2E_SKIP_AI=1:跳過所有向模型送出請求的步驟;被跳過的檢查印成「略過」,結尾統計,不算通過
 const SKIP_AI = process.env.E2E_SKIP_AI === '1';
 let skipped = 0;
 const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(E2E_SKIP_AI=1)'}); console.log(`SKIP ${name} (E2E_SKIP_AI=1)`); };
+const maybe = async (name, fn, detail = '') => {
+    if (SKIP_AI) { skip(name); return; }
+    check(name, await fn(), detail);
+};
 
 (async () => {
     const browser = await chromium.launch({executablePath: 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', headless: true});
-    const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+    const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']); // E4 複製全文用
+    const page = await context.newPage();
     const errors = [];
     page.on('pageerror', e => { errors.push(e.message); console.log('PAGEERROR', e.message); });
     const shot = n => page.screenshot({path: path.join(SHOTS, n + '.png')});
@@ -330,16 +352,430 @@ const skip = name => { skipped++; results.push({name, ok: null, detail: '略過(
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         // 恢復:把研究記錄關閉狀態留在專案(拋棄式測試專案,不需還原)
+
+        // 存檔按鈕(SPEC §16 第 5 項):開一章、打字、點按鈕存檔
+        await page.click('[data-testid=chapter-row]:has-text("第二章")');
+        await page.waitForSelector('.cm-content');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('saveBtnTest');
+        // 以按鈕進入「儲存」狀態為完成訊號,不用固定等待
+        await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 5000});
+        const btn = await page.textContent('[data-testid=save-button]');
+        check('E3 未儲存時按鈕顯示「儲存」且可按', btn.trim() === '儲存' && !(await page.$('[data-testid=save-button][disabled]')), btn.trim());
+        check('E3 點擊前磁碟尚未寫入標記字', !read('manuscript/第二章.md').includes('saveBtnTest'));
+        await shot('13-save-button-dirty');
+        await page.click('[data-testid=save-button]');
+        // 等按鈕明確進入「已儲存」且停用,再驗證磁碟
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
+        const diskE3 = read('manuscript/第二章.md');
+        check('E3 點按鈕後檔案已寫入新字', diskE3.includes('saveBtnTest'), JSON.stringify(diskE3.slice(-40)));
+        const btn2 = await page.textContent('[data-testid=save-button]');
+        check('E3 存檔後按鈕變為「已儲存」且停用', btn2.includes('已儲存') && !!(await page.$('[data-testid=save-button][disabled]')), btn2.trim());
+        await shot('14-save-button');
+
+        // 情境 5(回歸):序列化存檔迴圈 — 存檔途中輸入並重複觸發,全部文字最終落盤,SaveFile 不並行
+        // 需在開發模式(wails dev)下執行,__perkinsSaveDelay/__perkinsSaveStats 只存在於 DEV 建置
+        if (await page.evaluate(() => typeof window.__perkinsSaveDelay === 'function' && typeof window.__perkinsSaveStats === 'object')) {
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('delayA');
+            await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 5000});
+            await page.evaluate(() => window.__perkinsSaveDelay(500));
+            await page.click('[data-testid=save-button]');
+            await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")', {timeout: 5000});
+            // 存檔途中輸入 B,並連按 Ctrl+S 兩次以上(重複觸發應等同一個序列化 Promise)
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('delayB');
+            await page.keyboard.press('Control+s');
+            await page.keyboard.press('Control+s');
+            await page.keyboard.press('Control+s');
+            // 迴圈會把新版本也存完,等按鈕進入「已儲存」停用
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 15000});
+            const diskE5a = read('manuscript/第一章.md');
+            check('E5 存檔途中輸入並連按 Ctrl+S 後磁碟含全部文字', diskE5a.includes('delayA') && diskE5a.includes('delayB'), JSON.stringify(diskE5a.slice(-50)));
+            check('E5 最終按鈕為「已儲存」', true);
+            const stats = await page.evaluate(() => ({...window.__perkinsSaveStats}));
+            check('E5 SaveFile 最大並行數為 1', stats.maxInFlight === 1, JSON.stringify(stats));
+            check('E5 最終狀態列顯示已儲存', (await page.textContent('footer')).includes('已儲存'));
+            await page.evaluate(() => window.__perkinsSaveDelay(0)); // 解除延遲
+
+            // 存檔延遲中點另一章:切換前在原章輸入的字最後都在原章檔案,目標章不混入
+            await page.keyboard.type('cutLateWord');
+            await page.waitForFunction(() => document.querySelector('[data-testid=save-button]')?.textContent?.trim() === '儲存', null, {timeout: 5000});
+            const ch2Before = read('manuscript/第二章.md');
+            await page.evaluate(() => window.__perkinsSaveDelay(1200));
+            await page.click('[data-testid=save-button]');
+            await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")', {timeout: 5000});
+            await page.click('.cm-content'); // 回編輯器,在存檔途中再補一個字
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('X');
+            await page.click('[data-testid=chapter-row]:has-text("第二章")'); // openFile 等存檔迴圈結束才切換
+            await page.waitForSelector('.cm-line:has-text("天亮了")', {timeout: 15000});
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 15000});
+            const ch1After = read('manuscript/第一章.md');
+            check('E5 切章前原章輸入的字都在原章檔案', ch1After.includes('delayA') && ch1After.includes('delayB') && ch1After.includes('cutLateWordX'), JSON.stringify(ch1After.slice(-60)));
+            check('E5 目標章未混入原章文字', read('manuscript/第二章.md') === ch2Before);
+            check('E5 切章後 SaveFile 最大並行數仍為 1', (await page.evaluate(() => window.__perkinsSaveStats.maxInFlight)) === 1);
+            await page.evaluate(() => window.__perkinsSaveDelay(0));
+        } else {
+            check('E5 開發模式延遲掛鉤存在', false, 'window.__perkinsSaveDelay / __perkinsSaveStats 不存在(需以 wails dev 開發模式執行)');
+        }
+
+        // 情境 6(回歸):重開目前章(章節列/場景列)不會把未存的字替換回舊稿
+        // 當前在第二章(上一段切過來);開第一章、打字(不存)、再點同一章的章節列與場景列
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('reopenNewText');
+        // 點同一章的章節列 → 編輯器內容應保留
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForTimeout(500);
+        check('E6 點同章章節列後新字仍在編輯器', (await page.textContent('.cm-content')).includes('reopenNewText'));
+        check('E6 點同章章節列未存檔(磁碟無新字)', !read(ch1).includes('reopenNewText'));
+        // 展開場景列並點「森林」場景 → 同檔案 openFile,只定位不重讀
+        await page.click('[data-testid=rail-manuscript]');
+        await page.waitForSelector('aside li:has-text("森林")');
+        const editorBefore = await page.textContent('.cm-content'); // 點場景前存下完整文字
+        await page.click('aside li:has-text("森林")');
+        await page.waitForTimeout(500);
+        check('E6 點場景列後新字仍在編輯器', (await page.textContent('.cm-content')).includes('reopenNewText'));
+        check('E6 場景列點擊後編輯器內容逐字不變', (await page.textContent('.cm-content')) === editorBefore);
+        check('E6 場景列點擊後仍為未儲存', (await page.textContent('footer')).includes('未儲存'));
+        // 存檔後磁碟保有新字
+        await page.click('[data-testid=save-button]');
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
+        check('E6 存檔後磁碟保有新字', read(ch1).includes('reopenNewText'), JSON.stringify(read(ch1).slice(-40)));
+
+        // 情境 7(回歸):重疊導覽 — 過期導覽不得套用讀檔結果
+        if (await page.evaluate(() => typeof window.__perkinsReadDelay === 'function')) {
+            // 場景定位後側欄可能仍開著;先確保側欄開啟(章節列可見)
+            if (!(await page.$('[data-testid=chapter-row]:has-text("第一章")'))) await page.click('[data-testid=rail-manuscript]');
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
+            await page.evaluate(() => window.__perkinsReadDelay(400));
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForTimeout(50);
+            await page.click('[data-testid=chapter-row]:has-text("第三章")');
+            await page.waitForSelector('.cm-line:has-text("風停了")', {timeout: 10000});
+            await page.waitForTimeout(1000); // 讓過期導覽回來
+            check('E7 A→B→C 快速切換最後停在 C', (await page.textContent('.cm-content')).includes('風停了'));
+            // 第二段:B 進入在途後輸入新字,再點第三章觸發過期導覽,新字不得被舊稿蓋掉
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForSelector('.cm-line:has-text("天亮了")');
+            await page.evaluate(() => window.__perkinsReadDelay(2500));
+            // 點第一章(讀 A 在途,2.5s);期間補點第二章的請求已過期;等第一章讀回後打字
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForTimeout(300); // 讓第一章導覽先註冊序號,再點第二章使第一章變過期?不行——
+            // 修正做法:點第二章(在途)→ 回第一章(第一章過期第二章變最新)→ 在途的第二章回來不得套用
+            await page.click('[data-testid=chapter-row]:has-text("第二章")');
+            await page.waitForTimeout(100);
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")', {timeout: 10000});
+            // 等待期間打字(不存);第二章的在途導覽回來不得覆蓋第一章的內容
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('staleGuard');
+            await page.waitForTimeout(3000); // 第二章的在途導覽(2.5s)回來
+            check('E7 過期導覽回來後編輯器仍是第一章', (await page.textContent('.cm-content')).includes('艾莉絲走進森林'));
+            check('E7 過期導覽未套用,新字仍在', (await page.textContent('.cm-content')).includes('staleGuard'));
+            check('E7 仍為未儲存', (await page.textContent('footer')).includes('未儲存'));
+            // 存檔後磁碟不丟字
+            await page.click('[data-testid=save-button]');
+            await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000});
+            check('E7 存檔後磁碟不丟字', read(ch1).includes('staleGuard'), JSON.stringify(read(ch1).slice(-40)));
+            await page.evaluate(() => window.__perkinsReadDelay(0));
+        } else {
+            check('E7 開發模式讀檔延遲掛鉤存在', false, 'window.__perkinsReadDelay 不存在(需以 wails dev 開發模式執行)');
+        }
+
+        // Notion 逐頁分類(SPEC §16 第 2 項):原生檔案對話框無法在無頭模式操作,覆寫 PickNotionExport 綁定
+        // (wailsjs 在呼叫當下才讀 window.go,所以可覆寫)
+        await page.evaluate(p => { window.go.main.App.PickNotionExport = async () => p; }, NOTION_SRC);
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=settings-page] button:has-text("選擇資料夾")');
+        await page.click('button:has-text("選擇資料夾")');
+        await page.waitForSelector('text=Notion 資料夾');
+        await page.waitForSelector('[data-testid=expand-人物]', {timeout: 5000});
+        await page.click('[data-testid=expand-人物]');
+        await page.waitForSelector('[data-testid=pages-人物]');
+        await shot('17-notion-pages');
+        // 三頁分別設:艾莉絲=跟隨資料夾(人物→角色)、王都=地點、草稿=略過
+        const setPage = async (name, target) => {
+            await page.click(`[data-testid=pages-人物] div:has(span:text-is("${name}")) button`);
+            await page.waitForSelector('[role=option]');
+            const opts = await page.$$('[role=option]');
+            for (const o of opts) {
+                const t = (await o.textContent()).trim();
+                if (t === target || t.startsWith('跟隨資料夾') && target === '跟隨資料夾') { await o.click(); break; }
+            }
+            await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        };
+        // 劉洋:先覆寫為「地點」,再選回「跟隨資料夾」(清除覆寫)→ 驗證覆寫清除與計數同步
+        await setPage('劉洋', '地點');
+        await page.waitForTimeout(300);
+        check('N1a 覆寫時頁數同步變化', (await page.textContent('[data-testid=override-count-人物]')).includes('1 頁另行指定'), await page.textContent('[data-testid=override-count-人物]'));
+        let importBtn = await page.textContent('button:has-text("匯入 ")');
+        check('N1a 覆寫時匯入頁數維持 4(劉洋地點仍非略過)', importBtn.includes('匯入 4 頁'), importBtn.trim());
+        await setPage('劉洋', '跟隨資料夾');
+        await page.waitForTimeout(300);
+        await setPage('王都', '地點');
+        await setPage('草稿', '略過');
+        await page.waitForTimeout(300);
+        await shot('18-notion-perpage');
+        // 未覆寫頁(劉洋)的閉合選單應顯示「跟隨資料夾(目前:角色)」,隨群組去處即時更新
+        const liuTrigger = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("劉洋")) button');
+        check('N1c 閉合選單顯示跟隨資料夾(目前:X)', liuTrigger.includes('跟隨資料夾(目前:角色)'), liuTrigger.trim());
+        // 群組改略過:兩個跟隨頁(艾莉絲/劉洋)的閉合顯示變成「跟隨資料夾(目前:略過)」、匯入數變為 1(僅王都);
+        // 已覆寫頁保持原值(王都仍地點、草稿仍略過);再切回角色完成匯入與撤銷
+        await page.click('[data-testid=pages-人物] div:has(span:text-is("艾莉絲")) button'); // 開啟跟隨頁的 Select 以便選回角色(暫不選)
+        await page.keyboard.press('Escape');
+        const groupTrigger = await page.$('[data-testid=pages-人物] >> xpath=ancestor::table >> button[data-radix-collection-item]');
+        // 資料夾列的 Select(不在 pages- 區塊內):表格第三欄的第一個 SelectTrigger
+        await page.click('[data-testid=group-select-人物]');
+        await page.waitForSelector('[role=option]', {timeout: 5000});
+        const groupOpts = await page.$$('[role=option]');
+        for (const o of groupOpts) {
+            if ((await o.textContent()).trim() === '略過') { await o.click(); break; }
+        }
+        await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        await page.waitForTimeout(300);
+        const aliceChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("艾莉絲")) button');
+        const liuChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("劉洋")) button');
+        check('C2 跟隨頁閉合顯示變為略過(艾莉絲)', aliceChip.includes('跟隨資料夾(目前:略過)'), aliceChip.trim());
+        check('C2 跟隨頁閉合顯示變為略過(劉洋)', liuChip.includes('跟隨資料夾(目前:略過)'), liuChip.trim());
+        const wtChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("王都")) button');
+        const cgChip = await page.textContent('[data-testid=pages-人物] div:has(span:text-is("草稿")) button');
+        check('C2 已覆寫頁保持原值(王都=地點)', wtChip.includes('地點'), wtChip.trim());
+        check('C2 已覆寫頁保持原值(草稿=略過)', cgChip.includes('略過'), cgChip.trim());
+        let importBtnG = await page.textContent('button:has-text("匯入 ")');
+        check('C2 群組略過時匯入數變為 1', importBtnG.includes('匯入 1 頁'), importBtnG.trim());
+        check('C2 覆寫頁數不變(王都+草稿=2)', (await page.textContent('[data-testid=override-count-人物]')).includes('2 頁另行指定'));
+        // 切回角色
+        await page.click('[data-testid=group-select-人物]');
+        await page.waitForSelector('[role=option]', {timeout: 5000});
+        const groupOpts2 = await page.$$('[role=option]');
+        for (const o of groupOpts2) {
+            if ((await o.textContent()).trim() === '角色') { await o.click(); break; }
+        }
+        await page.waitForSelector('[role=option]', {state: 'hidden', timeout: 5000}).catch(() => {});
+        await page.waitForTimeout(300);
+        check('N1 資料夾列顯示覆寫頁數', (await page.textContent('[data-testid=override-count-人物]')).includes('2 頁另行指定'));
+        const importBtnText = await page.textContent('button:has-text("匯入 ")');
+        check('N1 匯入頁數按逐頁結果計算', importBtnText.includes('匯入 3 頁'), importBtnText.trim());
+        const aliceBefore = hash('canon/艾莉絲.md');
+        await page.click('button:has-text("匯入 ")');
+        await page.waitForSelector('text=已匯入 2 個檔案', {timeout: 30000});
+        check('N1 匯入報告 2 個檔案、略過 1 個', (await page.textContent('[data-testid=settings-page]')).includes('略過 1 個'));
+        check('N1 王都 frontmatter 為地點', read('canon/王都.md').includes('type: 地點'), JSON.stringify(read('canon/王都.md').slice(0, 40)));
+        check('N1 草稿頁略過未匯入', !fs.existsSync(P('canon/草稿.md')));
+        check('N1 B9 同名頁未覆蓋既有艾莉絲', hash('canon/艾莉絲.md') === aliceBefore);
+        // 劉洋(未覆寫,跟隨資料夾=角色):應在 canon/、frontmatter 為角色
+        check('N1b 跟隨資料夾的劉洋匯入為角色', fs.existsSync(P('canon/劉洋.md')) && read('canon/劉洋.md').includes('type: 角色'), JSON.stringify(read('canon/劉洋.md').slice(0, 40)));
+        // 撤銷 → 檔案消失
+        await page.click('button:has-text("撤銷這次匯入")');
+        await page.waitForSelector('text=已撤銷這次匯入', {timeout: 10000});
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(500);
+        check('N1 撤銷後王都消失', !fs.existsSync(P('canon/王都.md')));
+        check('N1b 撤銷後劉洋消失', !fs.existsSync(P('canon/劉洋.md')));
+        // 錯誤防護(SPEC §16 第 0 項):需在開發模式(wails dev)下執行,__perkinsCrash/__perkinsSaveFail 只存在於 DEV 建置
+        if (await page.evaluate(() => typeof window.__perkinsCrash === 'function' && typeof window.__perkinsSaveFail === 'function')) {
+            // 情境 1:sidebar/inspector/chat 各自崩潰 → 編輯器寬度不變、仍可輸入,該區顯示錯誤與重試
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('boundaryE1');
+            await page.waitForTimeout(400);
+            const editorWidth = () => page.$eval('.cm-editor', el => el.getBoundingClientRect().width);
+            const w0 = await editorWidth();
+            for (const [area, marker] of [['sidebar', 'E1sb'], ['inspector', 'E1in'], ['chat', 'E1ch']]) {
+                await page.evaluate(a => window.__perkinsCrash(a), area);
+                await page.waitForSelector(`[data-testid=area-error-${area}]`, {timeout: 5000});
+                const w1 = await editorWidth();
+                check(`E1 ${area} 區崩潰後編輯器寬度不變(±3px)`, Math.abs(w1 - w0) < 3, `${w0} → ${w1}`);
+                const areaErr = await page.textContent(`[data-testid=area-error-${area}]`);
+                check(`E1 ${area} 區顯示錯誤與重試`, areaErr.includes('錯誤') && !!(await page.$(`[data-testid=area-error-${area}] button:has-text("重試")`)));
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type(marker);
+                await page.waitForTimeout(300);
+                check(`E1 ${area} 區崩潰後編輯器仍可輸入`, (await page.textContent('.cm-content')).includes(marker));
+                if (area === 'chat') await shot('14-area-error-chat');
+                await page.click(`[data-testid=area-error-${area}] button:has-text("重試")`);
+                await page.waitForTimeout(300);
+                check(`E1 ${area} 區重試後恢復`, !(await page.$(`[data-testid=area-error-${area}]`)));
+            }
+
+            // 情境 2:root 崩潰 → 未存的字先緊急存檔,等 data-save-state=saved 再驗證
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('crashSaveE2');
+            await page.waitForTimeout(400);
+            await page.evaluate(() => window.__perkinsCrash('root'));
+            await page.waitForSelector('[data-testid=root-error]', {timeout: 5000});
+            await page.waitForSelector('[data-testid=emergency-save][data-save-state=saved]', {timeout: 10000});
+            const saveMsg = await page.textContent('[data-testid=emergency-save]');
+            check('E2 root 崩潰顯示錯誤畫面', (await page.textContent('[data-testid=root-error]')).includes('介面發生錯誤'));
+            check('E2 顯示「未儲存的內容已存檔」', saveMsg.includes('已存檔'), saveMsg);
+            check('E2 已存檔後重新載入可用', !(await page.$('[data-testid=reload-app][disabled]')));
+            const diskE2 = read(ch1);
+            check('E2 未存的字已寫入檔案', diskE2.includes('boundaryE1') && diskE2.includes('E1sb') && diskE2.includes('E1in') && diskE2.includes('E1ch') && diskE2.includes('crashSaveE2'), JSON.stringify(diskE2.slice(-80)));
+            await shot('15-root-error');
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            check('E2 重新載入後稿件保留', (await page.textContent('.cm-content')).includes('crashSaveE2'));
+
+            // 情境 2b(review-merge):在途存檔保持 pending 時 root 崩潰 → saving 狀態下原文仍可取回與複製、重載停用;解除後 saved 且磁碟為最新
+            // 此分支需有 __perkinsSaveDelay(合併自 PR #5)
+            if (await page.evaluate(() => typeof window.__perkinsSaveDelay === 'function')) {
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type('pendingSaveText');
+                await page.waitForTimeout(300);
+                await page.evaluate(() => window.__perkinsSaveDelay(10000)); // 在途存檔保持 pending
+                await page.click('[data-testid=save-button]');
+                await page.waitForSelector('[data-testid=save-button][disabled]:has-text("儲存中…")');
+                await page.evaluate(() => window.__perkinsCrash('root'));
+                await page.waitForSelector('[data-testid=emergency-save][data-save-state=saving]', {timeout: 10000});
+                const beforePending = read(ch1); // 存檔前磁碟(不含 pendingSaveText)
+                check('E2b saving 狀態顯示 rescue textarea 且內容等於最新原文',
+                    (await page.inputValue('[data-testid=rescue-text]')) === beforePending + 'pendingSaveText', `len=${(await page.inputValue('[data-testid=rescue-text]')).length}`);
+                check('E2b saving 狀態重載停用', !!(await page.$('[data-testid=reload-app][disabled]')));
+                // 可複製:點「複製全文」→ 已複製
+                await page.click('[data-copy-main]');
+                await page.waitForSelector('text=已複製', {timeout: 5000});
+                check('E2b saving 狀態可複製原文', true);
+                // 解除 → saved 且磁碟為最新文字(沒有較舊寫入再覆蓋)
+                await page.evaluate(() => window.__perkinsSaveDelay(0));
+                await page.waitForSelector('[data-testid=emergency-save][data-save-state=saved]', {timeout: 15000});
+                check('E2b 解除後進 saved 且磁碟含最新文字', read(ch1).includes('pendingSaveText'), JSON.stringify(read(ch1).slice(-40)));
+                await page.click('[data-testid=reload-app]');
+                await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+                await page.click('[data-testid=chapter-row]:has-text("第一章")');
+                await page.waitForSelector('.cm-content');
+                check('E2b 重載後稿件保留最新文字', (await page.textContent('.cm-content')).includes('pendingSaveText'));
+            } else {
+                check('E2b 在途存檔情境', false, 'window.__perkinsSaveDelay 不存在');
+            }
+
+            // 情境 4:緊急存檔失敗 → 救援 textarea 顯示未存原文與目標路徑,重新載入按鈕改為「放棄未存內容」
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            const beforeFail = read(ch1);
+            await page.keyboard.type('rescueFailText');
+            await page.waitForTimeout(300);
+            await page.evaluate(() => window.__perkinsSaveFail());
+            await page.evaluate(() => window.__perkinsCrash('root'));
+            await page.waitForSelector('[data-testid=emergency-save][data-save-state=failed]', {timeout: 10000});
+            const failMsg = await page.textContent('[data-testid=emergency-save]');
+            check('E4 存檔失敗顯示目標路徑與原因', failMsg.includes('manuscript/第一章.md') && failMsg.includes('存檔失敗'), failMsg);
+            const rescueText = await page.inputValue('[data-testid=rescue-text]');
+            check('E4 救援 textarea 內容等於未存原文', rescueText === beforeFail + 'rescueFailText', `len=${rescueText.length}`);
+            check('E4 救援 textarea 為唯讀', !!(await page.$('[data-testid=rescue-text][readonly]')));
+            await page.click('button:has-text("複製全文")');
+            await page.waitForSelector('text=已複製', {timeout: 5000});
+            check('E4 複製全文顯示完成', true);
+            const clip = await page.evaluate(() => navigator.clipboard.readText());
+            // Windows 系統剪貼簿會把換行正規化成 CRLF(實測 9 個 \n → \r\n),比對前先還原
+            const clipNorm = clip.replace(/\r\n/g, '\n');
+            check('E4 剪貼簿內容等於未存原文', clipNorm === rescueText, `clipLen=${clip.length} rescueLen=${rescueText.length}`);
+            const relTxt = await page.textContent('[data-testid=reload-app]');
+            check('E4 存檔失敗時放棄按鈕為次要樣式', relTxt.includes('放棄未存內容'), relTxt);
+            check('E4 複製全文為主要按鈕(default)', await page.$eval('button:has-text("複製全文")', el => el.classList.contains('bg-primary')));
+            check('E4 放棄按鈕為次要樣式(ghost+destructive 色)', await page.$eval('[data-testid=reload-app]', el => el.classList.contains('text-destructive') && !el.classList.contains('bg-primary')));
+            await shot('16-rescue');
+
+            // 受控剪貼簿:覆寫 writeText 為可控制的 Promise(替身:記錄呼叫次數與捕捉到的文字,不寫真剪貼簿);
+            // 釋放時才以原始 writeText 寫入真剪貼簿
+            await page.evaluate(() => {
+                const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+                window.__clipStubs = {calls: 0, texts: [], gate: null, orig};
+                navigator.clipboard.writeText = t => {
+                    const s = window.__clipStubs;
+                    s.calls++;
+                    s.texts.push(t);
+                    return new Promise(res => { s.gate = res; });
+                };
+                window.__clipRelease = () => { const s = window.__clipStubs; const r = s.gate; s.gate = null; if (r) { s.calls--; return s.orig(s.texts[0]).then(r); } };
+            });
+            // 進入確認段後才複製:確認段的「確定放棄並重新載入」也應停用
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=confirm-abandon]');
+            await page.click('button:has-text("複製全文")');
+            await page.waitForTimeout(300);
+            check('E4a 複製進行中確認段停用', !!(await page.$('[data-testid=confirm-abandon][disabled]')));
+            // 確認段的確認按鈕在複製中停用,handler 也擋;點擊(含繞過 disabled)不得重載
+            await page.evaluate(() => document.querySelector('[data-testid=confirm-abandon]').click());
+            await page.waitForTimeout(200);
+            check('E4a 複製進行中確認按鈕點擊不重載', !!(await page.$('[data-testid=root-error]')));
+            check('E4a 複製進行中複製按鈕停用', !!(await page.$('button:has-text("複製全文")[disabled]')));
+            // 連按複製:防重入 — 兩層驗證:
+            // (1) handler 層:繞過 disabled 的 click 事件仍被 copying() 擋住(無防重入時 writeText 會被呼叫第二次)
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').disabled = false; });
+            await page.click('button[data-copy-main]').catch(() => {});
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').disabled = false; });
+            await page.evaluate(() => { document.querySelector('button[data-copy-main]').dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); });
+            await page.waitForTimeout(300);
+            const calls = await page.evaluate(() => window.__clipStubs.calls);
+            const copyCalls = await page.evaluate(() => window.__perkinsCopyCalls ?? 0);
+            check('E4a 複製防重入:handler 層(繞過 disabled 的點擊也被擋)', calls === 1, `writeText=${calls} handlerCalls=${copyCalls}`);
+            // (2) 方法層:直接呼叫 copyAll 兩次(DEV 鉤),防重入存在時 stub 只收一筆
+            const stubCalls2 = await page.evaluate(() => { window.__perkinsBoundary.copyAll(); window.__perkinsBoundary.copyAll(); return window.__clipStubs.calls; });
+            check('E4a 複製防重入:直接呼叫 copyAll 兩次,writeText 仍只一筆', stubCalls2 === 1, `calls=${stubCalls2}`);
+            // 等待未解除時放棄按鈕(兩段)皆不可用
+            check('E4a 等待中第一段放棄不可用', !(await page.$('[data-testid=reload-app]')));
+            check('E4a 等待中確認段停用', !!(await page.$('[data-testid=confirm-abandon][disabled]')));
+            // 釋放 → 以原始 writeText 寫入真剪貼簿並解開等待
+            await page.evaluate(() => window.__clipRelease());
+            await page.waitForSelector('text=已複製', {timeout: 5000});
+            // 受控內容比對:用替身捕捉到的文字
+            const stubText = await page.evaluate(() => window.__clipStubs.texts[0]);
+            check('E4a 受控複製內容等於未存原文(替身捕捉)', stubText.replace(/\r\n/g, '\n') === rescueText, `len=${stubText.length}`);
+            // 釋放後放棄恢復可用
+            await page.click('[data-testid=cancel-abandon]');
+            await page.waitForTimeout(200);
+            check('E4a 釋放後放棄按鈕恢復可用', !(await page.$('[data-testid=reload-app][disabled]')));
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=confirm-abandon]');
+            await page.click('[data-testid=cancel-abandon]');
+            await page.waitForTimeout(200);
+            // 回到正常兩段式放棄測試
+            await page.click('[data-testid=reload-app]');
+            await page.waitForSelector('[data-testid=confirm-abandon]', {timeout: 5000});
+            check('E4 第一次點擊放棄只顯示確認,頁面未重載', !!(await page.$('[data-testid=root-error]')) && !!(await page.$('[data-testid=confirm-abandon]')));
+            await page.click('[data-testid=cancel-abandon]');
+            await page.waitForTimeout(200);
+            check('E4 取消後回到救援畫面', !!(await page.$('[data-testid=reload-app]')) && !(await page.$('[data-testid=confirm-abandon]')));
+            await page.click('[data-testid=reload-app]');
+            await page.click('[data-testid=confirm-abandon]');
+            await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            check('E4 放棄重載後檔案與編輯器皆無未存字', !read(ch1).includes('rescueFailText') && !(await page.textContent('.cm-content')).includes('rescueFailText'));
+        } else {
+            check('E1 開發模式拋錯點存在', false, 'window.__perkinsCrash / __perkinsSaveFail 不存在(需以 wails dev 開發模式執行)');
+        }
     } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
-    check('頁面沒有 JavaScript 錯誤', errors.length === 0, errors.join(' | '));
+    // 開發模式刻意拋錯(__perkinsCrash)會被 boundary 捕捉,但 React dev 仍會重拋到 window,屬預期,不算錯
+    const realErrors = errors.filter(e => !e.includes('開發模式刻意拋錯'));
+    check('頁面沒有 JavaScript 錯誤', realErrors.length === 0, realErrors.join(' | '));
     await browser.close();
     const failed = results.filter(r => r.ok === false);
     const passed = results.filter(r => r.ok === true);
     const skippedN = results.filter(r => r.ok === null).length;
-    console.log(`
-${passed.length}/${passed.length + failed.length} passed,略過 ${skippedN} 項${SKIP_AI ? '(E2E_SKIP_AI=1)' : ''}`);
+    console.log(`\n${passed.length}/${passed.length + failed.length} passed,略過 ${skippedN} 項${SKIP_AI ? '(E2E_SKIP_AI=1)' : ''}`);
     process.exit(failed.length ? 1 : 0);
 })();

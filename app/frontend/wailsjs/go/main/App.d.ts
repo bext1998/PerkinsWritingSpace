@@ -65,7 +65,7 @@ export function NewChapter(arg1:string,arg2:number):Promise<string>;
 
 export function NewDoc(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function NotionApply(arg1:string,arg2:Record<string, string>):Promise<notion.Result>;
+export function NotionApply(arg1:string,arg2:Record<string, string>,arg3:Record<string, string>):Promise<notion.Result>;
 
 export function NotionScan(arg1:string):Promise<notion.Plan>;
 
