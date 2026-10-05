@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
+import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
 
@@ -162,6 +163,24 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         saveInFlight.current = run;
         return run;
     }, [refreshCounts, refreshIndex, refreshTree]);
+
+    // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。
+    // 用讀 latest ref 的同一套邏輯,但不依賴卸載後的 setState,只做 SaveFile 本身。
+    useEffect(() => {
+        registerEmergencySave({
+            save: async () => {
+                // 若正在存檔,先等它結束,避免較舊的在途寫入晚於緊急存檔落盤而蓋掉最新內容
+                if (saveInFlight.current) await saveInFlight.current.catch(() => {});
+                const {current, text, dirty} = latest.current;
+                if (current && dirty) await SaveFile(current, text);
+            },
+            rescue: () => {
+                const {current, text, dirty} = latest.current;
+                return current && dirty ? {path: current, text} : null;
+            },
+        });
+        return () => registerEmergencySave(null);
+    }, []);
 
     // 導覽序號:每個在途 openFile 記下自己的 seq;await 後 seq 已不是最新就直接返回,
     // 不得套用讀檔結果(過期導覽會把作者在等待期間輸入的字替換成舊稿)
@@ -325,6 +344,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {/* 可收合的側欄 */}
             {panel && (
+                <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
                 <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
                     <div className="flex h-12 items-center justify-between border-b px-4">
                         <span className="truncate font-serif text-[15px] font-semibold" title={tree.name}>{tree.name}</span>
@@ -344,6 +364,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         </div>
                     )}
                 </aside>
+                <CrashPoint area="sidebar"/>
+                </AreaBoundary>
             )}
 
             {/* 主編輯區 */}
@@ -430,15 +452,23 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             </main>
 
             {inspector && current && (
-                <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
-                           scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
+                <AreaBoundary area="inspector" fallbackClassName="w-[280px] shrink-0 justify-center overflow-y-auto border-l bg-sidebar">
+                    <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
+                               scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
+                    <CrashPoint area="inspector"/>
+                </AreaBoundary>
             )}
 
-            <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
-                        docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
-                        remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                        beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
-                        pending={pending} notify={notify}/>
+            {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流 */}
+            <AreaBoundary area="chat"
+                          fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
+                <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
+                            docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
+                            remoteOk={remoteOk} setRemoteOk={setRemoteOk}
+                            beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
+                            pending={pending} notify={notify}/>
+                <CrashPoint area="chat"/>
+            </AreaBoundary>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
                            onRestored={files => { reloadCurrent(files); refreshTree(); }}/>

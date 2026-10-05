@@ -1,5 +1,29 @@
 # PROGRESS.md
 
+## 2026-10-05 — 錯誤防護(ErrorBoundary)
+
+完成 SPEC §16 第 0 項:render 期間未捕捉錯誤不再讓視窗全白。同日依審查意見修補四點(ea4d024 審查):
+
+- **救援資料**:緊急存檔改註冊 `{save, rescue}`,`rescue()` 在呼叫 SaveFile 前先取好 `{path, text}`(不可寫入 log 或檔案)。存檔失敗時錯誤畫面顯示目標路徑、唯讀可全選的 textarea 放原文與「複製全文」(`navigator.clipboard.writeText`),不做另存救援檔。
+- **重新載入時序**:存檔中(`data-save-state=saving`)停用「重新載入」;存檔失敗時按鈕文字改為「放棄未存內容並重新載入」。
+- **區域 fallback 版面**:chat fallback 改為右下 fixed 小卡片(不佔版面流);inspector fallback 保留 `w-[280px] shrink-0`;側欄保留 272px;錯誤文字可斷行。E1 對 sidebar/inspector/chat 各別觸發,斷言 `.cm-editor` 寬度前後差 < 3px 且仍可輸入。
+- **E2E 競態**:`emergency-save` 加 `data-save-state`,E2 等 `saved` 再讀磁碟;新增 E4 情境:開發模式專用 `window.__perkinsSaveFail`(以 `import.meta.env.DEV` 包住,正式建置 grep 不到)模擬存檔失敗,驗證 textarea 內容等於未存原文(磁碟內容+輸入字)、唯讀、複製全文、放棄重載後檔案無未存字。另移植已核准的「書櫃顯示最近的作品」waitForSelector 穩定性修正。**已知問題(2026-10-05,原因未明)**:「書櫃顯示最近的作品」檢查仍偶發失敗(a958a55 修補後的第三輪執行再次失敗),加 waitForSelector 未證明消除 race;候選原因:剛關閉設定頁啟動的 GetTree 可能在 onClose 清空 tree 後才回傳,把書櫃卸載回作品畫面;CloseProject/SetTheme 未等待完成,ListRecent 讀取可能遇到空檔或不完整 JSON。待以可控請求順序的回歸情境驗證後再修,勿視為已解決。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **57/57 通過**(四輪執行:一輪 LM Studio 模型未產生提案卡屬模型 flakiness,與本變更無關)。
+
+**第二輪審查修補(a958a55 複審)**:
+
+- 救援畫面視覺權重:「複製全文」改為主要按鈕(default);「放棄未存內容並重新載入」降為次要(ghost,文字用 destructive 色),且改為兩段式:第一次點擊原地顯示「尚未儲存的原文將無法取回,確定要放棄?」加「確定放棄並重新載入」與「取消」(不用 window.confirm),確認後才 reload;存檔成功時的「重新載入」維持一次點擊。
+- **複製防護(PR #4 審查;第二輪審查後重寫回歸)**:複製 Promise 進行中停用「複製全文」(copyAll 防重入,連按不啟動第二個 Promise)、第一段放棄與確認段「確定放棄並重新載入」都依同一狀態停用,confirmAbandon 也檢查狀態(按鈕 disabled 屬性繞不過 handler 防護);複製失敗後仍可手動全選複製或明確確認放棄。E4a 回歸情境:受控剪貼簿替身(覆寫 writeText 記錄呼叫數與捕捉文字、釋放時才寫真剪貼簿)——進確認段後複製 → 確認按鈕與複製按鈕停用、繞過 disabled 的點擊不重載;防重入兩層驗證:繞過 disabled 的 handler 呼叫 + DEV 直接呼叫 copyAll 兩次,writeText 呼叫數均為 1;**破壞驗證成立:移除防重入後「直接呼叫兩次」檢查 FAIL(calls=3)**;釋放後顯示已複製、替身捕捉的文字等於未存原文、放棄恢復可用。
+- E4 新增斷言:剪貼簿 `navigator.clipboard.readText()` 與救援 textarea 完整比對;兩段式放棄(第一次點擊不重載、取消可回救援畫面、確定後才重載)與按鈕樣式(default/ghost+destructive)。「存檔中不能重載」的直接驗證未補(延遲掛鉤在另一分支)。
+
+原實作內容:
+
+- `app/frontend/src/components/ErrorBoundary.tsx`(新):`RootBoundary`(最外層,錯誤畫面 + 重新載入按鈕,`componentDidCatch` 先呼叫緊急存檔再顯示畫面,存檔成功/失敗都寫在畫面上)與 `AreaBoundary`(區域防護,顯示簡短錯誤 + 「重試」重設 boundary 狀態)。未引入新依賴。
+- `main.tsx` 最外層包 `RootBoundary`;`Workspace.tsx` 內 `ChatWindow`、`Inspector`、側欄(aside)各自包 `AreaBoundary`,並把讀 `latest` ref 的存檔邏輯註冊到模組層級 `emergencySave`(只做 `SaveFile`,不依賴卸載後的 setState)。
+- 開發模式拋錯點:`main.tsx` 在 `import.meta.env.DEV` 下掛 `window.__perkinsCrash(area)`,讓 `chat`/`inspector`/`sidebar`/`root` 對應區塊下一次 render 拋錯;`App.tsx` 監聽拋錯事件強制重繪。正式建置已以 `grep -r __perkinsCrash app/frontend/dist` 確認不存在。
+- `app/e2e/e2e.js` 新增兩個情境:E1(chat 區崩潰 → 編輯器仍在、未存的字仍在、ChatWindow 區顯示錯誤、重試後恢復)、E2(root 崩潰 → 錯誤畫面顯示「未儲存的內容已存檔」、磁碟檔案含未存的字、重新載入後稿件保留)。刻意拋錯在 dev 模式會被 React 重拋到 window 成 pageerror,屬預期,不計入「頁面沒有 JavaScript 錯誤」。
+- 驗證:`npm run build`(含 tsc)通過;`go test ./...` 全過;E2E **42/42 通過**(含既有情境無退步,LM Studio 本機模型正常回覆)。備註:「書櫃顯示最近的作品」首次執行曾失敗一次,第二輪(同程式碼)通過,判斷為既有檢查在書櫃非同步載入 `ListRecent` 時的偶發 race,與本變更無關。
+
 ## 2026-10-05 — 編輯器看得見的存檔按鈕
 
 完成 SPEC §16 第 5 項:存檔不再只有 Ctrl+S。同日依審查意見修補三點(77d86f4 審查),再依第二輪複審(1f3ce46)重構存檔層:
