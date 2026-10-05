@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"perkins/internal/notion"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/research"
 	"perkins/internal/settings"
 	"perkins/internal/snapshot"
 	"perkins/internal/summary"
@@ -29,9 +31,11 @@ import (
 
 // App 是前端可呼叫的後端入口。所有檔案規則都在 internal/ 內執行,前端無法繞過。
 type App struct {
-	ctx   context.Context
-	proj  *project.Project
-	store *settings.Store
+	ctx      context.Context
+	proj     *project.Project
+	store    *settings.Store
+	research *research.Recorder // 研究記錄(§12.8);關閉時 Log 為 no-op
+	session  string             // 研究記錄的 session id(App 啟動時產生)
 
 	mu     sync.Mutex
 	agent  *agent.Agent
@@ -39,7 +43,16 @@ type App struct {
 }
 
 func NewApp() *App {
-	return &App{}
+	return &App{session: randomID()}
+}
+
+// randomID 產生研究記錄的 session id(區分不同使用時段)。
+func randomID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "s-unknown"
+	}
+	return fmt.Sprintf("%x", b)
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -60,7 +73,8 @@ func (a *App) setProject(p *project.Project) {
 		a.cancel()
 	}
 	a.proj = p
-	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}}
+	a.research = research.New(p, a.session)
+	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}, Research: a.research}
 	a.mu.Unlock()
 	if p != nil && a.store != nil {
 		s := a.store.Load()
@@ -261,7 +275,61 @@ func (a *App) SaveFile(rel, content string) error {
 	if a.proj == nil {
 		return errNoProject
 	}
-	return a.proj.WriteFile(rel, content)
+	before, _ := a.proj.ReadFile(rel)
+	err := a.proj.WriteFile(rel, content)
+	// 研究記錄(§12.8):save 只記路徑與字數(CountText 規則),不記內文;
+	// 失敗時記 error、不記 afterCount(預計內容不等於已保存內容)。寫入失敗不影響存檔本身。
+	d := map[string]any{"path": rel, "beforeCount": CountText(before)}
+	if err == nil {
+		d["afterCount"] = CountText(content)
+		d["ok"] = true
+	} else {
+		d["ok"] = false
+		d["error"] = err.Error()
+	}
+	if logErr := a.research.Log("save", d); logErr != nil {
+		println("research log failed:", logErr.Error())
+	}
+	return err
+}
+
+// ---- 研究記錄(§12.8)綁定 ----
+
+// GetResearch 回傳研究記錄開關。
+func (a *App) GetResearch() bool {
+	if a.proj == nil {
+		return false
+	}
+	return a.proj.Config.Research
+}
+
+// SetResearch 切換研究記錄(存在 perkins.json,隨作品走)。
+// 後端:perkins.json 寫入成功才切換記憶體狀態(失敗不異動);Recorder 為同一實例,不重建。
+func (a *App) SetResearch(on bool) error {
+	if a.proj == nil {
+		return errNoProject
+	}
+	if err := a.proj.SetResearch(on); err != nil {
+		return err
+	}
+	if a.research == nil {
+		a.research = research.New(a.proj, a.session)
+	}
+	a.research.SetEnabled(on)
+	return nil
+}
+
+// ResearchOpenFile 記錄作者切換檔案(前端呼叫);只接受專案內既有的作者檔案路徑,其餘忽略。
+func (a *App) ResearchOpenFile(rel string) {
+	if a.proj == nil || rel == "" {
+		return
+	}
+	switch project.KindOf(rel) {
+	case project.ManuscriptDir, project.CanonDir, project.NotesDir, project.OutlineDir:
+		if a.proj.Exists(rel) {
+			_ = a.research.Log("open_file", map[string]any{"path": rel})
+		}
+	}
 }
 
 func (a *App) NewChapter(title string, volume int) (string, error) {
@@ -579,6 +647,7 @@ func (a *App) prepare() (*agent.Agent, error) {
 		return nil, err
 	}
 	a.agent.LLM, a.agent.Model, a.agent.ContextTokens = c, p.Model, p.ContextTokens
+	a.agent.Remote = settings.IsRemote(p.BaseURL) // 研究記錄:ask 筆記下 profile 是否 remote
 	return a.agent, nil
 }
 
@@ -637,6 +706,9 @@ func (a *App) end(cancel context.CancelFunc) {
 func (a *App) AskAI(p agent.AskParams) error {
 	ag, ctx, cancel, err := a.begin()
 	if err != nil {
+		// 前置失敗(尚未選模型、端點錯誤、上一個請求尚未結束)也記恰好一筆 ask(§12.8):
+		// 未送出 → sent=false、requests 空。成功進入 Agent 時由 Agent 的 defer 記錄,不重複。
+		a.logAskPremature(p, err)
 		return err
 	}
 	go func() {
@@ -651,12 +723,30 @@ func (a *App) AskAI(p agent.AskParams) error {
 	return nil
 }
 
+// markAskSent:標記這次提問已交給 Agent(其 defer 會記錄),App 層不再記。
+func (a *App) markAskSent() {}
+
+// logAskPremature 記錄前置失敗的 ask 事件(§12.8)。
+func (a *App) logAskPremature(p agent.AskParams, err error) {
+	if a.research == nil || !a.research.Enabled() {
+		return
+	}
+	_ = a.research.Log("ask", map[string]any{
+		"model": "", "remote": false, "mode": p.Mode, "doc": p.Doc,
+		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
+		"sent": false, "requests": []any{}, "reply": "", "toolCalls": []any{}, "proposalIds": []string{},
+		"elapsedMs": 0, "result": "error", "error": err.Error(),
+	})
+}
+
 // DraftSummary 請模型草擬章節摘要;只回傳文字,不寫檔(B6)。
 func (a *App) DraftSummary(chapter string) (string, error) {
 	ag, ctx, cancel, err := a.begin()
 	if err != nil {
 		return "", err
 	}
+	start := time.Now()
+	defer func() { _ = a.research.Log("summary_draft", map[string]any{"chapter": chapter, "elapsedMs": time.Since(start).Milliseconds()}) }()
 	defer a.end(cancel)
 	return ag.DraftSummary(ctx, chapter, func(e agent.Event) { runtime.EventsEmit(a.ctx, "summary:delta", e.Text) })
 }
@@ -673,7 +763,9 @@ func (a *App) SaveSummary(chapter, text string) (summary.Summary, error) {
 	if a.proj == nil {
 		return summary.Summary{}, errNoProject
 	}
-	return summary.Save(a.proj, chapter, text)
+	s, err := summary.Save(a.proj, chapter, text)
+	_ = a.research.Log("summary_save", map[string]any{"chapter": chapter})
+	return s, err
 }
 
 // ---- 提案審核(只有這裡的 AcceptProposal 會因 AI 提案而寫入稿件) ----
@@ -690,14 +782,23 @@ func (a *App) AcceptProposal(id string, edited *string) (*proposal.Proposal, err
 	if a.agent == nil {
 		return nil, errNoProject
 	}
-	return a.agent.Proposals.Accept(id, edited)
+	p, err := a.agent.Proposals.Accept(id, edited)
+	if err == nil && p != nil {
+		proposal.LogAccept(a.research, p)
+	}
+	return p, err
 }
 
-func (a *App) RejectProposal(id string) error {
+// RejectProposal 拒絕提案並記錄研究事件;回傳提案供呼叫端(目前僅供研究記錄內部使用)。
+func (a *App) RejectProposal(id string) (*proposal.Proposal, error) {
 	if a.agent == nil {
-		return errNoProject
+		return nil, errNoProject
 	}
-	return a.agent.Proposals.Reject(id)
+	p, err := a.agent.Proposals.Reject(id)
+	if err == nil && p != nil {
+		proposal.LogReject(a.research, p)
+	}
+	return p, err
 }
 
 // ---- 版本(G3) ----
@@ -715,7 +816,11 @@ func (a *App) TakeSnapshot(label string) (*snapshot.Meta, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.Take(label, "manual", nil)
+	m, err := s.Take(label, "manual", nil)
+	if err == nil && m != nil {
+		_ = a.research.Log("snapshot", map[string]any{"id": m.ID, "label": label, "files": m.Files})
+	}
+	return m, err
 }
 
 func (a *App) ListSnapshots() ([]*snapshot.Meta, error) {
@@ -749,7 +854,11 @@ func (a *App) RestoreSnapshot(id string, files []string) (*snapshot.Meta, error)
 	if err != nil {
 		return nil, err
 	}
-	return s.Restore(id, files)
+	m, err := s.Restore(id, files)
+	if err == nil && m != nil {
+		_ = a.research.Log("restore", map[string]any{"id": id, "files": files, "backupId": m.ID})
+	}
+	return m, err
 }
 
 // ---- 平台輸出(B8:只輸出到剪貼簿或作者指定的檔案,不動稿件) ----
@@ -790,6 +899,7 @@ func (a *App) CopyChapter(rel, platformID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	defer func() { _ = a.research.Log("copy_chapter", map[string]any{"chapter": rel, "platform": platformID}) }()
 	text, err := a.proj.ReadFile(rel)
 	if err != nil {
 		return "", err
@@ -809,6 +919,7 @@ func (a *App) ExportVolume(volume int, platformID string) (string, error) {
 	if a.proj == nil {
 		return "", errNoProject
 	}
+	defer func() { _ = a.research.Log("export_volume", map[string]any{"volume": volume, "platform": platformID}) }()
 	pl, err := a.platform(platformID)
 	if err != nil {
 		return "", err

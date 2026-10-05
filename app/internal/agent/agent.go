@@ -15,6 +15,7 @@ import (
 	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/research"
 	"perkins/internal/summary"
 )
 
@@ -59,10 +60,20 @@ type Agent struct {
 	LLM           llm.Client
 	Model         string
 	MaxIter       int
-	ContextTokens int // 端點上下文長度;0 = 不限制(測試用)
+	ContextTokens int                // 端點上下文長度;0 = 不限制(測試用)
+	Research      *research.Recorder // 研究記錄(§12.8);nil 或關閉時不記錄
+	Remote        bool               // 目前端點是否在本機之外(研究記錄用)
 
 	mu      sync.Mutex
 	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
+}
+
+// rlog 記錄研究事件(關閉或 nil 時為 no-op;失敗只留內部訊息,不影響 AI 流程)。
+func (a *Agent) rlog(name string, detail any) {
+	if a.Research == nil {
+		return
+	}
+	_ = a.Research.Log(name, detail)
 }
 
 func (a *Agent) maxIter() int {
@@ -167,27 +178,29 @@ var errNotShared = fmt.Errorf("作者沒有在本次對話附加這個檔案;如
 
 func (g gate) ok(path string) bool { return !Protected(path) || g[path] }
 
-func (a *Agent) runTool(name, args string, g gate) (string, error) {
+func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 回傳 (結果, proposalID, 錯誤)
 	switch name {
 	case "read_document":
 		var p struct {
 			Path string `json:"path"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", errNotShared
+			return "", "", errNotShared
 		}
-		return a.Proj.ReadFile(p.Path)
+		text, err := a.Proj.ReadFile(p.Path)
+		return text, "", err
 	case "search_project":
 		var p struct {
 			Query string `json:"query"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil || strings.TrimSpace(p.Query) == "" {
-			return "", fmt.Errorf("需要非空的 query")
+			return "", "", fmt.Errorf("需要非空的 query")
 		}
-		return a.search(p.Query, g)
+		r, err := a.search(p.Query, g)
+		return r, "", err
 	case "propose_patch":
 		var p struct {
 			Path        string   `json:"path"`
@@ -197,24 +210,24 @@ func (a *Agent) runTool(name, args string, g gate) (string, error) {
 			Assumptions []string `json:"assumptions"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", errNotShared
+			return "", "", errNotShared
 		}
 		if project.KindOf(p.Path) == project.SummariesDir {
-			return "", fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
+			return "", "", fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
 		}
 		if a.Proposals == nil {
-			return "", fmt.Errorf("提案功能未啟用")
+			return "", "", fmt.Errorf("提案功能未啟用")
 		}
 		pr, err := a.Proposals.Create(a.Model, p.Path, p.Original, p.Replacement, p.Rationale, p.Assumptions)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return "提案 " + pr.ID + " 已建立,等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", nil
+		return "提案 " + pr.ID + " 已建立,等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", pr.ID, nil
 	}
-	return "", fmt.Errorf("未實作的工具 %s", name)
+	return "", "", fmt.Errorf("未實作的工具 %s", name)
 }
 
 func (a *Agent) search(q string, g gate) (string, error) {
@@ -380,6 +393,11 @@ const compactPrompt = `你是對話摘要助手。把下面「作者」與「寫
 
 // compact 把較早的對話濃縮成一段摘要(B7:一定發出通知)。
 func (a *Agent) compact(ctx context.Context, emit func(Event)) error {
+	return a.compactCollect(ctx, emit, nil)
+}
+
+// collect 非 nil 時收集濃縮請求(研究記錄的 ask 事件用它)。
+func (a *Agent) compactCollect(ctx context.Context, emit func(Event), collect func(purpose string, msgs []llm.Message, reply string)) error {
 	a.mu.Lock()
 	if len(a.History) <= compactKeep {
 		a.mu.Unlock()
@@ -397,8 +415,11 @@ func (a *Agent) compact(ctx context.Context, emit func(Event)) error {
 		}
 		fmt.Fprintf(&tr, "%s:%s\n\n", who, m.Content)
 	}
-	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: []llm.Message{
-		{Role: "system", Content: compactPrompt}, {Role: "user", Content: tr.String()}}}, nil)
+	compactMsgs := []llm.Message{{Role: "system", Content: compactPrompt}, {Role: "user", Content: tr.String()}}
+	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: compactMsgs}, nil)
+	if collect != nil {
+		collect("compact", compactMsgs, strings.TrimSpace(reply.Content))
+	}
 	if err != nil {
 		return fmt.Errorf("濃縮較早對話失敗: %w", err)
 	}
@@ -420,19 +441,41 @@ func (a *Agent) historyTokens() int {
 }
 
 // Ask 執行一次提問的代理迴圈。回傳最終回覆文字。
+// 研究記錄(§12.8):每次提問恰好一筆 ask 事件,涵蓋所有結束路徑(成功/失敗/取消/超預算/迭代上限);
+// 未送出的請求標 sent=false、requests 留空。messages 在真正呼叫 Chat 的邊界保存快照。
 func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string, error) {
+	start := time.Now()
+	var ( // 本次 ask 的研究記錄資料
+		requests    []researchRequest // 依序列出每次實際送出的請求
+		toolCalls   []researchToolCall
+		pIDs        []string // 本次建立的提案 id
+		replyText   string
+		result, errMsg string
+	)
+	result = "ok"
+	logAsk := func() {
+		a.rlogAsk(p, requests, replyText, toolCalls, pIDs, start, result, errMsg)
+	}
+	defer logAsk() // 恰好一筆:唯一出口
+
 	msgs, err := a.BuildMessages(p)
 	if err != nil {
+		result, errMsg = "error", errText(err)
 		return "", err
 	}
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {
-		if a.compact(ctx, emit) == nil {
+		collect := func(purpose string, msgs []llm.Message, reply string) {
+			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply})
+		}
+		if err := a.compactCollect(ctx, emit, collect); err == nil {
 			if msgs, err = a.BuildMessages(p); err != nil {
+				result, errMsg = "error", errText(err)
 				return "", err
 			}
 		}
 		if n := EstimateTokens(msgs); n > b-replyReserve(b) {
-			return "", fmt.Errorf("送出內容約 %d tokens,超過模型可用的 %d。請減少附加的檔案、取消前情摘要,或開新對話。", n, b-replyReserve(b))
+			result, errMsg = "error", fmt.Sprintf("送出內容約 %d tokens,超過模型可用的 %d。請減少附加的檔案、取消前情摘要,或開新對話。", n, b-replyReserve(b))
+			return "", fmt.Errorf("%s", errMsg)
 		}
 	}
 	a.audit(auditRecord{Event: "request", Detail: fmt.Sprintf("doc=%s selection=%d字元 attachments=%v mode=%s summaries=%v tokens≈%d",
@@ -441,13 +484,23 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	g := gateFor(p)
 	tools := toolsFor(p.Mode)
 	req := llm.Request{Model: a.Model, Tools: tools}
+	rejectedIDs := map[string]bool{}
 	for i := 0; i < a.maxIter(); i++ {
+		// 在真正呼叫 Chat 的邊界保存請求快照(不可變副本)
 		req.Messages = msgs
+		snapshot := append([]llm.Message{}, msgs...)
 		reply, err := a.LLM.Chat(ctx, req, func(s string) { emit(Event{Kind: "delta", Text: s}) })
+		requests = append(requests, researchRequest{Purpose: "ask", Messages: snapshot, Reply: reply.Content}) // 每次回覆都保存(含帶工具呼叫的中間回覆)
 		if err != nil {
+			result = "error"
+			if ctx.Err() != nil {
+				result = "cancelled"
+			}
+			errMsg = errText(err)
 			return "", err
 		}
 		if len(reply.ToolCalls) == 0 {
+			replyText = reply.Content // 已由上方保存到對應 request
 			a.mu.Lock()
 			a.History = append(a.History,
 				llm.Message{Role: "user", Content: p.Question},
@@ -455,7 +508,10 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			a.mu.Unlock()
 			// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
 			if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
-				a.compact(ctx, emit)
+				collect := func(purpose string, msgs []llm.Message, reply string) {
+					requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply})
+				}
+				a.compactCollect(ctx, emit, collect)
 			}
 			return reply.Content, nil
 		}
@@ -464,23 +520,65 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			if !allowed(tc.Name, tools) {
 				a.audit(auditRecord{Event: "tool_denied", Tool: tc.Name, Args: tc.Arguments, Detail: "mode=" + p.Mode})
 				emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: false})
+				rejectedIDs[tc.ID] = true
+				toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Denied: true})
 				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: "錯誤:此工具不存在或本次不被允許。你只能使用: " + strings.Join(names(tools), ", ")})
 				continue
 			}
-			result, terr := a.runTool(tc.Name, tc.Arguments, g)
+			result2, prID, terr := a.runTool(tc.Name, tc.Arguments, g)
 			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
 			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true})
-			if terr != nil {
-				result = "錯誤:" + terr.Error()
+			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
+			if terr == nil && prID != "" {
+				pIDs = append(pIDs, prID)
 			}
-			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result})
+			if terr != nil {
+				result2 = "錯誤:" + terr.Error()
+			}
+			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}
 	}
 	a.audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
 	msg := fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已停止。", a.maxIter())
 	emit(Event{Kind: "notice", Text: msg})
+	result, errMsg = "error", msg
 	return "", fmt.Errorf("%s", msg)
 }
+
+// ---- 研究記錄(§12.8):ask 事件的欄位,全部從 agent 內部取得 ----
+
+// researchToolCall 記錄一次工具呼叫(名稱、參數、是否被拒、錯誤)。
+type researchToolCall struct {
+	Name   string `json:"name"`
+	Args   string `json:"args,omitempty"`
+	Denied bool   `json:"denied,omitempty"`
+	Err    string `json:"err,omitempty"`
+}
+
+// researchRequest 記錄一次實際送出的請求:用途、送出的 messages、該次回覆。
+type researchRequest struct {
+	Purpose  string        `json:"purpose"` // ask | compact
+	Messages []llm.Message `json:"messages"`
+	Reply    string        `json:"reply,omitempty"` // 該次請求的回覆文字(工具迭代的中間回覆不重複存)
+}
+
+// rlogAsk 寫一筆 ask 事件(含每次實際送出的請求快照、回覆、工具呼叫、本次建立的提案、耗時、結果)。
+func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText string, tcs []researchToolCall, pIDs []string, start time.Time, result, errMsg string) {
+	if a.Research == nil || !a.Research.Enabled() {
+		return
+	}
+	a.Research.Log("ask", map[string]any{
+		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
+		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
+		"sent": len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
+		"requests": requests, "reply": replyText, "toolCalls": tcs,
+		"proposalIds": pIDs, "elapsedMs": time.Since(start).Milliseconds(),
+		"result": result, "error": errMsg,
+	})
+}
+
+// ResearchRemote 回傳目前模型端點是否在本機之外(研究記錄用;由 App 在 prepare 時設定)。
+func (a *Agent) ResearchRemote() bool { return a.Remote }
 
 const summaryPrompt = `你是輕小說編輯助手。為下面這一章寫一份「之後寫作時參考用」的摘要,300 字以內,條列:
 1. 主要事件(依發生順序)

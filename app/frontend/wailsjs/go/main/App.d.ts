@@ -43,6 +43,8 @@ export function FindVariants():Promise<Array<bible.Variant>>;
 
 export function GetCover():Promise<string>;
 
+export function GetResearch():Promise<boolean>;
+
 export function GetSettings():Promise<main.SettingsView>;
 
 export function GetSummary(arg1:string):Promise<summary.Summary>;
@@ -87,11 +89,13 @@ export function PreviewExport(arg1:string,arg2:publish.Rules):Promise<string>;
 
 export function ReadFile(arg1:string):Promise<string>;
 
-export function RejectProposal(arg1:string):Promise<void>;
+export function RejectProposal(arg1:string):Promise<proposal.Proposal>;
 
 export function RemoveRecent(arg1:string):Promise<void>;
 
 export function RenameProject(arg1:string):Promise<project.Tree>;
+
+export function ResearchOpenFile(arg1:string):Promise<void>;
 
 export function ResetChat():Promise<void>;
 
@@ -110,6 +114,8 @@ export function SaveSummary(arg1:string,arg2:string):Promise<summary.Summary>;
 export function SetActiveModel(arg1:string,arg2:string):Promise<main.SettingsView>;
 
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
+
+export function SetResearch(arg1:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;
 

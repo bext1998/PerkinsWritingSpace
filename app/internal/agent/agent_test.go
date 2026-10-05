@@ -3,14 +3,18 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/research"
 	"perkins/internal/summary"
 )
 
@@ -428,5 +432,528 @@ func TestEstimateTokens(t *testing.T) {
 	n := EstimateTokens([]llm.Message{{Content: "中文十個字中文十個字"}, {Content: "abcdefghi"}})
 	if n != 4+10+4+3 {
 		t.Fatalf("got %d", n)
+	}
+}
+
+// ---- 研究記錄(§12.8) ----
+
+// rlogText 讀回研究記錄全文(不存在時回傳空字串)。
+func rlogText(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// 意圖(§12.8):研究記錄預設關閉;執行 ask 與提案後,research.jsonl 不得存在。
+func TestResearchDisabledCreatesNoFile(t *testing.T) {
+	a, s, dir := setup(t)
+	s.replies = []llm.Message{{Role: "assistant", Content: "回答"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl")); len(b) != 0 {
+		t.Fatalf("關閉時不應建立 research.jsonl: %s", b)
+	}
+}
+
+// 意圖:開啟後 ask 筆記錄 model、mode、doc、selection 字數、attachments、送出的完整 messages、
+// 回覆、工具呼叫清單、proposal id、耗時與結果。
+func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
+	a, s, dir := setup(t)
+	on := true
+	a.Proj.SetResearch(on)
+	a.Research = research.New(a.Proj, "sess-1")
+	// 先讓模型建立提案(工具呼叫),下一輪直接回答
+	p := AskParams{Question: "改寫開頭", Doc: "manuscript/第一章.md", Selection: "小明走進森林。", Attachments: []string{"canon/characters.md"}}
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "t1", Name: "propose_patch", Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明踱進森林。","rationale":"更有畫面"}`},
+			{ID: "t2", Name: "read_document", Arguments: `{"path":"../perkins.json"}`},
+		}},
+		{Role: "assistant", Content: "已提出提案,也嘗試讀了不該讀的檔案。"},
+	}
+	reply, err := a.Ask(context.Background(), p, func(Event) {})
+	if err != nil || reply == "" {
+		t.Fatalf("reply=%q err=%v", reply, err)
+	}
+	text := rlogText(t, dir)
+	if text == "" {
+		t.Fatal("開啟後應有 research.jsonl")
+	}
+	var rec struct {
+		TS      string `json:"ts"`
+		Session string `json:"session"`
+		Event   string `json:"event"`
+		Detail  struct {
+			Model     string   `json:"model"`
+			Remote    bool     `json:"remote"`
+			Mode      string   `json:"mode"`
+			Doc       string   `json:"doc"`
+			SelLen    int      `json:"selectionLen"`
+			Attach    []string `json:"attachments"`
+			Summaries bool     `json:"priorSummaries"`
+			Sent      bool     `json:"sent"`
+			Requests  []struct {
+				Purpose  string        `json:"purpose"`
+				Messages []llm.Message `json:"messages"`
+				Reply    string        `json:"reply"`
+			} `json:"requests"`
+			Reply     string `json:"reply"`
+			ToolCalls []struct {
+				Name   string `json:"name"`
+				Args   string `json:"args"`
+				Denied bool   `json:"denied"`
+				Err    string `json:"err"`
+			} `json:"toolCalls"`
+			ProposalIDs []string `json:"proposalIds"`
+			ElapsedMs   int64    `json:"elapsedMs"`
+			Result      string   `json:"result"`
+			Error       string   `json:"error"`
+		} `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &rec); err != nil {
+		t.Fatalf("研究記錄格式錯誤: %v\n%s", err, text)
+	}
+	if rec.TS == "" || rec.Session != "sess-1" || rec.Event != "ask" {
+		t.Fatalf("共同欄位錯誤: %+v", rec)
+	}
+	d := rec.Detail
+	if d.Model != "m" || d.Doc != "manuscript/第一章.md" || d.SelLen != len([]rune("小明走進森林。")) {
+		t.Errorf("基本欄位錯誤: %+v", d)
+	}
+	if len(d.Attach) != 1 || d.Attach[0] != "canon/characters.md" {
+		t.Errorf("attachments 錯誤: %v", d.Attach)
+	}
+	// 實際送出的完整 messages:ask 請求的最後一則 user 應含附加檔案內容與問題
+	if len(d.Requests) == 0 || d.Requests[0].Purpose != "ask" || !d.Sent {
+		t.Fatalf("應記錄已送出的 ask 請求: sent=%v requests=%v", d.Sent, d.Requests)
+	}
+	var lastUser string
+	for _, m := range d.Requests[0].Messages {
+		if m.Role == "user" {
+			lastUser = m.Content
+		}
+	}
+	if !strings.Contains(lastUser, "怕黑") || !strings.Contains(lastUser, "改寫開頭") {
+		t.Errorf("messages 應含送出的完整內容: %q", lastUser)
+	}
+	if d.Reply != "已提出提案,也嘗試讀了不該讀的檔案。" {
+		t.Errorf("reply 錯誤: %q", d.Reply)
+	}
+	if len(d.ToolCalls) != 2 {
+		t.Fatalf("應記錄 2 次工具呼叫: %+v", d.ToolCalls)
+	}
+	if d.ToolCalls[0].Name != "propose_patch" || d.ToolCalls[0].Denied {
+		t.Errorf("propose_patch 記錄錯誤: %+v", d.ToolCalls[0])
+	}
+	// read_document 是白名單工具,但路徑跳脫被 project 層擋下 → 不標 denied(那是「工具不被允許」),
+	// 而是記錄在 err 欄位,讓研究者看得到這次呼叫的結果
+	if d.ToolCalls[1].Name != "read_document" || d.ToolCalls[1].Denied || d.ToolCalls[1].Args == "" {
+		t.Errorf("越權工具呼叫應記錄名稱/參數,不標 denied: %+v", d.ToolCalls[1])
+	}
+	if d.ToolCalls[1].Err == "" {
+		t.Errorf("越權呼叫的錯誤應記錄在 err: %+v", d.ToolCalls[1])
+	}
+	if len(d.ProposalIDs) != 1 || d.ProposalIDs[0] == "" {
+		t.Errorf("應記錄本次建立的提案 id: %v", d.ProposalIDs)
+	}
+	if d.Result != "ok" {
+		t.Errorf("result 應為 ok: %q(%q)", d.Result, d.Error)
+	}
+}
+
+// 意圖:AI 的回覆/研究記錄不得進入上下文,工具也讀不到 research.jsonl(G1–G4)。
+func TestResearchFileNotInContextAndNotReadableByTools(t *testing.T) {
+	a, s, dir := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	s.replies = []llm.Message{{Role: "assistant", Content: "回答"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q", Doc: "manuscript/第一章.md"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".perkins", "research.jsonl")); err != nil {
+		t.Fatal("應已產生 research.jsonl")
+	}
+	// 工具讀不到 .perkins/(路徑規則由 project 層擋下)
+	if _, _, err := a.runTool("read_document", `{"path":".perkins/research.jsonl"}`, gate{}); err == nil {
+		t.Fatal("read_document 不應讀到 .perkins/research.jsonl")
+	}
+	// 上下文組裝不會包含研究記錄
+	msgs, err := a.BuildMessages(AskParams{Question: "q2", Doc: "manuscript/第一章.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "research.jsonl") {
+			t.Fatal("研究記錄不得進入上下文")
+		}
+	}
+}
+
+// 意圖:切換開關寫回 perkins.json,重開專案仍保留。
+func TestResearchTogglePersists(t *testing.T) {
+	p, err := project.Create(t.TempDir(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := p.Root
+	if err := p.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := project.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p2.Config.Research {
+		t.Fatal("重開專案後 research 應保留")
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "perkins.json"))
+	if !strings.Contains(string(b), `"research": true`) {
+		t.Fatalf("perkins.json 應含 research 欄位: %s", b)
+	}
+	if err := p2.SetResearch(false); err != nil {
+		t.Fatal(err)
+	}
+	p3, _ := project.Open(dir)
+	if p3.Config.Research {
+		t.Fatal("關閉後應保留關閉狀態")
+	}
+}
+
+// ---- 研究記錄:審查修補(review-3) ----
+
+// 意圖(第 1 點):每次提問恰好一筆 ask 記錄;超預算(未送出)也要有,標 sent=false。
+func TestResearchOverBudgetExactlyOneRecord(t *testing.T) {
+	a, _, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.ContextTokens = 200
+	a.Proj.WriteFile("canon/巨大.md", strings.Repeat("設定。", 200))
+	_, err := a.Ask(context.Background(), AskParams{Question: "q", Attachments: []string{"canon/巨大.md"}}, func(Event) {})
+	if err == nil {
+		t.Fatal("應拒絕送出")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆 ask, got %d", len(evs))
+	}
+	var d struct {
+		Sent     bool `json:"sent"`
+		Requests []struct {
+			Purpose string `json:"purpose"`
+		} `json:"requests"`
+		Result string `json:"result"`
+	}
+	if err := json.Unmarshal(evs[0].Detail, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Sent || len(d.Requests) != 0 {
+		t.Fatalf("未送出應標 sent=false、requests 空: %+v", d)
+	}
+	if d.Result != "error" {
+		t.Fatalf("result 應為 error: %q", d.Result)
+	}
+}
+
+// 意圖(第 1 點):模型失敗與取消各恰好一筆。
+func TestResearchModelFailureAndCancel(t *testing.T) {
+	a, _, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+
+	// 失敗:假 LLM 回傳錯誤
+	a.LLM = failLLM{}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應失敗")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("模型失敗應恰好一筆, got %d", len(evs))
+	}
+
+	// 取消:Chat 回 context.Err 的假 LLM
+	a2, _, _ := setup(t)
+	a2.Proj.SetResearch(true)
+	a2.Research = research.New(a2.Proj, "sess-1")
+	a2.LLM = cancelLLM{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = a2.Ask(ctx, AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應因取消而失敗")
+	}
+	evs2, _ := research.Read(a2.Proj)
+	if len(evs2) != 1 {
+		t.Fatalf("取消應恰好一筆, got %d", len(evs2))
+	}
+	var d2 struct {
+		Result string `json:"result"`
+		Sent   bool   `json:"sent"`
+	}
+	json.Unmarshal(evs2[0].Detail, &d2)
+	if d2.Result != "cancelled" {
+		t.Fatalf("result 應為 cancelled: %q", d2.Result)
+	}
+	if !d2.Sent {
+		t.Fatal("取消發生在送出後應標 sent=true")
+	}
+}
+
+// failLLM 一定回傳錯誤的假 LLM。
+type failLLM struct{}
+
+func (failLLM) Chat(_ context.Context, _ llm.Request, _ func(string)) (llm.Message, error) {
+	return llm.Message{}, fmt.Errorf("端點連不上")
+}
+
+// cancelLLM 模擬請求進行中 context 被取消。
+type cancelLLM struct{}
+
+func (cancelLLM) Chat(ctx context.Context, _ llm.Request, _ func(string)) (llm.Message, error) {
+	return llm.Message{}, ctx.Err()
+}
+
+// 意圖(第 2 點):proposalIds 只含本次建立的提案;上一次提問的提案不得誤記。
+func TestResearchProposalIDsOnlyThisAsk(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	// 第一次:建立一個提案
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "t1", Name: "propose_patch", Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明踱進森林。","rationale":"r"}`},
+		}},
+		{Role: "assistant", Content: "已提案"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q1"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 第二次:純討論,沒有提案
+	s.replies = []llm.Message{{Role: "assistant", Content: "只是討論"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q2"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 第三次:一次建立兩個提案(original 取磁碟上實際存在的文字;canon 要附加才讀得到)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "a", Name: "propose_patch", Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"X","rationale":"r"}`},
+			{ID: "b", Name: "propose_patch", Arguments: `{"path":"canon/characters.md","original":"十二歲,怕黑。","replacement":"十三歲,怕黑。","rationale":"r"}`},
+		}},
+		{Role: "assistant", Content: "兩個提案"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q3", Attachments: []string{"canon/characters.md"}}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 3 {
+		t.Fatalf("應三筆 ask, got %d", len(evs))
+	}
+	var ids [3][]string
+	for i, ev := range evs {
+		var d struct {
+			ProposalIDs []string `json:"proposalIds"`
+		}
+		if err := json.Unmarshal(ev.Detail, &d); err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = d.ProposalIDs
+	}
+	if len(ids[0]) != 1 {
+		t.Fatalf("第一次應一個提案: %v", ids[0])
+	}
+	if len(ids[1]) != 0 {
+		t.Fatalf("純討論不得誤記提案: %v", ids[1])
+	}
+	if len(ids[2]) != 2 {
+		t.Fatalf("一次兩個提案應記錄兩個: %v", ids[2])
+	}
+}
+
+// 意圖(第 3 點):迭代上限時 requests 只含已送出的快照,未送出的工具結果不列入。
+func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.MaxIter = 2
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"森林"}`}}},
+	}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("應因迭代上限停止")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆, got %d", len(evs))
+	}
+	var d struct {
+		Sent     bool `json:"sent"`
+		Requests []struct {
+			Purpose  string        `json:"purpose"`
+			Messages []llm.Message `json:"messages"`
+		} `json:"requests"`
+	}
+	json.Unmarshal(evs[0].Detail, &d)
+	if !d.Sent || len(d.Requests) != 2 {
+		t.Fatalf("應兩筆已送出的請求: sent=%v n=%d", d.Sent, len(d.Requests))
+	}
+	// 最後一筆快照不應含尚未送出的工具結果(最後一輪的 search 結果)
+	last := d.Requests[1]
+	for _, m := range last.Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "森林: ") {
+			t.Fatalf("最後一筆請求快照不應含未送出的工具結果: %q", m.Content)
+		}
+	}
+}
+
+// 意圖(第 5 點):配置 false 的實際 Recorder 不建檔、不建 .perkins;SetEnabled(false) 回傳後並行寫入不會新增。
+func TestResearchDisabledRealRecorderAndConcurrentOff(t *testing.T) {
+	p, err := project.Create(t.TempDir(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := research.New(p, "sess-1")
+	if r.Enabled() {
+		t.Fatal("預設應關閉")
+	}
+	if err := r.Log("save", map[string]any{"path": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(p.Root, ".perkins")); !os.IsNotExist(err) {
+		t.Fatal("配置 false 的實際 Recorder 不應建立 .perkins")
+	}
+
+	// 開啟、關閉,再從 goroutine 並行寫入:SetEnabled(false) 回傳後不得再新增行
+	if err := p.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	r.SetEnabled(true)
+	if err := r.Log("save", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.SetEnabled(false)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); _ = r.Log("save", nil) }()
+	}
+	wg.Wait()
+	evs, err := research.Read(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 {
+		t.Fatalf("停用回傳後不得再寫入: %d 筆", len(evs))
+	}
+}
+
+// 意圖(第 4 點):SetResearch 保存失敗時,記憶體狀態不異動。
+// 意圖(review-round3 第 2 點):開啟/關閉兩向都在同一個作品 p 製造確定寫入失敗(perkins.json 換成
+// 同名目錄);之後在同一個 p 恢復合法 perkins.json、成功呼叫 SetName(真正走 saveConfig,非參數驗證
+// 就返回的操作),重開作品核對 Research 仍是失敗前的值 — 失敗的開關值不會經其他設定保存落盤。
+func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "perkins.json")
+	breakDisk := func() {
+		os.Remove(cfgPath)
+		if err := os.Mkdir(cfgPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restoreDisk := func(researchOn bool) {
+		// 移除同名目錄,寫回合法 perkins.json(research 與失敗前一致),再成功保存一次
+		if err := os.RemoveAll(cfgPath); err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(map[string]any{"name": "n", "volumes": []map[string]any{{"title": "第一卷", "chapters": []string{}}}, "research": researchOn})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(cfgPath, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// ——— 開啟方向 ———
+	breakDisk()
+	if err := p.SetResearch(true); err == nil {
+		t.Fatal("perkins.json 是目錄時應失敗")
+	}
+	if p.Config.Research {
+		t.Fatal("開啟保存失敗時 Config.Research 應還原為 false")
+	}
+	restoreDisk(false) // 失敗前磁碟值 false
+	if err := p.SetName("改名"); err != nil {
+		t.Fatalf("恢復後 SetName 應成功: %v", err)
+	}
+	reopened, err := project.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.Config.Research {
+		t.Fatal("重開後 Research 應為失敗前值 false(開啟失敗值未落盤)")
+	}
+
+	// ——— 關閉方向(同一個作品 p)———
+	p.Config.Research = true // 模擬未保存的開啟意圖(繞過保存)
+	breakDisk()
+	if err := p.SetResearch(false); err == nil {
+		t.Fatal("關閉保存應失敗")
+	}
+	if !p.Config.Research {
+		t.Fatal("關閉保存失敗時 Config.Research 應還原為 true")
+	}
+	restoreDisk(true) // 失敗前值 true
+	if err := p.SetName("再改名"); err != nil {
+		t.Fatalf("恢復後 SetName 應成功: %v", err)
+	}
+	reopened, err = project.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Config.Research {
+		t.Fatal("重開後 Research 應為失敗前值 true(關閉失敗值未落盤)")
+	}
+}
+
+// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆;MaxIter=1 逐筆比對。
+func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-1")
+	a.MaxIter = 1
+	s.replies = []llm.Message{
+		{Role: "assistant", Content: "先查資料", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+	}
+	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err == nil {
+		t.Fatal("MaxIter=1 應因迭代上限停止")
+	}
+	evs, _ := research.Read(a.Proj)
+	if len(evs) != 1 {
+		t.Fatalf("應恰好一筆, got %d", len(evs))
+	}
+	var d struct {
+		Requests []struct {
+			Purpose  string        `json:"purpose"`
+			Messages []llm.Message `json:"messages"`
+			Reply    string        `json:"reply"`
+		} `json:"requests"`
+	}
+	json.Unmarshal(evs[0].Detail, &d)
+	if len(d.Requests) != 1 {
+		t.Fatalf("應一筆請求, got %d", len(d.Requests))
+	}
+	if d.Requests[0].Reply != "先查資料" {
+		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
 	}
 }

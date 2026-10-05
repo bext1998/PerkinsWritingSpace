@@ -136,7 +136,7 @@ func TestRejectNeverTouchesFile(t *testing.T) {
 	s, rel, _ := setup(t)
 	before := read(t, s, rel)
 	p, _ := s.Create("m", rel, "天很黑。", "X", "", nil)
-	if err := s.Reject(p.ID); err != nil {
+	if _, err := s.Reject(p.ID); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, s, rel) != before {

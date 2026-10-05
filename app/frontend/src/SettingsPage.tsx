@@ -1,8 +1,8 @@
 import {useEffect, useMemo, useState} from 'react';
 import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
-    ClearCover, ConvertOptions, DeleteProfile, GetCover, GetSettings, ListModels, PickCover, PreviewExport, RenameProject, ResetPlatforms,
-    SavePlatforms, SaveProfile, SetTheme,
+    ClearCover, ConvertOptions, DeleteProfile, GetCover, GetResearch, GetSettings, ListModels, PickCover, PreviewExport, RenameProject, ResetPlatforms,
+    SavePlatforms, SaveProfile, SetResearch, SetTheme,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -247,7 +247,11 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
     const [name, setName] = useState(tree.name);
     const [cover, setCover] = useState('');
     const [error, setError] = useState('');
-    useEffect(() => { GetCover().then(setCover); }, []);
+    const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
+    const [researchSaving, setResearchSaving] = useState(false);
+    const [researchError, setResearchError] = useState('');
+    // 研究記錄載入失敗:保持未知(researchOn=null)、Switch 停用並顯示錯誤,不得冒充關閉
+    useEffect(() => { GetCover().then(setCover); GetResearch().then(setResearchOn).catch(e => { setResearchError(errText(e)); }); }, []);
 
     return (
         <div className="grid max-w-3xl gap-8">
@@ -271,6 +275,27 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                     </Field>
                     {error && <p className="text-xs text-destructive">{error}</p>}
                 </div>
+            </div>
+            {/* 研究記錄(§12.8):預設關閉,作者手動開啟;記錄檔隨作品存在 .perkins/research.jsonl */}
+            <div className="mt-6 flex max-w-3xl items-start gap-4 rounded-lg border p-4" data-testid="research-row">
+                <div className="flex-1">
+                    <Label className="text-sm font-medium">研究記錄</Label>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        開啟後,本作品的操作、送給 AI 的內容與 AI 回覆會記錄在 .perkins/research.jsonl,只存在這台電腦。
+                        檔案位置:作品資料夾\.perkins\research.jsonl。
+                    </p>
+                    {researchError && <p className="mt-1 text-xs text-destructive" data-testid="research-load-error">無法讀取研究記錄狀態:{researchError}</p>}
+                </div>
+                <Switch data-testid="research-switch" checked={researchOn === true}
+                        disabled={researchOn === null || researchSaving || !!researchError}
+                        onCheckedChange={async v => {
+                            setResearchSaving(true);
+                            try {
+                                await SetResearch(v);
+                                setResearchOn(v); // 後端保存成功才更新畫面
+                            } catch (e) { setError(errText(e)); /* 失敗保持原值 */ }
+                            setResearchSaving(false);
+                        }}/>
             </div>
             <NotionImport onDone={() => {}}/>
         </div>

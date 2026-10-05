@@ -66,6 +66,10 @@ export function GetCover() {
   return window['go']['main']['App']['GetCover']();
 }
 
+export function GetResearch() {
+  return window['go']['main']['App']['GetResearch']();
+}
+
 export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
@@ -166,6 +170,10 @@ export function RenameProject(arg1) {
   return window['go']['main']['App']['RenameProject'](arg1);
 }
 
+export function ResearchOpenFile(arg1) {
+  return window['go']['main']['App']['ResearchOpenFile'](arg1);
+}
+
 export function ResetChat() {
   return window['go']['main']['App']['ResetChat']();
 }
@@ -200,6 +208,10 @@ export function SetActiveModel(arg1, arg2) {
 
 export function SetChapterStatus(arg1, arg2) {
   return window['go']['main']['App']['SetChapterStatus'](arg1, arg2);
+}
+
+export function SetResearch(arg1) {
+  return window['go']['main']['App']['SetResearch'](arg1);
 }
 
 export function SetTheme(arg1) {

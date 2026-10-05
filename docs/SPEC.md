@@ -71,6 +71,7 @@ MyNovel/
     proposals/            Proposal JSON(pending/accepted/rejected)
     provenance.jsonl      每次接受/還原的記錄(誰、何時、模型、理由、快照 id)
     audit.jsonl           每次工具呼叫(含被拒絕的)
+    research.jsonl        研究記錄(§12.8;預設關閉,開啟才會存在)
 ```
 
 ## 5. 核心模型
@@ -204,6 +205,16 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **AI 對話**:右下角懸浮圓鈕 → 可拖曳、可調整大小的浮動對話框。輸入區包含附加標籤、📎 附加、模型切換、👁 預覽、送出。提案卡片在對話框內顯示。
 - 版本改為對話視窗(Dialog)。
 
+### 12.8 研究記錄(研究模式)
+
+- **目的**:記錄作者的操作與 AI 的行為,作為研究資料。粒度「中等」:記錄作者的操作事件、送給 AI 的完整內容、AI 的回覆與工具呼叫、耗時;**不**記錄逐次打字的稿件變化。
+- **開關與預設**:**預設關閉**。作者在設定頁(作品分頁)手動開啟;開關存在 `perkins.json` 的 `research` 欄位,隨作品走。
+- **檔案位置與格式**:開啟後以 JSON Lines 逐行 append 到作品資料夾內的 `.perkins/research.jsonl`;**另開新檔**,`audit.jsonl`、`provenance.jsonl` 完全不動。每筆共同欄位:`ts`(RFC3339 含毫秒)、`event`、`session`(App 啟動時產生的隨機 id,區分不同使用時段),其餘欄位依事件而定。關閉時不建立任何檔案。
+- **記錄的事件**:`ask`(model、profile 是否 remote、mode、doc、selection 字數、attachments、summaries、sent(前置失敗未送出時 false)、requests(依序列出每次**實際送出**的請求快照與該次回覆,含 ask 與 compact 兩種用途)、AI 最終回覆、工具呼叫清單、本次建立的 proposalIds、耗時、結果 ok/error/cancelled);`proposal_accept`(proposal id、target、是否作者修改、原 replacement,作者修改時另記 final、耗時)與 `proposal_reject`(proposal id、target、耗時)分開記錄;`save`(path、存檔前後字數以 CountText 計算,不記內文;失敗時記 ok=false 與 error,不記 afterCount);`snapshot`/`restore`(label/id、檔案清單);`summary_draft`(chapter、耗時)/`summary_save`(chapter);`copy_chapter`/`export_volume`(章節/卷、平台 id);`open_file`(path)。
+- **不記錄**:逐次打字的稿件變化;`save` 與 `open_file` 只記路徑與字數,不記內文(ask 例外:作者主動送出的內容本來就會送給 AI,故記錄完整 messages)。
+- **與 audit/provenance 的關係**:完全獨立。`audit.jsonl`(工具呼叫審計,G4)與 `provenance.jsonl`(接受/還原溯源)照舊,研究記錄不擴充也不取代它們。
+- **隱私**:只存這台電腦;開啟後檔案會含送給 AI 的稿件片段與 AI 回覆,研究記錄不在 AI 的上下文中,AI 工具也讀不到 `.perkins/`。研究記錄的寫入失敗不中斷作者的操作。
+
 ### 12.7 非目標(本階段不做)
 伏筆追蹤、時間軸、人物關係圖(實際寫一段時間後再決定);Token 級壓縮(不可預測地刪字);與 Notion 持續同步;專案外檔案附加;Embedding 檢索。
 
@@ -238,7 +249,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 0. **錯誤防護(優先於介面打磨)(已完成 2026-10-05)**:目前任何未捕捉的介面錯誤都會讓整個視窗全白,而且 `Workspace` 內未存的稿件會跟著卸載而遺失(見 `docs/PITFALLS.md` #1)。做法:`main.tsx` 最外層加 ErrorBoundary,顯示錯誤訊息與重新載入按鈕;`ChatWindow`、`Inspector`、側欄各自再包一層,讓周邊功能出錯不拖垮編輯器;出錯時先把未存的內容存檔(或存成草稿)再顯示錯誤畫面。驗收:E2E 刻意在子元件拋錯,編輯器仍在、未存的字沒有遺失。
 1. **介面打磨**:作者認為目前介面「超乎預期,但仍有點 AI slop」,需要再打磨。動手前先做一次設計審查,列出具體的 slop 點再修。審查範圍除了視覺(去 AI slop、好看),也要檢查使用者體驗:常用操作是否找得到、是否只能靠快捷鍵完成(例:第 5 項的存檔)。
 2. **Notion 匯入要能逐頁分類**(已完成 2026-10-05):目前只能「整個資料夾」指定一個類型;一次匯入整個 zip 時,同一資料夾裡的角色、地點、名詞無法分開歸類。需要能在資料夾層級之下逐頁覆寫類型(或略過單頁)。
-3. **Debug／研究模式**:記錄作者的使用習慣與 AI 的行為,作為研究資料。動手前要和作者確認:
+3. **Debug／研究模式**(已完成 2026-10-05,見 §12.8):記錄作者的使用習慣與 AI 的行為,作為研究資料。動手前要和作者確認:
    - 要記錄什麼(操作事件、提案接受/拒絕/修改、送出的上下文、模型回覆、耗時…),粒度多細;
    - 是否包含稿件原文(隱私與檔案大小);
    - 存放位置與格式(建議只存本機、預設關閉、明確開啟);

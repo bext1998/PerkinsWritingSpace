@@ -140,16 +140,17 @@ func (s *Store) List() ([]*Proposal, error) {
 	return out, nil
 }
 
-func (s *Store) Reject(id string) error {
+// Reject 拒絕提案;回傳提案供呼叫端記錄研究事件。
+func (s *Store) Reject(id string) (*Proposal, error) {
 	p, err := s.Get(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if p.Status != Pending && p.Status != Conflict {
-		return ErrNotPending
+		return nil, ErrNotPending
 	}
 	p.Status = Rejected
-	return s.save(p)
+	return p, s.save(p)
 }
 
 // Accept 是全系統唯一會因 AI 提案而寫入稿件的路徑,只由作者的介面動作觸發。
