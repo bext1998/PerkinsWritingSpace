@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
-    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, NotebookPen, PanelLeftClose, PanelRightClose,
+    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelLeftClose, PanelRightClose,
     PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
@@ -21,7 +21,7 @@ import EntityHeader from './EntityHeader';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/basic';
 import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, Tip,
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tip,
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
@@ -414,7 +414,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     {current ? (
                         <>
                             <div data-testid="crumbs" className="flex min-w-0 items-center gap-1.5 overflow-hidden text-sm">
-                                {chapter ? <FileText className="h-4 w-4 shrink-0 text-muted-foreground"/> : <ScrollText className="h-4 w-4 shrink-0 text-muted-foreground"/>}
+                                {chapter
+                                    ? <FileText className={cn('h-4 w-4 shrink-0 text-muted-foreground', tight && 'hidden')}/>
+                                    : <ScrollText className={cn('h-4 w-4 shrink-0 text-muted-foreground', tight && 'hidden')}/>} 
                                 {crumbs.map((c, i) => (
                                     <span key={i}
                                           className={cn('min-w-0 truncate', i === crumbs.length - 1 ? 'font-medium' : 'text-muted-foreground',
@@ -468,6 +470,37 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"
                                     className={cn('shrink-0', tight && 'hidden')}
                                     aria-label="版本" title="版本"><History/>{!iconOnly && '版本'}</Button>
+                            {/* 最窄段:次要功能收進「更多」下拉,功能一個都不能少(SPEC §17.1 窄寬度不得讓功能無法觸及) */}
+                            {tight && (
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="iconSm" data-testid="toolbar-more" className="shrink-0"
+                                                aria-label="更多操作" title="更多操作">
+                                            <MoreHorizontal/>
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem disabled={!chapter}
+                                            onSelect={() => chapter && setSummaryFor(chapter.path)}>
+                                            <ScrollText/>章節摘要
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onSelect={() => setVersions(true)}>
+                                            <History/>版本
+                                        </DropdownMenuItem>
+                                        {chapter && !!cfg?.platforms?.length && (
+                                            <>
+                                                <DropdownMenuSeparator/>
+                                                <DropdownMenuLabel>複製到平台為…</DropdownMenuLabel>
+                                                {cfg.platforms.map(p => (
+                                                    <DropdownMenuItem key={p.id} onSelect={() => copyTo(chapter.path, p.id, p.name)}>
+                                                        {p.name}{!p.verified && <span className="ml-auto text-xs text-muted-foreground">未驗證</span>}
+                                                    </DropdownMenuItem>
+                                                ))}
+                                            </>
+                                        )}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            )}
                             <Tip label={inspector ? '收合資訊欄' : '展開資訊欄'} side="bottom">
                                 <Button variant="ghost" size="iconSm" data-testid="toggle-inspector" className="shrink-0"
                                         aria-label={inspector ? '收合資訊欄' : '展開資訊欄'}
@@ -497,15 +530,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         <p className="text-sm">從左側選一章開始寫作,或新增章節。</p>
                     </div>
                 )}
-                {/* 狀態列 */}
-                <footer className="flex h-7 shrink-0 items-center gap-4 border-t px-4 text-xs text-muted-foreground">
-                    {chapter && <span data-testid="count-chapter">本章 {liveCount.toLocaleString()} 字</span>}
-                    {volume && <span>本卷 {volumeCount.toLocaleString()} 字</span>}
-                    <span>全書 {totalCount.toLocaleString()} 字</span>
-                    {current && !chapter && <span>{liveCount.toLocaleString()} 字</span>}
+                {/* 狀態列:不換行、不溢出;最窄段省略「本卷」「全書」,模型名以省略號截斷(SPEC §17.1) */}
+                <footer data-testid="statusbar" className="flex h-7 shrink-0 items-center gap-4 overflow-hidden border-t px-4 text-xs text-muted-foreground">
+                    {chapter && <span data-testid="count-chapter" className="shrink-0 whitespace-nowrap">本章 {liveCount.toLocaleString()} 字</span>}
+                    {volume && !tight && <span className="shrink-0 whitespace-nowrap">本卷 {volumeCount.toLocaleString()} 字</span>}
+                    <span className={cn('shrink-0 whitespace-nowrap', tight && 'hidden')}>全書 {totalCount.toLocaleString()} 字</span>
+                    {current && !chapter && <span className="shrink-0 whitespace-nowrap">{liveCount.toLocaleString()} 字</span>}
                     <div className="flex-1"/>
-                    {current && <span>{dirty ? '未儲存' : '已儲存'}</span>}
-                    {activeProfile && <span>AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
+                    {current && <span className="shrink-0 whitespace-nowrap">{dirty ? '未儲存' : '已儲存'}</span>}
+                    {activeProfile && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                 </footer>
             </main>
 
