@@ -1,5 +1,31 @@
 # PROGRESS.md
 
+## 2026-10-05 — 第四輪審查修補(review-round4 E1/E4/E5,G 段)
+
+- **E1 取消選取不得回填**(`Workspace.tsx`):`onSelect` 收到 null(點別行取消選取)時同步清掉 `lastSel` 回填候選;E2E 新增 U8(未開 AI 時選取私人筆記→點別行取消→開 AI,PreviewContext messages 不含該段)。破壞驗證:移除清除 → U8 兩項 FAIL。
+- **E4 U4 精確比對選取區塊**(`e2e.js`):以【作者選取的段落】區塊本身(標題後至空行前)精確比較,不再以整則 message 含關鍵句的方式(文件本文含雷恩句會誤判通過)。破壞驗證:selection 改為同文件舊選取 → U4 FAIL。
+- **E5 U3 精確驗證還原**(`e2e.js`):首點前保存磁碟/編輯器基準與快照內容(讀 `.perkins/snapshots/<id>/files/`);首點/取消後磁碟與編輯器各精確比較(編輯器以 .cm-line 行串接);確定後磁碟與編輯器精確等於快照;before-restore 備份讀回核對等於還原前磁碟;保留其他檔案未變。破壞驗證兩項:restore-file 略過確認直接還原(確認區不出現,中斷 FAIL);略過 RestoreSnapshot(磁碟/備份 4 項 FAIL)。
+- 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**67/67 passed,略過 8 項**。
+
+## 2026-10-05 — 介面打磨第一批(操作問題,01/02/03/04/07)
+
+完成 SPEC §16 第 1 項的第一批(依設計審查前 5 優先中的操作類,作者拍板):
+
+- **01 新章入口常駐**(`ManuscriptPanel.tsx`):每卷章節列表底部常駐「+ 新增章節」(不需 hover);點擊原地出現名稱輸入框 +「建立」「取消」(Enter 建立、Escape 取消保留);卷標題 hover 的 + 按鈕移除(避免兩個入口),卷選單內「新增章節」保留。
+- **02 選取來源**(`ChatWindow.tsx`/`Workspace.tsx`):選取記住來源檔案(`selFrom`);開啟 AI 視窗時帶入編輯器當下選取,沒有則帶入最後一次選取(`lastSel`,Workspace 記錄來源)。來源≠目前文件時:標籤以警示色顯示「選取 N 字(來自〈舊章〉)」+「仍要附加」按鈕;**送出預設不附加該選取**,明確點「仍要附加」才送出。E2E 以送出內容預覽驗證(不呼叫模型)。
+- **03 還原分層**(`VersionDialog.tsx`):「還原此檔」為主要按鈕;「還原快照內全部檔案」移到「更多…」下拉。兩者點擊後原地確認區塊:快照時間+原因+說明、要還原的檔案、目前內容會先自動備份、「確定還原」「取消」(不用 window.confirm)。
+- **04 選取後直接問 AI**(`Editor.tsx`):有選取時編輯器右上浮動列「詢問這段」+「段落指令」(展開快速指令);點擊帶入當下選取;右鍵選單保留。AI 圓鈕開啟對話框時讀取當下選取(`onPickSelection`)。
+- **07 送出內容預覽**(`ChatWindow.tsx`):眼睛圖示改為文字按鈕「送出內容」;預覽分兩區:「本次直接送出」(目前文件、選取及來源、附加檔案、摘要、問題、報告模式)與「AI 工具可讀取範圍」(manuscript/ 全部、summaries/ 已確認、canon/ 僅附加者),標示端點位置(本機/雲端);完整原始訊息移到 `<details>` 可展開區。
+- E2E 移植 E2E_SKIP_AI=1(check 正規化 `!!ok`);新情境 U1–U7;書櫃檢查補 waitForSelector + waitForFunction(已知 flaky race,根因未明,屬書櫃列表渲染時機)。驗證:`go test ./...` 全過、`npm run build` 通過、E2E **60/60 passed,略過 8 項**。截圖 20/21/22/23/24/25 已目視:常駐新章鈕、還原確認區、選取浮動列、預覽兩區、無復活選取、長章名 chip 均正常。
+- 審查修補(review-1a 第 1–4 點,E 段):
+  - **移除選取不得復活**(`ChatWindow.tsx`):`clearSel()` 同時呼叫 `onClearLastSel?.()`(Workspace 清掉 `lastSel`),只有「新的選取」能重新取得重開時回填資格;E2E U6 以私人筆記選取情境驗證(移除後重開 AI 視窗無選取標籤、原始 messages 不含該段)。
+  - **長章名 chip**(`ChatWindow.tsx`):Chip 新增 `shrinkText`——truncate 區只放來源段文字,操作按鈕(仍要附加/移除)放 `shrink-0` 區域;警示 chip 放寬到 max-w-[22rem]。E2E U7 建立長章名章節,斷言來源段與「仍要附加」分離且按鈕完整可見可點。
+  - **工具可讀範圍說明**(`ChatWindow.tsx`):改為「canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案」;E2E U5 斷言含 outline/、notes/ 與完整說明字樣。
+  - **送出紀錄 meta**(`ChatWindow.tsx`):記錄送出當下實際附加的選取(`selSent`),非視窗開啟時的 `sel`;E2E U2 以 PreviewContext 原始 messages 核對預設不送出/明確點「仍要附加」才送。
+  - **還原前磁碟/編輯器狀態**:U3 加還原前後比對與 before-restore 備份斷言。
+  - 破壞驗證五項均成立:(1) 移除 `onClearLastSel` → U6 兩項 FAIL;(2) Chip 移除 shrinkText 機制 → U7(separated:false)+U2 FAIL;(3) 說明改回舊文字 → U5 新斷言 FAIL;(4) `selection` 改回 `sel` → U2「預設不送出」FAIL;(5) `restore-file` 略過確認直接還原 → U3 確認區不出現中斷 FAIL。
+- 已知 E2E 測試碼注意事項:`add-chapter-0` 點擊後按鈕被輸入框取代,playwright 穩定性檢查會誤判 timeout,改用 `page.evaluate` 直擊;`rail-manuscript`/`rail-docs` 是雙態按鈕,重複點會收合側欄,需先條件判斷;`page.evaluate` 內不能用 playwright 專屬的 `:has-text` selector;`--fixture` 重建時會清 perkins.json 的 lastOpen,未重建 fixture 重跑會直接進編輯器導致書櫃情境 timeout。
+
 ## 2026-10-05 — Notion 匯入可逐頁分類
 
 完成 SPEC §16 第 2 項:同一資料夾裡的角色、地點、名詞可以分開歸類。

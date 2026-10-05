@@ -83,6 +83,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [chatOpen, setChatOpen] = useState(false);
     const [chatReq, setChatReq] = useState<ChatRequest | null>(null);
     const [selection, setSelection] = useState<Selection | null>(null);
+    // 最後一次的非空選取及其來源(§16 第 1 項 02):切章不清除;AI 視窗開啟時由 ChatWindow 判斷是否沿用
+    const [lastSel, setLastSel] = useState<{sel: Selection; from: string} | null>(null);
     const [remoteOk, setRemoteOk] = useState<Record<string, boolean>>({});
     const [pending, setPending] = useState(0);
     const [entity, setEntity] = useState<bible.Entity | null>(null);
@@ -270,6 +272,12 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         ask({selection: sel.text, question: quick?.question, mode: quick?.mode, nonce: 0});
     };
 
+    // AI 圓鈕開啟對話框時讀取編輯器當下的選取(若有)(§16 第 1 項 04)
+    const pickSelection = () => {
+        const s = editor.current?.selection();
+        if (s) setSelection(s);
+    };
+
     const copyTo = async (rel: string, platformID: string, name: string) => {
         try {
             if (rel === current) await save();
@@ -432,7 +440,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
-                            onAskAI={onAskAI} onSelect={setSelection}/>
+                            onAskAI={onAskAI} onSelect={sv => {
+                                setSelection(sv);
+                                // 選取時記回填候選;取消選取(null)時一併清除(review-round4 E1):
+                                // 已取消的選取不得在開啟 AI 視窗時復活
+                                if (sv && latest.current.current) setLastSel({sel: sv, from: latest.current.current});
+                                else if (!sv) setLastSel(null);
+                            }}/>
                 ) : (
                     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
                         <BookOpen className="h-10 w-10 opacity-40"/>
@@ -466,7 +480,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
                             beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
-                            pending={pending} notify={notify}/>
+                            pending={pending} notify={notify} onPickSelection={pickSelection}
+                            lastSel={lastSel}
+                            onClearLastSel={() => setLastSel(null)}/>
                 <CrashPoint area="chat"/>
             </AreaBoundary>
 
