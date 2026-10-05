@@ -26,9 +26,9 @@ const (
 var Dirs = []string{ManuscriptDir, CanonDir, OutlineDir, NotesDir, SummariesDir}
 
 var (
-	ErrNotProject  = errors.New("不是 Perkins 專案資料夾(找不到 perkins.json)")
+	ErrNotProject  = errors.New("不是 Perkins WritingSpace 專案資料夾(找不到 perkins.json)")
 	ErrBadPath     = errors.New("不允許的檔案路徑")
-	ErrProjectHere = errors.New("此資料夾已是 Perkins 專案")
+	ErrProjectHere = errors.New("此資料夾已是 Perkins WritingSpace 專案")
 )
 
 const (

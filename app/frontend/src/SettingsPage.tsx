@@ -111,7 +111,7 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                 </Field>
                 {remote && (
                     <p className="rounded-md bg-warning/10 p-2 text-xs text-warning">
-                        這個端點不在本機。使用時,附加的稿件與設定會傳到該服務;每次啟動 Perkins 後第一次送出前都會再確認一次。
+                        這個端點不在本機。使用時,附加的稿件與設定會傳到該服務;每次啟動 Perkins WritingSpace 後第一次送出前都會再確認一次。
                     </p>
                 )}
                 <Field label="模型">

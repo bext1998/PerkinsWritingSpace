@@ -272,3 +272,10 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **Notion 匯入**:圖片不匯入(只告知數量);頁面標題下方的「欄位: 值」屬性轉成條列;依資料夾名稱猜測預設類型(含「角色」「地點」等字樣),其餘預設匯入為筆記,作者可逐組修改。
 - **封面**:存在 `.perkins/cover.*`(上限 4MB),書櫃讀取專案內的封面;最近專案清單存在 `%APPDATA%\Perkins\settings.json`。
 - **技術**:Go 套件 `export` 改名為 `publish`(`export` 是 TypeScript 保留字,Wails 生成的綁定無法編譯);shadcn/ui 元件集中在 `components/ui/{button,basic,overlay}.tsx` 三個檔案,而不是一個元件一個檔。
+
+## 17. 品牌與命名(2026-10-05)
+
+- **應用程式顯示名稱**:`Perkins WritingSpace`。用於視窗標題(`app/main.go`)、`app/wails.json` 的 `info.productName`(決定 exe 檔案內容與工作列顯示)、`index.html` 與前端顯示應用程式名稱的文字。`info.productVersion` 為 `0.2.0`(對應第二階段規格 v0.2)。
+- **AI 助手名稱**:`Perkins Bot`。用於對話框標題與開啟按鈕的 title。泛指功能類別的「AI」字樣保留不改(例如「AI 模型」、「AI 一致性檢查」、「詢問 AI」與設定頁的說明文字)。
+- **圖示來源**:以作者 2026-09-30 選定的 `docs/perkins-icon-black-gold.png` 為原稿,產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(內含 16/24/32/48/64/128/256 各尺寸);側欄 logo 使用 128×128 縮小版 `app/frontend/src/assets/images/perkins-logo.png`。造型與主配色不變,細節見 `docs/BRAND_ICON.md`。
+- **刻意不改的內部識別**:`outputfilename`(維持 `perkins`,E2E 流程依賴 `perkins-dev.exe`)、Go module 與套件路徑 `perkins`、`%APPDATA%\Perkins` 設定目錄、專案內 `.perkins/` 與 `perkins.json`、keyring 服務名、`PERKINS_OPEN` 環境變數、`window.__perkins*` 開發鉤子。這些是磁碟與程式介面上的識別,改名會讓作者既有的設定、金鑰與作品讀不到。

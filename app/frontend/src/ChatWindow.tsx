@@ -323,7 +323,7 @@ export default function ChatWindow(props: Props) {
             {!open && (
                 <button data-testid="chat-fab"
                         className="fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-105"
-                        onClick={() => { onPickSelection?.(); setOpen(true); }} title="AI 助手">
+                        onClick={() => { onPickSelection?.(); setOpen(true); }} title="Perkins Bot">
                     <MessageCircle className="h-6 w-6"/>
                     {(pending > 0 || busy) && (
                         <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold text-white">
@@ -339,7 +339,7 @@ export default function ChatWindow(props: Props) {
                 {/* 標題列(可拖曳) */}
                 <div className="flex h-11 shrink-0 cursor-move select-none items-center gap-2 border-b px-3" onMouseDown={startDrag}>
                     <Bot className="h-4 w-4 text-primary"/>
-                    <span className="text-sm font-semibold">AI 助手</span>
+                    <span data-testid="chat-title" className="text-sm font-semibold">Perkins Bot</span>
                     {mode === 'report' && <Badge variant="warning" className="text-xs">檢查報告模式</Badge>}
                     <GripHorizontal className="mx-auto h-4 w-4 text-muted-foreground/40"/>
                     <Tip label="新對話" side="bottom">

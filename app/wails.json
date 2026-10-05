@@ -9,5 +9,9 @@
   "author": {
     "name": "tigerzhang",
     "email": "tiger42231@gmail.com"
+  },
+  "info": {
+    "productName": "Perkins WritingSpace",
+    "productVersion": "0.2.0"
   }
 }
