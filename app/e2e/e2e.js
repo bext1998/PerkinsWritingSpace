@@ -1612,6 +1612,100 @@ const maybe = async (name, fn, detail = '') => {
         check('標題欄 900×600 下仍在', await page.isVisible('[data-testid=titlebar]'));
         check('標題欄 900×600 下有側欄 logo 與編輯器', !!(await page.$('[data-testid=rail-logo]')) && !!(await page.$('.cm-content')));
         await shot('54-titlebar-min-900x600');
+
+        // ===== 窄寬度編輯區工具列(SPEC §17.1):900×600、側欄+資訊欄都開、長章名 =====
+        // 量測重點:工具列「內容右緣」(所有可見後代的最大 right)不得超過資訊欄左緣——
+        // 溢出的按鈕即使被 overflow-hidden 視覺裁掉,幾何上仍會超過,檢查才驗得到。
+        if (!(await page.$('[data-testid=chapter-row]'))) await page.click('[data-testid=rail-manuscript]');
+        await page.waitForSelector('[data-testid=chapter-row]');
+        if (!(await page.$('[data-testid=inspector]'))) await page.click('[data-testid=toggle-inspector]');
+        await page.waitForSelector('[data-testid=inspector]');
+        await page.click('[data-testid=chapter-row]:has-text("第十二章")');
+        await page.waitForSelector('.cm-content');
+        await page.waitForFunction(() =>
+            (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第十二章森林深處'),
+            null, {timeout: 10000});
+        await page.waitForTimeout(300);
+        const measureToolbar = () => page.evaluate(() => {
+            const tb = document.querySelector('[data-testid=editor-toolbar]');
+            if (!tb) return {missing: 'editor-toolbar'};
+            const insp = document.querySelector('[data-testid=inspector]');
+            const badge = document.querySelector('[data-testid=status-badge]');
+            const crumbs = document.querySelector('[data-testid=crumbs]');
+            const crumbSpans = crumbs ? [...crumbs.querySelectorAll('span.truncate')] : [];
+            const last = crumbSpans[crumbSpans.length - 1] || null;
+            const tbR = tb.getBoundingClientRect();
+            const inspR = insp ? insp.getBoundingClientRect() : null;
+            let contentRight = -Infinity;
+            for (const el of tb.querySelectorAll('*')) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) contentRight = Math.max(contentRight, r.right);
+            }
+            const btn = sel => {
+                const el = tb.querySelector(sel);
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return {w: r.width, right: r.right, aria: el.getAttribute('aria-label'), title: el.getAttribute('title')};
+            };
+            const lr = last ? last.getBoundingClientRect() : null;
+            return {
+                tbH: tbR.height, tbRight: tbR.right, contentRight,
+                inspLeft: inspR ? inspR.left : null,
+                badgeH: badge ? badge.getBoundingClientRect().height : null,
+                crumb: last ? {text: last.textContent, w: last.clientWidth, scrollW: last.scrollWidth, h: lr.height} : null,
+                text: (tb.innerText || '').replace(/\s+/g, ' '),
+                summary: btn('button[aria-label="章節摘要"]'),
+                copy: btn('[data-testid=copy-platform]'),
+                versions: btn('[data-testid=open-versions]'),
+                save: btn('[data-testid=save-button]'),
+                toggle: btn('[data-testid=toggle-inspector]'),
+            };
+        });
+
+        const m900 = await measureToolbar();
+        check('工具列 900×600 高度維持 48(不換行)', m900.tbH === 48, `tbH=${m900.tbH}`);
+        check('工具列 900×600 內容不溢出到資訊欄',
+            !!m900.inspLeft && m900.contentRight <= m900.inspLeft + 1,
+            JSON.stringify({contentRight: m900.contentRight, inspLeft: m900.inspLeft, tbRight: m900.tbRight}));
+        check('工具列 900×600 狀態徽章單行(未被擠成直排)',
+            !!m900.badgeH && m900.badgeH <= 30, `badgeH=${m900.badgeH}`);
+        check('工具列 900×600 麵包屑省略號截斷且看得到章名開頭',
+            !!m900.crumb && m900.crumb.text.includes('第十二章') && m900.crumb.w >= 40
+                && m900.crumb.scrollW > m900.crumb.w && m900.crumb.h <= 22,
+            JSON.stringify(m900.crumb));
+        check('工具列 900×600 次要按鈕退化隱藏(摘要/複製到平台/版本不顯示)',
+            !/摘要|複製到平台|版本/.test(m900.text), m900.text);
+        check('工具列 900×600 「儲存」與資訊欄開關仍可見且在工具列內',
+            !!m900.save && !!m900.toggle && m900.save.w > 0 && m900.toggle.w > 0
+                && m900.save.right <= m900.tbRight + 1 && m900.toggle.right <= m900.tbRight + 1,
+            JSON.stringify({save: m900.save, toggle: m900.toggle}));
+        await shot('60-toolbar-900x600');
+
+        // 中等寬度(1100×800,主編輯區約 488px):按鈕退化成只剩圖示,文字收起但保留 title/aria-label
+        await page.setViewportSize({width: 1100, height: 800});
+        await page.waitForTimeout(400);
+        const mMid = await measureToolbar();
+        check('工具列 中等寬度退化成只剩圖示(文字收起,按鈕保留 aria-label 與 title)',
+            !!mMid.summary && mMid.summary.w > 0 && mMid.summary.aria === '章節摘要' && !!mMid.summary.title
+                && !!mMid.versions && mMid.versions.aria === '版本' && !!mMid.versions.title
+                && !!mMid.copy && mMid.copy.aria === '複製到平台' && !!mMid.copy.title
+                && !/摘要|複製到平台|版本/.test(mMid.text),
+            JSON.stringify({text: mMid.text, summary: mMid.summary, versions: mMid.versions}));
+        check('工具列 中等寬度也不溢出資訊欄',
+            !!mMid.inspLeft && mMid.contentRight <= mMid.inspLeft + 1,
+            JSON.stringify({contentRight: mMid.contentRight, inspLeft: mMid.inspLeft}));
+
+        // 1280×800(預設視窗):恢復完整文字標籤,一樣不溢出
+        await page.setViewportSize({width: 1280, height: 800});
+        await page.waitForTimeout(400);
+        const m1280 = await measureToolbar();
+        check('工具列 1280×800 顯示完整文字標籤',
+            /摘要/.test(m1280.text) && /複製到平台/.test(m1280.text) && /版本/.test(m1280.text),
+            m1280.text);
+        check('工具列 1280×800 也不溢出資訊欄',
+            !!m1280.inspLeft && m1280.contentRight <= m1280.inspLeft + 1,
+            JSON.stringify({contentRight: m1280.contentRight, inspLeft: m1280.inspLeft}));
+        await shot('61-toolbar-1280x800');
         await page.setViewportSize({width: 1440, height: 900});
     } catch (e) {
         check('執行中斷', false, e.message);
