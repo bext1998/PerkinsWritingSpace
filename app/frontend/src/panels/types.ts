@@ -31,21 +31,40 @@ let sharedCats: string[] = BUILTIN_TYPES;
 let sharedError: string | null = null;
 let loaded = false;
 let loading = false;
+let projectId: string | null = null;
+let generation = 0; // 作品世代:切作品後忽略上一作品的在途結果(第二輪返工 #2)
 const listeners = new Set<() => void>();
 
 async function refreshCategories() {
     if (loading) return;
+    const gen = generation;
     loading = true;
     try {
-        sharedCats = await EntityTypes();
+        const cats = await EntityTypes();
+        if (gen !== generation) return; // 上一作品的在途結果,忽略
+        sharedCats = cats;
         sharedError = null;
         loaded = true;
     } catch (e) {
+        if (gen !== generation) return;
         sharedError = errText(e); // 清單損毀:保留既有清單並顯示錯誤,不得覆寫原檔(SPEC §12.2)
     } finally {
         loading = false;
-        listeners.forEach(l => l());
+        if (gen === generation) listeners.forEach(l => l());
     }
+}
+
+/** 切換作品時綁定/清空分類快照(SPEC §12.2):同路徑不重複處理;null/空字串 = 未開作品。 */
+export function setCategoriesProject(id: string | null) {
+    if (id === projectId) return;
+    projectId = id;
+    generation++;
+    sharedCats = BUILTIN_TYPES;
+    sharedError = null;
+    loaded = false;
+    loading = false; // 舊作品可能還有在途查詢:放行新查詢,舊結果由世代計數忽略
+    listeners.forEach(l => l());
+    if (id) void refreshCategories();
 }
 
 /** 取得分類清單(內建+自訂)。回傳 [清單, 重新讀取, 錯誤];共用狀態,新增/刪除後全部同步。 */

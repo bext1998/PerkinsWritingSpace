@@ -1,5 +1,12 @@
 # PROGRESS.md
 
+## 2026-10-06 — PR #17 第二輪返工:刪除在途保護與分類快照綁定作品
+
+- **#1 刪除在途可中斷(Major)**:`BiblePanel` 管理對話框加 `deleting` 狀態——在途時 `onOpenChange` 擋住 Esc/外點/關閉鈕(對話框是 modal,關不掉就擋住編輯與切檔)、確認鈕停用並顯示「刪除中…」;`Workspace.deleteCategory` 套用重讀內容前確認目前開啟的檔案仍是該路徑,不是就不套用;刪除成功但重讀失敗→**關閉目前檔案**(回到未選檔狀態)並拋錯提示作者重新開啟,舊 buffer 不得再存回已刪除的 type(此時無未存內容,刪除前已存檔)。
+- **#2 分類快照跨作品沿用(Major)**:`panels/types.ts` 共用狀態綁定作品——新增 `setCategoriesProject(路徑)`,切作品時清空清單/錯誤/載入狀態並重查,`generation` 世代計數忽略上一作品的在途結果;`App.tsx` 在 tree 變化時以新綁定 `ProjectPath()`(作品路徑)同步綁定,同作品的 tree 刷新(同路徑)不重置。附帶:`notion.Apply` 對不認得的去處不再靜默 `continue`,列入略過報告並附原因(新 Go 測試)。
+- **驗證**:`go test -count=1 ./...` 全過(notion 新測試:未知去處入報告);`npm run build` 通過;E2E(E2E_SKIP_AI=1)新增 4 項回歸:回歸#5(延遲 DeleteCategory 期間按 Esc/外點對話框仍在、確認鈕停用顯示刪除中)、回歸#6(覆寫 ReadFile 失敗→檔案關閉、磁碟 type 其他、提示重新開啟)、回歸#7×2(A→書櫃→B 後管理清單與 EntityHeader 只顯示 B 的分類;B 以 fs 建第二專案 + ListRecent 覆寫開卡,回程還原並重開 A)。**破壞驗證**:修補缺席先跑→4 項 FAIL(基線不受影響);完成後四項修補同時拿掉(對話框不擋關閉、不關檔、快取不綁作品、Notion 靜默略過)→4 項再度 FAIL(含 R6 診斷 `closed=false`、toast 無「重新開啟」)與 Go T-notion FAIL;還原後最終跑 **283/284** 全綠(除下述 flake)。
+- **破壞驗證插曲如實記錄**:備份指令與破壞 edit 誤放在同一個平行工具區塊,備份到的是「已破壞」檔案,sha256 校驗因此自我循環(比對的是破壞檔)。發現後以四段精確反向 edit 還原(無 TEMP-BREAK 殘留、`go test`/`npm run build`/最終 E2E 全綠確認還原正確)。教訓:備份與破壞必須分開執行、校驗基線要在破壞前單獨完成。
+- **已知 flake 如實記錄**:「複製到平台顯示結果」(既有檢查,讀到上一個「摘要已儲存」toast)本輪 6 次跑了 5 次失敗,即 PR #12 已記錄的時序問題;PR #18 已修正,本分支依指示不修。其中 green3 輪曾達 **284/284**。
 ## 2026-10-06 — PR #17 返工:Hemingway 審查四項修正
 
 - **#1 刪除後編輯器寫回舊 type(Major)**:刪除改由 Workspace 協調(`Workspace.tsx` `deleteCategory`):按確認刪除先 `await save()`(序列化存檔迴圈,保存未存內容;失敗即中止、不動檔案),存檔成功才呼叫 `DeleteCategory`(快照因此含作者最新內容);完成後若目前開啟的檔案在受影響清單(`DeleteCategory` 改回傳路徑)內就從磁碟重載 text/latest/dirty 並 `reloadKey+1`,之後存檔不會把舊 type 寫回;確認對話框開著時編輯器被擋,未另加鎖。

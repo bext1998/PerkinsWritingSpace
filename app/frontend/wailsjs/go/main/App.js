@@ -170,6 +170,10 @@ export function PreviewExport(arg1, arg2) {
   return window['go']['main']['App']['PreviewExport'](arg1, arg2);
 }
 
+export function ProjectPath() {
+  return window['go']['main']['App']['ProjectPath']();
+}
+
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }

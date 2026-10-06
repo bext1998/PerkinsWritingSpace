@@ -268,3 +268,25 @@ func TestApplyWithCustomCategoryTarget(t *testing.T) {
 		t.Fatalf("匯入 type 應為自訂分類「組織」, got %q", e.Type)
 	}
 }
+
+// 意圖(第二輪 #2 附帶):target 不在可匯入分類清單時不得靜默 continue,
+// 要列入略過報告並附原因,作者才知道那頁為何沒匯入。
+func TestApplyReportsUnknownTargetInSkipped(t *testing.T) {
+	p, _ := project.Create(t.TempDir(), "n")
+	res, err := Apply(p, fixture(t), map[string]string{"角色": "不存在的分類", "": TargetSkip}, nil, bible.Types)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Created) != 0 {
+		t.Fatalf("不認得的去處不應匯入任何檔案: %v", res.Created)
+	}
+	hit := false
+	for _, s := range res.Skipped {
+		if strings.Contains(s, "不存在的分類") && strings.Contains(s, "略過") {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Fatalf("不認得的去處應列入略過報告並附原因: %v", res.Skipped)
+	}
+}

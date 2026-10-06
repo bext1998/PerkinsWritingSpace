@@ -203,16 +203,28 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         await save();
         const affected = await DeleteCategory(name);
         const cur = latest.current.current;
-        if (cur && affected.includes(cur)) {
-            const content = await ReadFile(cur);
-            loaded.current = cur;
-            setText(content);
-            latest.current = {...latest.current, text: content, dirty: false};
-            setDirty(false);
-            editVersion.current++;
-            setReloadKey(k => k + 1);
-        }
         refreshIndex();
+        if (!cur || !affected.includes(cur)) return;
+        let content: string;
+        try {
+            content = await ReadFile(cur);
+        } catch (e) {
+            // 刪除成功但重讀失敗:關掉目前檔案(回到未選檔狀態),舊 buffer 不得再存回已刪除的
+            // type(SPEC §12.2 第二輪);此時沒有未存內容(刪除前已存檔),提示作者重新開啟。
+            loaded.current = null;
+            setCurrent(null);
+            setText('');
+            setDirty(false);
+            latest.current = {...latest.current, current: null, text: '', dirty: false};
+            throw new Error(`「${cur}」已改歸其他,但重新讀取失敗:${errText(e)}。請重新開啟該檔案繼續編輯。`);
+        }
+        if (latest.current.current !== cur) return; // 期間已切到別的檔案:不套用重讀內容
+        loaded.current = cur;
+        setText(content);
+        latest.current = {...latest.current, text: content, dirty: false};
+        setDirty(false);
+        editVersion.current++;
+        setReloadKey(k => k + 1);
     }, [save, refreshIndex]);
 
     // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。

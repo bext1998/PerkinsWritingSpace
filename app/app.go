@@ -476,6 +476,15 @@ func (a *App) categoriesPath() string {
 	return filepath.Join(a.proj.Root, ".perkins", "categories.json")
 }
 
+// ProjectPath 回傳目前作品路徑(未開作品時為空字串)。前端用它識別分類快照的作品歸屬,
+// 切作品時清空重查(SPEC §12.2)。
+func (a *App) ProjectPath() string {
+	if a.proj == nil {
+		return ""
+	}
+	return a.proj.Root
+}
+
 // loadCustomCategories 讀自訂分類。只有「檔案不存在」才是空清單;讀取或解析失敗
 // 回傳錯誤,不得把損毀清單冒充空清單後覆寫原檔(SPEC §12.2)。
 func (a *App) loadCustomCategories() ([]string, error) {

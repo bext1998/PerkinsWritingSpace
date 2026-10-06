@@ -25,6 +25,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
     const [catName, setCatName] = useState('');
     const [catErr, setCatErr] = useState('');
     const [confirmDel, setConfirmDel] = useState<{name: string; usage: number} | null>(null);
+    const [deleting, setDeleting] = useState(false); // 刪除在途(SPEC §12.2 第二輪):對話框不可關閉、確認鈕停用
 
     const groups = useMemo(() => {
         const ents = index?.entities ?? [];
@@ -71,7 +72,8 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
     };
 
     const doDelete = async () => {
-        if (!confirmDel) return;
+        if (!confirmDel || deleting) return;
+        setDeleting(true);
         try {
             await deleteCategory(confirmDel.name); // Workspace 協調:先存檔,再快照+改歸其他+重載
             setConfirmDel(null);
@@ -82,6 +84,8 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
             reloadCats();
             refreshIndex();
             fail(e);
+        } finally {
+            setDeleting(false);
         }
     };
 
@@ -157,7 +161,11 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
             </Dialog>
 
             {/* 管理分類(SPEC §12.2):內建不可刪;刪除有設定檔的分類先確認 → 快照 → 改歸其他 */}
-            <Dialog open={managing} onOpenChange={o => { setManaging(o); if (!o) { setCatErr(''); setConfirmDel(null); } }}>
+            <Dialog open={managing} onOpenChange={o => {
+                if (!o && deleting) return; // 刪除在途中:Esc/外點/關閉鈕都無效(對話框是 modal,擋住編輯與切檔)
+                setManaging(o);
+                if (!o) { setCatErr(''); setConfirmDel(null); }
+            }}>
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>管理分類</DialogTitle>
@@ -196,7 +204,10 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                             </p>
                             <div className="mt-2 flex gap-2">
                                 <Button size="sm" variant="ghost" onClick={() => setConfirmDel(null)}>取消</Button>
-                                <Button size="sm" variant="destructive" data-testid="category-confirm-go" onClick={doDelete}>確認刪除</Button>
+                                <Button size="sm" variant="destructive" data-testid="category-confirm-go"
+                                        disabled={deleting} onClick={doDelete}>
+                                    {deleting ? '刪除中…' : '確認刪除'}
+                                </Button>
                             </div>
                         </div>
                     )}

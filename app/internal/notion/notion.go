@@ -279,6 +279,10 @@ func Apply(p *project.Project, src string, choices map[string]string, pages map[
 			}
 			dir, typ, ok := targetDir(target, types)
 			if !ok {
+				// 不認得的去處不得靜默跳過:列入略過報告並附原因(第二輪返工)
+				if target != TargetSkip && target != "" {
+					res.Skipped = append(res.Skipped, f.Src+" → 去處「"+target+"」不在可匯入的分類清單,已略過")
+				}
 				continue
 			}
 			if f.Name == "" {

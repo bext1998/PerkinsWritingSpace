@@ -95,6 +95,8 @@ export function PreviewContext(arg1:agent.AskParams):Promise<agent.Preview>;
 
 export function PreviewExport(arg1:string,arg2:publish.Rules):Promise<string>;
 
+export function ProjectPath():Promise<string>;
+
 export function ReadFile(arg1:string):Promise<string>;
 
 export function RejectProposal(arg1:string):Promise<proposal.Proposal>;
