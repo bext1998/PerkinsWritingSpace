@@ -116,6 +116,32 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const iconOnly = tbW < 588;
     const tight = tbW < 408;
 
+    // 半螢幕並排(SPEC §16 第 7 項):視窗寬 ≤960px(1920×1080 縮放 100% 的半邊)時,
+    // 側欄(272)與資訊欄(280)不得同時佔位——兩者加上圖示列 612px,640 寬同時展開
+    // 主編輯區只剩 28px,無法寫作。開一個就自動收另一個;視窗縮窄時若兩個都開著,
+    // 收掉資訊欄(側欄是主要導覽,先保住);變寬後不自動重開,不強迫改變作者的選擇。
+    // 作者手動開關一律有效:窄時手動開資訊欄會自動收側欄,反之亦然。
+    const [vpW, setVpW] = useState(() => window.innerWidth);
+    const prevVpW = useRef<number | null>(null);
+    useEffect(() => {
+        const onResize = () => setVpW(window.innerWidth);
+        window.addEventListener('resize', onResize);
+        return () => window.removeEventListener('resize', onResize);
+    }, []);
+    useEffect(() => {
+        const prev = prevVpW.current;
+        prevVpW.current = vpW;
+        // 首次 render 就處於窄寬度(prev 為 null)或由寬變窄(prev > 960)時,兩個都開著就收資訊欄
+        if (vpW <= 960 && (prev === null || prev > 960) && panel && inspector) setInspector(false);
+    }, [vpW]); // 只在視窗寬度變化時跑;panel/inspector 的互斥由下面的開關處理器負責
+
+    const openSidebar = useCallback((id: Panel) => {
+        // 不把 setState 包進另一個 setState 的 updater(不保證執行):直接依當下狀態判斷
+        if (panel === id) { setPanel(null); return; }
+        if (window.innerWidth <= 960) setInspector(false); // 窄時開側欄自動收資訊欄
+        setPanel(id);
+    }, [panel]);
+
     const notify = useCallback((t: Toast) => setToast(t), []);
     const fail = useCallback((e: unknown) => setToast({text: errText(e), kind: 'error'}), []);
 
@@ -376,7 +402,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             <button data-testid={`rail-${id}`}
                     className={cn('relative flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
                         panel === id && 'bg-accent text-primary')}
-                    onClick={() => setPanel(p => p === id ? null : id)}>
+                    onClick={() => openSidebar(id)}>
                 {panel === id && <span className="absolute -left-[7px] h-6 w-[3px] rounded-r bg-primary"/>}
                 <Icon className="h-5 w-5"/>
             </button>
@@ -536,7 +562,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             <Tip label={inspector ? '收合資訊欄' : '展開資訊欄'} side="bottom">
                                 <Button variant="ghost" size="iconSm" data-testid="toggle-inspector" className="shrink-0"
                                         aria-label={inspector ? '收合資訊欄' : '展開資訊欄'}
-                                        onClick={() => setInspector(v => !v)}>
+                                        onClick={() => {
+                                            if (!inspector && window.innerWidth <= 960) setPanel(null); // 窄時開資訊欄自動收側欄
+                                            setInspector(v => !v);
+                                        }}>
                                     {inspector ? <PanelRightClose/> : <PanelRightOpen/>}
                                 </Button>
                             </Tip>

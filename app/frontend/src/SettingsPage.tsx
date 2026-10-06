@@ -32,11 +32,12 @@ const SAMPLE = `# 第一章 出發
 他們打開了軟體,出發了。`;
 
 function Field({label, hint, children}: {label: string; hint?: string; children: React.ReactNode}) {
+    // min-w-0 + minmax(0,1fr):640 寬(半螢幕)時 Input 的固有最小寬度不得把 1fr 欄撐出水平捲軸
     return (
-        <div className="grid gap-1.5">
-            <Label>{label}</Label>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
+            <Label className="min-w-0">{label}</Label>
             {children}
-            {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+            {hint && <p className="min-w-0 text-xs text-muted-foreground">{hint}</p>}
         </div>
     );
 }
@@ -93,7 +94,9 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
     const view = cfg.profiles.find(p => p.id === form.id);
 
     return (
-        <div className="grid grid-cols-[220px_1fr] gap-6">
+        // 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬;
+        // 否則 220px 清單 + 表單並排會把表單壓到約 148px,輸入框剩 24px(返回工#1,2026-10-07)
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="space-y-1">
                 {cfg.profiles.map(p => (
                     <button key={p.id} onClick={() => setSelId(p.id)}
@@ -105,7 +108,7 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                 ))}
                 <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增端點</Button>
             </div>
-            <div className="grid max-w-xl gap-4">
+            <div className="grid grid-cols-[minmax(0,1fr)] max-w-xl gap-4">
                 <Field label="名稱"><Input value={form.name} onChange={e => setForm({...form, name: e.target.value})}/></Field>
                 <Field label="端點網址" hint="OpenAI 相容的 /v1 位址。LM Studio 預設為 http://localhost:1234/v1。">
                     <Input value={form.baseUrl} onChange={e => setForm({...form, baseUrl: e.target.value})} data-testid="profile-url"/>
@@ -116,8 +119,8 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                     </p>
                 )}
                 <Field label="模型">
-                    <div className="flex gap-2">
-                        <Input list="model-list" value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="模型 id"/>
+                    <div className="flex flex-wrap gap-2">
+                        <Input list="model-list" className="min-w-0 flex-1" value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="模型 id"/>
                         <datalist id="model-list">{models.map(m => <option key={m} value={m}/>)}</datalist>
                         <Button variant="outline" onClick={load}><RefreshCw/>載入清單</Button>
                     </div>
@@ -137,7 +140,7 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                 </Field>
                 {msg && <p className="text-xs text-success">{msg}</p>}
                 {error && <p className="text-xs text-destructive">{error}</p>}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <Button onClick={() => save(key ? key : null)} data-testid="save-profile"><Save/>儲存</Button>
                     <Button variant="ghost" className="text-destructive" disabled={cfg.profiles.length <= 1} onClick={remove}><Trash2/>刪除端點</Button>
                 </div>
@@ -179,7 +182,8 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
     };
 
     return (
-        <div className="grid grid-cols-[220px_1fr] gap-6">
+        // 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬(同 ModelsTab)
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="space-y-1">
                 {list.map((x, i) => (
                     <button key={x.id} onClick={() => setSel(i)}
@@ -191,7 +195,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
                 <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增平台</Button>
             </div>
             {p && (
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                     <div className="grid content-start gap-4">
                         <p className="rounded-md bg-muted p-2 text-xs leading-relaxed text-muted-foreground">
                             內建的平台規則是推測值,沒有實際貼上驗證過。實際發文後如果版面不對,請在這裡調整,確認無誤後打開「已驗證」。
@@ -225,7 +229,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
                             <Switch checked={p.verified} onCheckedChange={v => update({verified: v})}/></div>
                         {msg && <p className="text-xs text-success">{msg}</p>}
                         {error && <p className="text-xs text-destructive">{error}</p>}
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                             <Button onClick={save}><Save/>儲存</Button>
                             <Button variant="ghost" onClick={reset}><RotateCcw/>恢復內建預設</Button>
                             <Button variant="ghost" className="text-destructive" onClick={() => { setList(l => l.filter((_, i) => i !== sel)); setSel(0); }}>

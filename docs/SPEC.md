@@ -295,15 +295,21 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 
 ### 17.1 視窗與關閉(2026-10-05)
 
-- **無原生標題欄**:`app/main.go` 設 `Frameless: true`(保留 Wails 預設的 frameless decorations);預設視窗 1280×800,最小尺寸 900×600。`app/wails.json` 的 `outputfilename` 維持 `perkins`(產出的執行檔是 `perkins.exe`;`wails dev` 用 `perkins-dev.exe`),不隨顯示名稱改變。視窗邊緣拖曳縮放仍可用(見下方取捨)。
-- **預設尺寸與啟動時最大化**:`app/main.go` 的 `Width: 1280, Height: 800`(`MinWidth/MinHeight` 仍 900×600)。`OnStartup` 讀 Wails runtime 的螢幕資訊(`runtime.ScreenGetAll`):主螢幕(`IsPrimary`,沒有任何主螢幕標記時退回第一個)的邏輯尺寸放不下 1280×800 就 `runtime.WindowMaximise`;螢幕資訊讀不到或為空就維持預設尺寸,不失敗啟動。**已知限制**:Wails v2.12 的 `Screen` 只有螢幕尺寸(`Size`/`PhysicalSize`)沒有工作區(工作列)欄位,判斷以主螢幕整體尺寸為準,工作列占用的高度未計入;常見螢幕高度(768/900/1080)的判斷結果與用工作區判斷相同。
-- **窄寬度工具列驗收(900×600)**:側欄(272px)與資訊欄(280px)都展開時,主編輯區只剩約 288px。此時編輯區頂端工具列(`Workspace.tsx` 的 `h-12` 列,`data-testid=editor-toolbar`)必須:
-  - 不換行、不溢出到資訊欄(工具列內容右緣 ≤ 資訊欄左緣);
+- **無原生標題欄**:`app/main.go` 設 `Frameless: true`(保留 Wails 預設的 frameless decorations);預設視窗 1280×800,最小尺寸 640×600(半螢幕並排,SPEC §16 第 7 項:640 是 1920×1080 縮放 150% 的半邊,最小高度維持 600)。`app/wails.json` 的 `outputfilename` 維持 `perkins`(產出的執行檔是 `perkins.exe`;`wails dev` 用 `perkins-dev.exe`),不隨顯示名稱改變。視窗邊緣拖曳縮放仍可用(見下方取捨)。
+- **預設尺寸與啟動時最大化**:`app/main.go` 的 `Width: 1280, Height: 800`(`MinWidth` 640、`MinHeight` 600)。`OnStartup` 讀 Wails runtime 的螢幕資訊(`runtime.ScreenGetAll`):主螢幕(`IsPrimary`,沒有任何主螢幕標記時退回第一個)的邏輯尺寸放不下 1280×800 就 `runtime.WindowMaximise`;螢幕資訊讀不到或為空就維持預設尺寸,不失敗啟動。**已知限制**:Wails v2.12 的 `Screen` 只有螢幕尺寸(`Size`/`PhysicalSize`)沒有工作區(工作列)欄位,判斷以主螢幕整體尺寸為準,工作列占用的高度未計入;常見螢幕高度(768/900/1080)的判斷結果與用工作區判斷相同。
+- **窄寬度工具列驗收(640×672,半螢幕並排 §16 第 7 項)**:最小寬度降到 640 後,≤960 時側欄與資訊欄互斥(見下),此情境下的最窄常態是「側欄展開、資訊欄自動收起」:640 寬時圖示列 60+側欄 272=332,主編輯區約 308px(工具列內容約 276px,落入最窄段)。此時編輯區頂端工具列(`Workspace.tsx` 的 `h-12` 列,`data-testid=editor-toolbar`)必須:
+  - 不換行、不溢出到 main 右緣(工具列內容右緣 ≤ main 右緣;若資訊欄展開則 ≤ 資訊欄左緣);
   - 按鈕依可用寬度退化:寬度不足先只留圖示(文字收起,保留 `title` 與 `aria-label`),更窄時把「摘要」「複製到平台」「版本」收進「更多」(⋯)下拉選單(平台清單以展開項目呈現,`data-testid=toolbar-more`);**窄寬度不得讓任何工具列功能無法觸及**,列上保留「儲存」、資訊欄開關與狀態徽章;
   - 狀態徽章(草稿/完成)維持單行,不被擠成直排;
   - 麵包屑以省略號截斷,但至少看得到章名開頭;
   - **底部狀態列(footer,`data-testid=statusbar`)同樣不換行、每一項不超出 main 右緣**:空間不足時模型名(`AI:…`)以省略號截斷,最窄段省略「本卷」「全書」字數項(「本章」與儲存狀態必留)。
-  寬度判斷用工具列自身的 `ResizeObserver`(Tailwind 3.4 未裝 container-queries,不為此加依賴);1280×800、主編輯區約 668px 時恢復完整文字標籤。
+  寬度判斷用工具列自身的 `ResizeObserver`(Tailwind 3.4 未裝 container-queries,不為此加依賴);1280×800、主編輯區約 668px 時恢復完整文字標籤;900×600(側欄開、資訊欄收)主編輯區約 568px,落圖示段。
+- **半螢幕並排的側欄/資訊欄互斥(2026-10-07,SPEC §16 第 7 項)**:最小寬度降到 640 後,圖示列(60)+側欄(272)+資訊欄(280)=612px,640 寬同時展開主編輯區只剩 28px,無法寫作。門檻訂為**視窗寬 ≤960px**(1920×1080 縮放 100% 的半邊,也是驗收尺寸上限):此範圍內側欄與資訊欄不得同時佔位。行為:
+  - 開一個就自動收另一個:窄寬度下開側欄會自動收資訊欄,反之亦然;
+  - 視窗縮窄時若兩個都開著,收掉資訊欄(側欄是主要導覽,先保住);
+  - 視窗變寬後不自動重開,不強迫改變作者的選擇;作者手動開關一律有效。
+  選 960 為門檻的理由:驗收尺寸中最大的是 960(1920×1080 縮放 100% 的半邊);≤960 時兩欄同開主編輯區最多只剩 348px(960),640 時只剩 28px,低於可用寫作寬度;960 以上不限制(1280×800 兩欄同開主編輯區約 668px,是既有 900×600 退化驗收的延伸情境)。互斥只看視窗寬度(`window.innerWidth` + `resize` 事件),與 900×600 工具列退化(看工具列自身寬度)獨立運作。
+- **設定頁窄寬度(640)**:「AI 模型」「平台輸出」的清單欄(220px)與表單在 lg(1024px)以下改上下堆疊(清單在上、表單滿寬)——三欄並排會把表單壓到約 148px、模型輸入框剩 24px,無水平捲軸但不可用(2026-10-07 返工)。表單控制項(input、下拉選單觸發器)可用寬度不得低於 200px;`Input`/`Textarea` 加 `min-w-0`、grid 欄一律 `minmax(0,1fr)`、按鈕列 `flex-wrap`,Input 的固有最小寬度不得把內容區撐出水平捲軸;左側導覽 200px 維持固定寬度(640 寬時內容區約 392px,不需收成圖示)。
 - **自畫標題欄**(`app/frontend/src/components/TitleBar.tsx`,高度 32px,疊在所有對話框之上):
   - 左側顯示 `Perkins WritingSpace`;有開作品時顯示「作品名 — Perkins WritingSpace」。目前畫面看不見側欄 logo 時(書櫃、設定頁、錯誤畫面)左側加 20px 小 logo;作品編輯畫面已有側欄 logo,標題欄不重複放。是不是看得到側欄 logo 由外殼狀態(`lib/shellState.ts`)決定,不是只看「有沒有開作品」。
   - 右側為最小化、最大化/還原、關閉三顆按鈕(各約 46×32);關閉鈕滑過變紅底白字;最大化/還原圖示依 `WindowIsMaximised` 與 `resize` 事件切換。

@@ -1347,6 +1347,12 @@ const maybe = async (name, fn, detail = '') => {
                 return {labelRight: right, pagesLeft: th.left};
             });
             check('Notion 長資料夾名稱不侵入「頁數」欄', lay.labelRight <= lay.pagesLeft, JSON.stringify(lay));
+            // 半螢幕(640 寬,SPEC §16 第 7 項):匯入表格不產生水平捲軸
+            await page.setViewportSize({width: 640, height: 672});
+            check('Notion 640×672 匯入表格無水平溢出', await page.evaluate(() => {
+                const c = document.querySelector('[data-testid=settings-content]');
+                return !!c && c.scrollWidth <= c.clientWidth + 1;
+            }));
             await page.setViewportSize({width: 1440, height: 900});
         }
         // 三頁分別設:艾莉絲=跟隨資料夾(人物→角色)、王都=地點、草稿=略過
@@ -1545,7 +1551,69 @@ const maybe = async (name, fn, detail = '') => {
             await shot('74-settings-platforms-900');
         }
 
-        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁
+        // ===== 設定頁 640×672(半螢幕,SPEC §16 第 7 項 (c) + 返工):堆疊版面 =====
+        // 三欄並排(導覽+清單+表單)會把表單壓到約 148px、模型輸入框剩 24px——
+        // 無水平捲軸 ≠ 可用;lg 以下清單與表單必須上下堆疊,表單控制項可用寬度 ≥ 200px
+        await page.setViewportSize({width: 640, height: 672});
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=tab-models]');
+        await waitSel('[data-testid=profile-url]');
+        await page.waitForTimeout(300);
+        const stacked640 = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const url = document.querySelector('[data-testid=profile-url]');
+            // 可見的 input 與 select 觸發器(排除 Switch 之類的小控制項)
+            const controls = [...c.querySelectorAll('input, button[role=combobox]')]
+                .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+                .map(el => { const r = el.getBoundingClientRect(); return {w: Math.round(r.width), t: (el.getAttribute('data-testid') || el.tagName)}; });
+            // 堆疊驗證:找到含 lg:grid-cols 的外層 grid(清單+表單容器),lg 以下必須單欄(上下堆疊);
+            // 注意 url.closest('div.grid') 會抓到 Field 的內層 grid(永遠 1 欄),必須往上找 lg:grid-cols
+            let outer = url.parentElement;
+            while (outer && !(outer.className || '').includes('lg:grid-cols')) outer = outer.parentElement;
+            const cols = outer ? getComputedStyle(outer).gridTemplateColumns.split(' ').length : 0;
+            return {sw: c.scrollWidth, cw: c.clientWidth, urlW: Math.round(url.getBoundingClientRect().width),
+                    urlClientW: url.clientWidth, minControl: Math.min(...controls.map(x => x.w)), controls,
+                    gridCols: cols};
+        });
+        check('設定頁 640×672 模型輸入框可用寬度 ≥ 200', stacked640.urlClientW >= 200, JSON.stringify(stacked640.urlClientW));
+        check('設定頁 640×672 所有表單控制項可用寬度 ≥ 200', stacked640.minControl >= 200,
+            JSON.stringify(stacked640.controls));
+        check('設定頁 640×672 清單與表單上下堆疊(非三欄並排)', stacked640.gridCols === 1, `gridCols=${stacked640.gridCols}`);
+        check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
+        await shot('76-settings-models-640');
+        await page.click('[data-testid=tab-platforms]');
+        await waitSel('[data-testid=platform-preview]');
+        await page.waitForTimeout(300);
+        const stacked640p = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const controls = [...c.querySelectorAll('input, button[role=combobox]')]
+                .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+                .map(el => Math.round(el.getBoundingClientRect().width));
+            // 下拉選單的值不被截斷到看不見:比較值文字自身 scrollWidth 與 clientWidth。
+            // (返工:Hemingway — 此檢查原本停在 AI 模型頁,那頁沒有 button[role=combobox],
+            //  truncSel 恆 0、永遠通過;下拉在平台輸出頁。值 span 是 inline,clientWidth 恆 0,
+            //  暫時轉 inline-block 才量得到,量完還原)
+            const sels = [...c.querySelectorAll('button[role=combobox]')].filter(el => el.getBoundingClientRect().width > 0);
+            const truncSel = sels.filter(el => {
+                const v = el.querySelector('span');
+                if (!v) return false;
+                const d = v.style.display;
+                v.style.display = 'inline-block';
+                const trunc = v.scrollWidth > v.clientWidth + 1;
+                v.style.display = d;
+                return trunc;
+            }).length;
+            return {sw: c.scrollWidth, cw: c.clientWidth, minControl: controls.length ? Math.min(...controls) : null,
+                    selCount: sels.length, truncSel};
+        });
+        check('設定頁 640×672 平台輸出頁表單控制項可用寬度 ≥ 200', stacked640p.minControl >= 200, JSON.stringify(stacked640p));
+        check('設定頁 640×672 平台輸出頁找得到下拉控制項(檢查不是空轉)', stacked640p.selCount >= 1, `selCount=${stacked640p.selCount}`);
+        check('設定頁 640×672 平台輸出頁下拉選單值不被截斷', stacked640p.selCount >= 1 && stacked640p.truncSel === 0,
+            `sel=${stacked640p.selCount} truncated=${stacked640p.truncSel}`);
+        check('設定頁 640×672 平台輸出頁無水平捲軸', stacked640p.sw <= stacked640p.cw + 1, JSON.stringify(stacked640p));
+        await shot('77-settings-platforms-640');
+
+        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁;1280(lg 以上)清單與表單回到並排
         await page.setViewportSize({width: 1280, height: 800});
         await page.waitForTimeout(500);
         await page.click('[data-testid=tab-project]');
@@ -1591,8 +1659,15 @@ const maybe = async (name, fn, detail = '') => {
             await page.keyboard.type('boundaryE1');
             await page.waitForTimeout(400);
             const editorWidth = () => page.$eval('.cm-editor', el => el.getBoundingClientRect().width);
-            const w0 = await editorWidth();
             for (const [area, marker] of [['sidebar', 'E1sb'], ['inspector', 'E1in'], ['chat', 'E1ch']]) {
+                // 半螢幕互斥(SPEC §16 第 7 項)可能在前面設定頁的寬度切換中收掉資訊欄,這裡補開;
+                // 只在窄寬度(≤960)需要先收側欄,寬視窗直接開。補開後重置 w0 基準(開欄本身會變寬度,不算崩潰的影響)
+                if (area === 'inspector' && !(await page.$('[data-testid=inspector]')) && (await page.$('[data-testid=toggle-inspector]'))) {
+                    if (await page.$('aside') && await page.evaluate(() => window.innerWidth <= 960)) await page.click('[data-testid=rail-manuscript]');
+                    await page.click('[data-testid=toggle-inspector]');
+                    await page.waitForSelector('[data-testid=inspector]');
+                }
+                const w0 = await editorWidth();
                 await page.evaluate(a => window.__perkinsCrash(a), area);
                 await page.waitForSelector(`[data-testid=area-error-${area}]`, {timeout: 5000});
                 const w1 = await editorWidth();
@@ -2102,22 +2177,45 @@ const maybe = async (name, fn, detail = '') => {
         check('聊天浮窗 拖曳列按鈕真的可操作', !(await page.isVisible('[data-testid=chat-window]')));
         await shot('57-chat-dragged-top');
 
-        // 最小視窗尺寸(900×600)下標題欄與主要版面仍在(MinWidth/MinHeight 的依據)
+// 最小視窗尺寸(640×672,半螢幕並排 SPEC §16 第 7 項)下標題欄與主要版面仍在
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
         await page.waitForSelector('.cm-content');
-        await page.setViewportSize({width: 900, height: 600});
+        // 先確認 1440(>960)下兩欄都開著,縮窄才驗得到「兩個都開→自動收資訊欄」
+        if (!(await page.$('aside'))) await page.click('[data-testid=rail-manuscript]');
+        await page.waitForSelector('aside');
+        if (!(await page.$('[data-testid=inspector]'))) await page.click('[data-testid=toggle-inspector]');
+        await page.waitForSelector('[data-testid=inspector]');
+        await page.setViewportSize({width: 640, height: 672});
         await page.waitForTimeout(400);
-        check('標題欄 900×600 下仍在', await page.isVisible('[data-testid=titlebar]'));
-        check('標題欄 900×600 下有側欄 logo 與編輯器', !!(await page.$('[data-testid=rail-logo]')) && !!(await page.$('.cm-content')));
-        await shot('54-titlebar-min-900x600');
+        check('標題欄 640×672 下仍在', await page.isVisible('[data-testid=titlebar]'));
+        check('標題欄 640×672 三顆視窗鈕完整在視窗內', await page.evaluate(() =>
+            ['win-min', 'win-max', 'win-close'].every(id => {
+                const r = document.querySelector(`[data-testid=${id}]`)?.getBoundingClientRect();
+                return r && r.width > 0 && r.height > 0 && r.right <= window.innerWidth + 1;
+            })));
+        check('標題欄 640×672 下有側欄 logo 與編輯器', !!(await page.$('[data-testid=rail-logo]')) && !!(await page.$('.cm-content')));
+        await shot('54-titlebar-min-640x672');
 
-        // ===== 窄寬度編輯區工具列(SPEC §17.1):900×600、側欄+資訊欄都開、長章名 =====
-        // 量測重點:工具列「內容右緣」(所有可見後代的最大 right)不得超過資訊欄左緣——
+        // ===== 半螢幕並排(SPEC §16 第 7 項):640×672 =====
+        // 前提:進到這裡時側欄與資訊欄都開著(前面章節的狀態);由 >960 縮窄到 ≤960 觸發互斥,
+        // 兩個都開就自動收資訊欄。門檻 960 = 1920×1080 縮放 100% 的半邊(驗收尺寸上限)。
+        // 側欄的 aside 沒有 testid;Inspector 根元素也是 aside(testid=inspector),選擇器要排除
+        const exclusiveOK = () => page.evaluate(() =>
+            !(!!document.querySelector('aside:not([data-testid=inspector])') && !!document.querySelector('[data-testid=inspector]')));
+        check('半螢幕 縮窄到 640 後資訊欄自動收起', !(await page.$('[data-testid=inspector]')));
+        check('半螢幕 縮窄到 640 後側欄仍在', !!(await page.$('aside:not([data-testid=inspector])')));
+        check('半螢幕 640×672 側欄與資訊欄不同時存在', await exclusiveOK());
+        const mainW640 = await page.evaluate(() => Math.round(document.querySelector('main').getBoundingClientRect().width));
+        check('半螢幕 640×672 主編輯區寬度 ≥ 300(可寫作)', mainW640 >= 300, `mainW=${mainW640}(圖示列 60+側欄 272=332,640-332=308)`);
+        check('半螢幕 640×672 整頁無水平捲軸', await page.evaluate(() =>
+            document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+        await shot('55-halfscreen-640');
+
+        // ===== 窄寬度編輯區工具列(SPEC §17.1):640×672、側欄開(資訊欄已收)、長章名 =====
+        // 量測重點:工具列「內容右緣」(所有可見後代的最大 right)不得超過 main 右緣——
         // 溢出的按鈕即使被 overflow-hidden 視覺裁掉,幾何上仍會超過,檢查才驗得到。
         if (!(await page.$('[data-testid=chapter-row]'))) await page.click('[data-testid=rail-manuscript]');
         await page.waitForSelector('[data-testid=chapter-row]');
-        if (!(await page.$('[data-testid=inspector]'))) await page.click('[data-testid=toggle-inspector]');
-        await page.waitForSelector('[data-testid=inspector]');
         await page.click('[data-testid=chapter-row]:has-text("第十二章")');
         await page.waitForSelector('.cm-content');
         await page.waitForFunction(() =>
@@ -2160,27 +2258,27 @@ const maybe = async (name, fn, detail = '') => {
             };
         });
 
-        const m900 = await measureToolbar();
-        check('工具列 900×600 高度維持 48(不換行)', m900.tbH === 48, `tbH=${m900.tbH}`);
-        check('工具列 900×600 內容不溢出到資訊欄',
-            !!m900.inspLeft && m900.contentRight <= m900.inspLeft + 1,
-            JSON.stringify({contentRight: m900.contentRight, inspLeft: m900.inspLeft, tbRight: m900.tbRight}));
-        check('工具列 900×600 狀態徽章單行(未被擠成直排)',
-            !!m900.badgeH && m900.badgeH <= 30, `badgeH=${m900.badgeH}`);
-        check('工具列 900×600 麵包屑省略號截斷且看得到章名開頭',
-            !!m900.crumb && m900.crumb.text.includes('第十二章') && m900.crumb.w >= 40
-                && m900.crumb.scrollW > m900.crumb.w && m900.crumb.h <= 22,
-            JSON.stringify(m900.crumb));
-        check('工具列 900×600 次要按鈕收進「更多」(直列不放摘要/複製到平台/版本)',
-            !/摘要|複製到平台|版本/.test(m900.text), m900.text);
-        check('工具列 900×600 「儲存」與資訊欄開關仍可見且在工具列內',
-            !!m900.save && !!m900.toggle && m900.save.w > 0 && m900.toggle.w > 0
-                && m900.save.right <= m900.tbRight + 1 && m900.toggle.right <= m900.tbRight + 1,
-            JSON.stringify({save: m900.save, toggle: m900.toggle}));
-        await shot('60-toolbar-900x600');
+        const m640 = await measureToolbar();
+        check('工具列 640×672 高度維持 48(不換行)', m640.tbH === 48, `tbH=${m640.tbH}`);
+        check('工具列 640×672 內容不超出 main 右緣',
+            m640.contentRight <= m640.tbRight + 1,
+            JSON.stringify({contentRight: m640.contentRight, tbRight: m640.tbRight}));
+        check('工具列 640×672 狀態徽章單行(未被擠成直排)',
+            !!m640.badgeH && m640.badgeH <= 30, `badgeH=${m640.badgeH}`);
+        check('工具列 640×672 麵包屑省略號截斷且看得到章名開頭',
+            !!m640.crumb && m640.crumb.text.includes('第十二章') && m640.crumb.w >= 40
+                && m640.crumb.scrollW > m640.crumb.w && m640.crumb.h <= 22,
+            JSON.stringify(m640.crumb));
+        check('工具列 640×672 次要按鈕收進「更多」(直列不放摘要/複製到平台/版本)',
+            !/摘要|複製到平台|版本/.test(m640.text), m640.text);
+        check('工具列 640×672 「儲存」與資訊欄開關仍可見且在工具列內',
+            !!m640.save && !!m640.toggle && m640.save.w > 0 && m640.toggle.w > 0
+                && m640.save.right <= m640.tbRight + 1 && m640.toggle.right <= m640.tbRight + 1,
+            JSON.stringify({save: m640.save, toggle: m640.toggle}));
+        await shot('60-toolbar-640x672');
 
-        // 狀態列(SPEC §17.1):900 寬下不換行、每一項不超出 main 右緣;模型名以省略號截斷
-        const sb900 = await page.evaluate(() => {
+        // 狀態列(SPEC §17.1):640 寬下不換行、每一項不超出 main 右緣;模型名以省略號截斷
+        const sb640 = await page.evaluate(() => {
             const f = document.querySelector('footer');
             const main = document.querySelector('main');
             if (!f || !main) return null;
@@ -2198,18 +2296,18 @@ const maybe = async (name, fn, detail = '') => {
                 ai: ai ? {scrollW: ai.scrollWidth, clientW: ai.clientWidth, right: ar.right, h: ar.height} : null,
             };
         });
-        check('狀態列 900×600 每一項單行且不超出 main 右緣(不換行、不溢出)',
-            !!sb900 && sb900.items.every(i => i.h <= 20 && i.right <= sb900.mainRight + 1),
-            JSON.stringify(sb900 && {mainRight: sb900.mainRight, items: sb900.items}));
-        check('狀態列 900×600 保留本章與已儲存、模型名省略號截斷且在 main 內',
-            !!sb900 && /本章/.test(sb900.text) && /已儲存/.test(sb900.text)
-                && !!sb900.ai && sb900.ai.scrollW > sb900.ai.clientW
-                && sb900.ai.right <= sb900.mainRight + 1 && sb900.ai.h <= 20,
-            JSON.stringify(sb900 && sb900.ai));
+        check('狀態列 640×672 每一項單行且不超出 main 右緣(不換行、不溢出)',
+            !!sb640 && sb640.items.every(i => i.h <= 20 && i.right <= sb640.mainRight + 1),
+            JSON.stringify(sb640 && {mainRight: sb640.mainRight, items: sb640.items}));
+        check('狀態列 640×672 保留本章與已儲存、模型名省略號截斷且在 main 內',
+            !!sb640 && /本章/.test(sb640.text) && /已儲存/.test(sb640.text)
+                && !!sb640.ai && sb640.ai.scrollW > sb640.ai.clientW
+                && sb640.ai.right <= sb640.mainRight + 1 && sb640.ai.h <= 20,
+            JSON.stringify(sb640 && sb640.ai));
 
         // 「更多」下拉:最窄段把次要功能收進下拉,功能一個都不能少(SPEC §17.1)
         const hasMore = !!(await page.$('[data-testid=toolbar-more]'));
-        check('工具列 900×600 有「更多」按鈕(次要功能收進下拉)', hasMore);
+        check('工具列 640×672 有「更多」按鈕(次要功能收進下拉)', hasMore);
         if (hasMore) {
             await page.click('[data-testid=toolbar-more]');
             const menuOpen = await page.waitForSelector('[role=menu]', {timeout: 3000}).then(() => true).catch(() => false);
@@ -2257,33 +2355,45 @@ const maybe = async (name, fn, detail = '') => {
         await page.keyboard.press('Escape').catch(() => {}); // 收掉可能還開著的選單
         await page.waitForTimeout(300);
 
-        // 中等寬度(1100×800,主編輯區約 488px):按鈕退化成只剩圖示,文字收起但保留 title/aria-label
-        await page.setViewportSize({width: 1100, height: 800});
-        await page.waitForTimeout(400);
-        const mMid = await measureToolbar();
-        check('工具列 中等寬度退化成只剩圖示(文字收起,按鈕保留 aria-label 與 title)',
-            !!mMid.summary && mMid.summary.w > 0 && mMid.summary.aria === '章節摘要' && !!mMid.summary.title
-                && !!mMid.versions && mMid.versions.aria === '版本' && !!mMid.versions.title
-                && !!mMid.copy && mMid.copy.aria === '複製到平台' && !!mMid.copy.title
-                && !/摘要|複製到平台|版本/.test(mMid.text),
-            JSON.stringify({text: mMid.text, summary: mMid.summary, versions: mMid.versions}));
-        check('工具列 中等寬度也不溢出資訊欄',
-            !!mMid.inspLeft && mMid.contentRight <= mMid.inspLeft + 1,
-            JSON.stringify({contentRight: mMid.contentRight, inspLeft: mMid.inspLeft}));
+        // 窄寬度下作者手動開關仍有效:開資訊欄自動收側欄,再開側欄自動收資訊欄(SPEC §16 第 7 項 b)
+        await page.click('[data-testid=toggle-inspector]');
+        await page.waitForSelector('[data-testid=inspector]');
+        const inspW640 = await page.evaluate(() => Math.round(document.querySelector('main').getBoundingClientRect().width));
+        check('半螢幕 640 手動開資訊欄自動收側欄且主編輯區 ≥ 300',
+            !(await page.$('aside:not([data-testid=inspector])')) && inspW640 >= 300, `mainW=${inspW640}`);
+        await shot('56-halfscreen-640-inspector');
+        await page.click('[data-testid=rail-manuscript]');
+        await page.waitForSelector('aside');
+        check('半螢幕 640 手動開側欄自動收資訊欄', !(await page.$('[data-testid=inspector]')));
+        check('半螢幕 640 手動開側欄後仍互斥', await exclusiveOK());
 
-        // 1280×800(預設視窗):恢復完整文字標籤,一樣不溢出
+        // 900×600(舊最小尺寸):側欄開時工具列退化成只剩圖示,互斥仍成立,不溢出
+        await page.setViewportSize({width: 900, height: 600});
+        await page.waitForTimeout(400);
+        const m900 = await measureToolbar();
+        check('工具列 900×600 退化成只剩圖示(文字收起,按鈕保留 aria-label 與 title)',
+            !!m900.summary && m900.summary.w > 0 && m900.summary.aria === '章節摘要' && !!m900.summary.title
+                && !/摘要|複製到平台|版本/.test(m900.text),
+            JSON.stringify({text: m900.text, summary: m900.summary}));
+        check('工具列 900×600 內容不超出 main 右緣',
+            m900.contentRight <= m900.tbRight + 1,
+            JSON.stringify({contentRight: m900.contentRight, tbRight: m900.tbRight}));
+        check('半螢幕 900×600 側欄與資訊欄不同時存在', await exclusiveOK());
+        await shot('54b-toolbar-900x600');
+
+        // 1280×800(預設視窗):恢復完整文字標籤;變寬後不自動重開資訊欄(不強迫改變作者的選擇)
         await page.setViewportSize({width: 1280, height: 800});
         await page.waitForTimeout(400);
         const m1280 = await measureToolbar();
         check('工具列 1280×800 顯示完整文字標籤',
             /摘要/.test(m1280.text) && /複製到平台/.test(m1280.text) && /版本/.test(m1280.text),
             m1280.text);
-        check('工具列 1280×800 也不溢出資訊欄',
-            !!m1280.inspLeft && m1280.contentRight <= m1280.inspLeft + 1,
-            JSON.stringify({contentRight: m1280.contentRight, inspLeft: m1280.inspLeft}));
+        check('工具列 1280×800 內容不超出 main 右緣',
+            m1280.contentRight <= m1280.tbRight + 1,
+            JSON.stringify({contentRight: m1280.contentRight, tbRight: m1280.tbRight}));
+        check('半螢幕 變寬到 1280 後不自動重開資訊欄', !(await page.$('[data-testid=inspector]')));
         await shot('61-toolbar-1280x800');
-        await page.setViewportSize({width: 1440, height: 900});
-    } catch (e) {
+        await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
     }
