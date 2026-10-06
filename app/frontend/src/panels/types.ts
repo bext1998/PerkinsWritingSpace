@@ -30,27 +30,40 @@ export const BUILTIN_TYPES = ['角色', '地點', '勢力', '道具', '名詞', 
 let sharedCats: string[] = BUILTIN_TYPES;
 let sharedError: string | null = null;
 let loaded = false;
-let loading = false;
+let loadingGen = -1; // 正在進行的查詢所屬世代;只有目前世代且仍持有該請求者能清(第三輪返工 #2)
+let pending = false; // 在途期間收到的刷新要求:完成後補查,不直接丟棄
 let projectId: string | null = null;
 let generation = 0; // 作品世代:切作品後忽略上一作品的在途結果(第二輪返工 #2)
 const listeners = new Set<() => void>();
 
 async function refreshCategories() {
-    if (loading) return;
+    if (loadingGen >= 0) {
+        pending = true; // 有人在查:記下,完成後再查一次(不丟棄)
+        return;
+    }
     const gen = generation;
-    loading = true;
+    loadingGen = gen;
     try {
         const cats = await EntityTypes();
-        if (gen !== generation) return; // 上一作品的在途結果,忽略
-        sharedCats = cats;
-        sharedError = null;
-        loaded = true;
+        if (gen === generation) {
+            sharedCats = cats;
+            sharedError = null;
+            loaded = true;
+        }
     } catch (e) {
-        if (gen !== generation) return;
-        sharedError = errText(e); // 清單損毀:保留既有清單並顯示錯誤,不得覆寫原檔(SPEC §12.2)
+        if (gen === generation) sharedError = errText(e); // 清單損毀:保留既有清單並顯示錯誤(SPEC §12.2)
     } finally {
-        loading = false;
+        // 只有「目前世代且仍擁有這份在途請求」才能清 loading 與補查;
+        // 舊世代的 finally 不得動新世代的狀態(例如 A 在途、切 B 後 A 才返回)。
+        const owner = loadingGen === gen;
+        let rerun = false;
+        if (owner) {
+            loadingGen = -1;
+            rerun = pending && gen === generation;
+            pending = false;
+        }
         if (gen === generation) listeners.forEach(l => l());
+        if (rerun) void refreshCategories();
     }
 }
 
@@ -62,7 +75,8 @@ export function setCategoriesProject(id: string | null) {
     sharedCats = BUILTIN_TYPES;
     sharedError = null;
     loaded = false;
-    loading = false; // 舊作品可能還有在途查詢:放行新查詢,舊結果由世代計數忽略
+    loadingGen = -1; // 舊作品在途查詢由世代忽略;持有權一併重置,讓新作品立即可查
+    pending = false;
     listeners.forEach(l => l());
     if (id) void refreshCategories();
 }
@@ -72,7 +86,7 @@ export function useCategories(): [string[], () => void, string | null] {
     const [, force] = useReducer((x: number) => x + 1, 0);
     useEffect(() => {
         listeners.add(force);
-        if (!loaded && !loading) void refreshCategories();
+        if (!loaded) void refreshCategories(); // 在途時 refresh 自己會記 pending 補查,不丟棄
         return () => { listeners.delete(force); };
     }, []);
     return [sharedCats, () => { void refreshCategories(); }, sharedError];

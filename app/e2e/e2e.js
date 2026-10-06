@@ -256,7 +256,7 @@ const maybe = async (name, fn, detail = '') => {
 
         // 以自訂分類建立設定檔(獨立於管理入口:選單沒長出來也要能 FAIL 而不是中斷)
         let preUnsaved = false; // (回歸#1)刪除前未存的字,宣告在這裡供後續驗證使用
-        let r3 = false, r4 = false, r4cycle = false, r4created = false, r5m = false, r5h = false;
+        let r3 = false, r4 = false, r4cycle = false, r4created = false, r5m = false, r5h = false, r9 = false;
         const r4dbg = {};
         await page.click('[data-testid=new-entity]');
         if (await catWait('[role=dialog]')) {
@@ -454,9 +454,18 @@ const maybe = async (name, fn, detail = '') => {
         }
         check('自訂分類(回歸#6) 刪除成功但重讀失敗→關閉檔案、磁碟 type 為其他、提示重新開啟', r4, JSON.stringify(r4dbg));
 
+        // (回歸#8,資料安全)預先建立 PROJ-b 目錄並放檔案:舊實作會整目錄 rm -rf;
+        // 本輪改用 mkdtemp 唯一目錄,絕不刪除預先存在的目錄,只清本次建立的路徑。
+        const guardDir = PROJ + '-b';
+        const guardDirExisted = fs.existsSync(guardDir);
+        fs.mkdirSync(guardDir, {recursive: true});
+        const guardFile = path.join(guardDir, 'PRE-EXISTING.txt');
+        const guardFileExisted = fs.existsSync(guardFile);
+        if (!guardFileExisted) fs.writeFileSync(guardFile, 'must survive');
         // (回歸#7)A → 書櫃 → B:分類快取綁定作品,B 只顯示自己的分類
-        const projB = PROJ + '-b';
-        fs.rmSync(projB, {recursive: true, force: true});
+        // 用 mkdtemp 建唯一目錄:絕不刪除預先存在的目錄(第三輪返工 #1,資料安全)
+        // 路徑統一正斜線:反斜線會讓 CSS 屬性選擇器的 \ 跳脫失敗(\U 等),卡片選擇器永遠匹配不到
+        const projB = fs.mkdtempSync(path.join(os.tmpdir(), 'perkins-e2e-b-')).replace(/\\/g, '/');
         fs.mkdirSync(path.join(projB, 'canon'), {recursive: true});
         fs.mkdirSync(path.join(projB, '.perkins'), {recursive: true});
         fs.writeFileSync(path.join(projB, 'perkins.json'), JSON.stringify({name: '乙作品', order: []}, null, 2));
@@ -468,6 +477,29 @@ const maybe = async (name, fn, detail = '') => {
                 {path: projBPath, name: '乙作品', cover: '', missing: false},
             ]);
         }, projB);
+        // (回歸#9)可控 Promise:一次性陳舊 EntityTypes(call1=A 掛起、call2=B 掛起且缺之後新增的分類)
+        await page.evaluate(() => {
+            const orig = window.go.main.App.EntityTypes;
+            window.__etGates = {a: {}, b: {}};
+            window.__etGates.a.promise = new Promise(r => { window.__etGates.a.release = r; });
+            window.__etGates.b.promise = new Promise(r => { window.__etGates.b.release = r; });
+            let calls = 0;
+            window.go.main.App.EntityTypes = () => {
+                calls++;
+                if (calls === 1) return window.__etGates.a.promise.then(() => ['角色', '地點', '勢力', '道具', '名詞', '其他']);
+                if (calls === 2) return window.__etGates.b.promise.then(() => ['角色', '地點', '勢力', '道具', '名詞', '其他', '乙分類']);
+                return orig();
+            };
+            window.__etRestore = () => { window.go.main.App.EntityTypes = orig; };
+        });
+        // 觸發 A 的在途查詢(call1)掛起:在 A 新增甲分類(伺服器端真成功,但清單回應被扣住)
+        await page.click('[data-testid=manage-categories]');
+        if (await catWait('[data-testid=category-name]')) {
+            await page.fill('[data-testid=category-name]', '甲分類');
+            await page.click('[data-testid=category-add]');
+        }
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=category-list]', {state: 'detached', timeout: 3000}).catch(() => {});
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
         const cardSel = 'button[title="' + projB + '"], button[title="' + projB.replace(/\//g, '\\') + '"]';
@@ -477,11 +509,22 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=rail-bible]');
         await page.waitForSelector('[data-testid=manage-categories]');
         await page.click('[data-testid=manage-categories]');
-        await page.waitForFunction(() =>
-            (document.querySelector('[data-testid=category-list]')?.textContent || '').includes('乙分類'),
-            null, {timeout: 5000}).catch(() => {});
+        await catWait('[data-testid=category-list]');
+        // (回歸#9)可控完成順序:A 在途回應先返回(不得清掉 B 的在途狀態)→ B 清單變更(
+        // 在途期間的刷新要記 pending)→ B 的掛起回應(陳舊、缺乙新增)最後到達(不得覆蓋新清單)
+        await page.evaluate(() => { window.__etGates.a.release(); });
+        await page.waitForTimeout(150);
+        if (await catWait('[data-testid=category-name]')) {
+            await page.fill('[data-testid=category-name]', '乙新增分類');
+            await page.click('[data-testid=category-add]');
+        }
+        // 等「若舊碼會啟動的第二份查詢」先落地(約 1s),確保陳舊回應是最後到達的
+        await page.waitForTimeout(1000);
+        await page.evaluate(() => { window.__etGates.b.release(); });
+        await page.waitForTimeout(800); // 陳舊回應 → 補查 → 最新清單
         const bList = await page.textContent('[data-testid=category-list]').catch(() => '');
         r5m = bList.includes('乙分類') && !bList.includes('組織') && !bList.includes('交通工具');
+        r9 = bList.includes('乙分類') && bList.includes('乙新增分類');
         await page.keyboard.press('Escape');
         await page.waitForSelector('[data-testid=category-list]', {state: 'detached', timeout: 3000}).catch(() => {});
         await page.click('[data-testid=entity-row]:has-text("乙組織")');
@@ -502,9 +545,17 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForSelector(cardA, {timeout: 10000});
         await page.click(cardA);
         await page.waitForSelector('aside span[title="E2E測試"]', {timeout: 30000});
+        await page.evaluate(() => { if (window.__etRestore) window.__etRestore(); });
+        // (回歸#8)清理:只清本次建立的路徑;預先存在的 guardDir 檔案必須還在
+        const guardOk = fs.existsSync(guardFile);
+        if (!guardFileExisted) fs.rmSync(guardFile, {force: true});
+        if (!guardDirExisted) fs.rmSync(guardDir, {recursive: true, force: true});
+        fs.rmSync(projB, {recursive: true, force: true}); // mkdtemp 唯一目錄(新實作),本次建立可清
         check('自訂分類(回歸#5) 刪除在途時對話框不可關閉且確認鈕停用顯示進行中', r3);
         check('自訂分類(回歸#7) A→書櫃→B 後管理清單只顯示 B 的分類', r5m);
         check('自訂分類(回歸#7) A→書櫃→B 後 EntityHeader 只顯示 B 的分類', r5h);
+        check('自訂分類(回歸#8) 預先存在的 PROJ-b 目錄與檔案不會被刪除', guardOk);
+        check('自訂分類(回歸#9) 在途刷新會補查,陳舊回應最後到達也不覆蓋新清單', r9);
 
         // 寫法檢查
         await page.click('[data-testid=rail-checks]');
