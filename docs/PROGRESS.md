@@ -7,6 +7,7 @@
 - **回歸檢查(E2E 新增 7 項,640×672)**:模型輸入框 clientWidth=390(修改前 24)、所有可見 input/下拉觸發器可用寬度 ≥ 200(實測 270–392)、下拉值不被截斷(scrollW ≤ clientW,實測 0 個截斷)、外層 grid 單欄(上下堆疊)、models/platforms 內容區無水平捲軸。**破壞驗證**:拿掉堆疊(git stash)→ 紅燈:urlW=146、最窄控制項 26px、外層 grid 找不到 lg:grid-cols(cols=0),主要斷言全部 FAIL;放回 → 綠燈:urlW=390、cols=1。驗證中另抓到自己檢查的選擇器錯誤:`url.closest('div.grid')` 抓到 Field 內層 grid(永遠單欄,檢查永遠通過),改為沿父層找含 `lg:grid-cols` 的外層容器。
 - **驗證**:`go test -count=1 ./...` 全過(11 套件);`npm run build` 通過;E2E(E2E_SKIP_AI=1)**308/308 passed,略過 8 項**。設定頁三頁在 640×672/768×728/960×1040/1280×800 全部重拍無溢出;1280 並排版面不退步。
 - **截圖**(scratchpad `halfscreen-shots/rework19/`):settings-{models,project,platforms}-{640x672,768x728,960x1040,1280x800}.png 共 12 張。
+- **返工二(Hemingway)**:「下拉選單值不被截斷」檢查原停在 AI 模型頁——那頁沒有 `button[role=combobox]`,truncSel 恆 0、永遠通過(空轉)。移到平台輸出頁:先斷言找得到下拉(selCount ≥ 1,實測 2),再比較值文字自身 scrollWidth/clientWidth(值 span 是 inline、clientWidth 恆 0,量測時暫轉 inline-block 後還原)。**破壞驗證**:頁面內把下拉寬度壓到 48px → truncated=2、檢查 FAIL;還原 → truncated=0、PASS。E2E(E2E_SKIP_AI=1)309/309。
 
 ---
 

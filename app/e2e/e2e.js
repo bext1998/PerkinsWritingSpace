@@ -1566,11 +1566,6 @@ const maybe = async (name, fn, detail = '') => {
             const controls = [...c.querySelectorAll('input, button[role=combobox]')]
                 .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
                 .map(el => { const r = el.getBoundingClientRect(); return {w: Math.round(r.width), t: (el.getAttribute('data-testid') || el.tagName)}; });
-            // 下拉選單的值不被截斷到看不見(值文字必須完整在觸發器內)
-            const truncSel = [...c.querySelectorAll('button[role=combobox]')].filter(el => {
-                const v = el.querySelector('span');
-                return v && v.scrollWidth > el.clientWidth + 1;
-            }).length;
             // 堆疊驗證:找到含 lg:grid-cols 的外層 grid(清單+表單容器),lg 以下必須單欄(上下堆疊);
             // 注意 url.closest('div.grid') 會抓到 Field 的內層 grid(永遠 1 欄),必須往上找 lg:grid-cols
             let outer = url.parentElement;
@@ -1578,12 +1573,11 @@ const maybe = async (name, fn, detail = '') => {
             const cols = outer ? getComputedStyle(outer).gridTemplateColumns.split(' ').length : 0;
             return {sw: c.scrollWidth, cw: c.clientWidth, urlW: Math.round(url.getBoundingClientRect().width),
                     urlClientW: url.clientWidth, minControl: Math.min(...controls.map(x => x.w)), controls,
-                    truncSel, gridCols: cols};
+                    gridCols: cols};
         });
         check('設定頁 640×672 模型輸入框可用寬度 ≥ 200', stacked640.urlClientW >= 200, JSON.stringify(stacked640.urlClientW));
         check('設定頁 640×672 所有表單控制項可用寬度 ≥ 200', stacked640.minControl >= 200,
             JSON.stringify(stacked640.controls));
-        check('設定頁 640×672 下拉選單值不被截斷', stacked640.truncSel === 0, `truncated=${stacked640.truncSel}`);
         check('設定頁 640×672 清單與表單上下堆疊(非三欄並排)', stacked640.gridCols === 1, `gridCols=${stacked640.gridCols}`);
         check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
         await shot('76-settings-models-640');
@@ -1595,9 +1589,27 @@ const maybe = async (name, fn, detail = '') => {
             const controls = [...c.querySelectorAll('input, button[role=combobox]')]
                 .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
                 .map(el => Math.round(el.getBoundingClientRect().width));
-            return {sw: c.scrollWidth, cw: c.clientWidth, minControl: controls.length ? Math.min(...controls) : null};
+            // 下拉選單的值不被截斷到看不見:比較值文字自身 scrollWidth 與 clientWidth。
+            // (返工:Hemingway — 此檢查原本停在 AI 模型頁,那頁沒有 button[role=combobox],
+            //  truncSel 恆 0、永遠通過;下拉在平台輸出頁。值 span 是 inline,clientWidth 恆 0,
+            //  暫時轉 inline-block 才量得到,量完還原)
+            const sels = [...c.querySelectorAll('button[role=combobox]')].filter(el => el.getBoundingClientRect().width > 0);
+            const truncSel = sels.filter(el => {
+                const v = el.querySelector('span');
+                if (!v) return false;
+                const d = v.style.display;
+                v.style.display = 'inline-block';
+                const trunc = v.scrollWidth > v.clientWidth + 1;
+                v.style.display = d;
+                return trunc;
+            }).length;
+            return {sw: c.scrollWidth, cw: c.clientWidth, minControl: controls.length ? Math.min(...controls) : null,
+                    selCount: sels.length, truncSel};
         });
         check('設定頁 640×672 平台輸出頁表單控制項可用寬度 ≥ 200', stacked640p.minControl >= 200, JSON.stringify(stacked640p));
+        check('設定頁 640×672 平台輸出頁找得到下拉控制項(檢查不是空轉)', stacked640p.selCount >= 1, `selCount=${stacked640p.selCount}`);
+        check('設定頁 640×672 平台輸出頁下拉選單值不被截斷', stacked640p.selCount >= 1 && stacked640p.truncSel === 0,
+            `sel=${stacked640p.selCount} truncated=${stacked640p.truncSel}`);
         check('設定頁 640×672 平台輸出頁無水平捲軸', stacked640p.sw <= stacked640p.cw + 1, JSON.stringify(stacked640p));
         await shot('77-settings-platforms-640');
 
