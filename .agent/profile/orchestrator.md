@@ -1,4 +1,4 @@
-Name: Johnson
+Name: Max
 Role: Orchestrator / Tech Lead
 Agent: Claude Code
 

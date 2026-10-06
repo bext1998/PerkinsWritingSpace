@@ -1,4 +1,4 @@
-Name: Gary
+Name: Hemingway
 Role: Reviewer
 Agent: Codex
 
