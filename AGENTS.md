@@ -27,3 +27,20 @@
 - `.agent/memory/` 保存已驗證、可跨任務重用且無法從規格或程式碼直接看出的專案經驗；`.agent/skills/` 保存本專案專用的操作技能。開始相關任務時讀取對應內容。
 - 完成任務後，只有產生耐久且可重用的新教訓時才更新 `.agent`。記錄觸發條件、證據、可採取的做法與適用範圍；修正過期內容，避免重複規格、進度報告或一次性日誌。
 - 技能用 `.agent/skills/<名稱>/SKILL.md`，只在流程需要固定步驟或工具約束時建立。專案記憶與技能是 Agent 的工作輔助，不賦予應用程式內 AI 額外檔案或工具權限。
+
+## Agent Team 協作
+
+- 自主推進工作，一般技術細節自行判斷，不反覆詢問作者；能自行調查、測試、修正或驗證的問題自行處理。
+- 只有產品方向、重大取捨、不可逆操作，或只有作者能回答的問題，才回頭詢問作者。
+- 不預設所有工作都由自己完成。位於 Herdr 環境（`HERDR_ENV=1`）時，可依需要用已安裝的 `herdr` skill 與其他 Coding Agent 協作；可獨立或可平行的工作可以交給其他 Agent。小型工作直接完成，不為了使用多 Agent 而過度拆工。
+- 派工後仍須追蹤結果、檢查成果（例如實際看截圖、核對分支與提交），必要時要求修正或安排 Reviewer。派出去的工作照樣適用本文件的規則。
+- 團隊角色見 `.agent/profile/`（Orchestrator、Reviewer、Worker）。`.agent/profile/runtime.json` 可暫存 Herdr 的 pane／agent 名稱等執行期資訊，已被 Git 忽略；它不是真實來源，實際狀態一律以 `herdr agent list` 等查詢結果為準。
+
+### 專案指令
+
+作者可用以下縮寫下指令；這些是 Agent 理解的語意，不是 CLI 程式。
+
+- `todo ls`：列出待辦。來源是 `docs/SPEC.md` §16「待辦」中尚未標示「已完成」的項目，以及 GitHub 上開著的 Issues（`gh issue list`）。
+- `todo add <task>`：把內容加到 `docs/SPEC.md` §16 的清單末尾（標註日期與「作者回饋」或來源）。只新增待辦，不開始實作。
+- `orch start [task]`：由 Orchestrator 開始處理工作；未指定 task 時，從 `todo ls` 中挑一項並先說明選擇理由。Orchestrator 自行：讀取任務與必要的專案資訊 → 判斷是否拆工 → 參考 Team Profile 了解可用角色 → Herdr 可用時依需要派工、可平行的就平行安排 → 收集成果 → 必要時安排 Reviewer → 有有效問題時安排返工 → 完成必要驗證；直到工作完成或真正需要作者決策才停止。
+- `orch note <message>`：提供想法、方向、偏好或背景給 Orchestrator。不等同正式待辦，也不代表立即實作；Orchestrator 自行判斷它是否影響目前工作、值得轉成待辦（`todo add`），或只作為後續決策背景。

@@ -9,3 +9,6 @@ app/frontend/package.json.md5
 *.pem
 *.pfx
 *.key
+
+# Agent Team runtime state (Herdr pane/agent IDs; not a source of truth)
+.agent/profile/runtime.json
