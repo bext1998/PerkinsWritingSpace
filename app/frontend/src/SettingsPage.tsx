@@ -94,7 +94,9 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
     const view = cfg.profiles.find(p => p.id === form.id);
 
     return (
-        <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-6">
+        // 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬;
+        // 否則 220px 清單 + 表單並排會把表單壓到約 148px,輸入框剩 24px(返回工#1,2026-10-07)
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="space-y-1">
                 {cfg.profiles.map(p => (
                     <button key={p.id} onClick={() => setSelId(p.id)}
@@ -180,7 +182,8 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
     };
 
     return (
-        <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-6">
+        // 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬(同 ModelsTab)
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
             <div className="space-y-1">
                 {list.map((x, i) => (
                     <button key={x.id} onClick={() => setSel(i)}

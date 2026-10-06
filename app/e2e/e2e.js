@@ -1551,7 +1551,57 @@ const maybe = async (name, fn, detail = '') => {
             await shot('74-settings-platforms-900');
         }
 
-        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁
+        // ===== 設定頁 640×672(半螢幕,SPEC §16 第 7 項 (c) + 返工):堆疊版面 =====
+        // 三欄並排(導覽+清單+表單)會把表單壓到約 148px、模型輸入框剩 24px——
+        // 無水平捲軸 ≠ 可用;lg 以下清單與表單必須上下堆疊,表單控制項可用寬度 ≥ 200px
+        await page.setViewportSize({width: 640, height: 672});
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=tab-models]');
+        await waitSel('[data-testid=profile-url]');
+        await page.waitForTimeout(300);
+        const stacked640 = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const url = document.querySelector('[data-testid=profile-url]');
+            // 可見的 input 與 select 觸發器(排除 Switch 之類的小控制項)
+            const controls = [...c.querySelectorAll('input, button[role=combobox]')]
+                .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+                .map(el => { const r = el.getBoundingClientRect(); return {w: Math.round(r.width), t: (el.getAttribute('data-testid') || el.tagName)}; });
+            // 下拉選單的值不被截斷到看不見(值文字必須完整在觸發器內)
+            const truncSel = [...c.querySelectorAll('button[role=combobox]')].filter(el => {
+                const v = el.querySelector('span');
+                return v && v.scrollWidth > el.clientWidth + 1;
+            }).length;
+            // 堆疊驗證:找到含 lg:grid-cols 的外層 grid(清單+表單容器),lg 以下必須單欄(上下堆疊);
+            // 注意 url.closest('div.grid') 會抓到 Field 的內層 grid(永遠 1 欄),必須往上找 lg:grid-cols
+            let outer = url.parentElement;
+            while (outer && !(outer.className || '').includes('lg:grid-cols')) outer = outer.parentElement;
+            const cols = outer ? getComputedStyle(outer).gridTemplateColumns.split(' ').length : 0;
+            return {sw: c.scrollWidth, cw: c.clientWidth, urlW: Math.round(url.getBoundingClientRect().width),
+                    urlClientW: url.clientWidth, minControl: Math.min(...controls.map(x => x.w)), controls,
+                    truncSel, gridCols: cols};
+        });
+        check('設定頁 640×672 模型輸入框可用寬度 ≥ 200', stacked640.urlClientW >= 200, JSON.stringify(stacked640.urlClientW));
+        check('設定頁 640×672 所有表單控制項可用寬度 ≥ 200', stacked640.minControl >= 200,
+            JSON.stringify(stacked640.controls));
+        check('設定頁 640×672 下拉選單值不被截斷', stacked640.truncSel === 0, `truncated=${stacked640.truncSel}`);
+        check('設定頁 640×672 清單與表單上下堆疊(非三欄並排)', stacked640.gridCols === 1, `gridCols=${stacked640.gridCols}`);
+        check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
+        await shot('76-settings-models-640');
+        await page.click('[data-testid=tab-platforms]');
+        await waitSel('[data-testid=platform-preview]');
+        await page.waitForTimeout(300);
+        const stacked640p = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const controls = [...c.querySelectorAll('input, button[role=combobox]')]
+                .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+                .map(el => Math.round(el.getBoundingClientRect().width));
+            return {sw: c.scrollWidth, cw: c.clientWidth, minControl: controls.length ? Math.min(...controls) : null};
+        });
+        check('設定頁 640×672 平台輸出頁表單控制項可用寬度 ≥ 200', stacked640p.minControl >= 200, JSON.stringify(stacked640p));
+        check('設定頁 640×672 平台輸出頁無水平捲軸', stacked640p.sw <= stacked640p.cw + 1, JSON.stringify(stacked640p));
+        await shot('77-settings-platforms-640');
+
+        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁;1280(lg 以上)清單與表單回到並排
         await page.setViewportSize({width: 1280, height: 800});
         await page.waitForTimeout(500);
         await page.click('[data-testid=tab-project]');
