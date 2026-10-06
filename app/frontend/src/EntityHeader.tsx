@@ -34,7 +34,7 @@ export default function EntityHeader({entity, onApply}: Props) {
         <form className="flex shrink-0 items-center gap-2 border-b bg-sidebar/60 px-4 py-2"
               onSubmit={e => { e.preventDefault(); onApply(type, name.trim(), splitAliases(aliases)); }}>
             <Select value={type} onValueChange={setType}>
-                <SelectTrigger className="h-8 w-24 text-sm"><SelectValue/></SelectTrigger>
+                <SelectTrigger className="h-8 w-24 text-sm" data-testid="entity-header-type"><SelectValue/></SelectTrigger>
                 <SelectContent>{types.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
             </Select>
             <Input className="h-8 w-40 text-sm" value={name} onChange={e => setName(e.target.value)} placeholder="名稱" data-testid="entity-name"/>

@@ -255,6 +255,7 @@ const maybe = async (name, fn, detail = '') => {
         }
 
         // 以自訂分類建立設定檔(獨立於管理入口:選單沒長出來也要能 FAIL 而不是中斷)
+        let preUnsaved = false; // (回歸#1)刪除前未存的字,宣告在這裡供後續驗證使用
         await page.click('[data-testid=new-entity]');
         if (await catWait('[role=dialog]')) {
             if (await catWait('[data-testid=entity-type]')) {
@@ -266,6 +267,14 @@ const maybe = async (name, fn, detail = '') => {
                     await page.click('[role=dialog] button:has-text("建立")');
                     cat.created = await catWait('[data-testid=group-組織] [data-testid=entity-row]:has-text("天網")');
                     if (cat.created) await shot('81-sidebar-custom-category'); // 側欄出現自訂分類分組
+                }
+                // (回歸#1)刪除前先打字不存:確認刪除要把未存內容先存盤(快照才含最新內容)
+                if (cat.created) {
+                    await page.click('.cm-content');
+                    await page.keyboard.press('Control+End');
+                    await page.keyboard.type('未存字');
+                    await page.waitForTimeout(300);
+                    preUnsaved = !read('canon/天網.md').includes('未存字');
                 } else {
                     await page.keyboard.press('Escape');
                 }
@@ -316,6 +325,47 @@ const maybe = async (name, fn, detail = '') => {
         check('自訂分類 刪除後檔案改歸其他且名稱本文保留', cat.retag);
         check('自訂分類 刪除前有自動快照(before-delete-category)', cat.snap);
         check('自訂分類 刪除後側欄分組移到其他(原分組消失)', cat.moved);
+
+        // (回歸#1)刪除前未存的字:確認刪除時先存盤,刪除後再編輯存檔 type 不得變回舊值
+        let r1 = false;
+        if (cat.created && preUnsaved && cat.del) {
+            await page.waitForTimeout(500); // 等 Workspace 重載受影響的開啟中檔案
+            const afterDel = read('canon/天網.md');
+            const savedNow = afterDel.includes('未存字') && afterDel.includes('type: 其他');
+            let keepType = false;
+            if (savedNow) {
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type('再存字');
+                await page.keyboard.press('Control+s');
+                const okSaved = await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000})
+                    .then(() => true).catch(() => false);
+                const again = read('canon/天網.md');
+                keepType = okSaved && again.includes('再存字') && again.includes('type: 其他') && again.includes('未存字');
+            }
+            r1 = savedNow && keepType;
+        }
+
+        // (回歸#4)已開啟的 EntityHeader:新增分類後類型選單要立即更新(共用分類狀態)
+        let r2 = false;
+        if (cat.manage && !!(await page.$('[data-testid=entity-header-type]'))) {
+            await page.click('[data-testid=manage-categories]');
+            if (await catWait('[data-testid=category-name]')) {
+                await page.fill('[data-testid=category-name]', '交通工具');
+                await page.click('[data-testid=category-add]');
+                const added = await catWait('[data-testid=del-cat-交通工具]');
+                await page.keyboard.press('Escape');
+                await page.waitForSelector('[data-testid=category-list]', {state: 'detached', timeout: 3000}).catch(() => {});
+                if (added && !!(await page.$('[data-testid=entity-header-type]'))) {
+                    await page.click('[data-testid=entity-header-type]');
+                    r2 = await catWait('[role=option]:has-text("交通工具")');
+                    await page.keyboard.press('Escape').catch(() => {});
+                }
+            }
+            if (!r2) await page.keyboard.press('Escape').catch(() => {});
+        }
+        check('自訂分類(回歸#1) 刪除前未存的字先存盤,後續存檔 type 仍為其他', r1);
+        check('自訂分類(回歸#4) 新增分類後已開啟的 EntityHeader 類型選單立即更新', r2);
 
         // 寫法檢查
         await page.click('[data-testid=rail-checks]');

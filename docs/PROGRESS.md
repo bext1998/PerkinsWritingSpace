@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-06 — PR #17 返工:Hemingway 審查四項修正
+
+- **#1 刪除後編輯器寫回舊 type(Major)**:刪除改由 Workspace 協調(`Workspace.tsx` `deleteCategory`):按確認刪除先 `await save()`(序列化存檔迴圈,保存未存內容;失敗即中止、不動檔案),存檔成功才呼叫 `DeleteCategory`(快照因此含作者最新內容);完成後若目前開啟的檔案在受影響清單(`DeleteCategory` 改回傳路徑)內就從磁碟重載 text/latest/dirty 並 `reloadKey+1`,之後存檔不會把舊 type 寫回;確認對話框開著時編輯器被擋,未另加鎖。
+- **#2 批次改型部分失敗(Major)**:`app.go DeleteCategory` 改「先備好全部新內容 → 逐一寫入 → 任一失敗回復已寫檔案」;回復失敗時錯誤列出受影響路徑與快照標籤/ID;清單改 `writeCategories` 暫存檔＋rename 原子寫入,清單寫入失敗同樣回復檔案;前端失敗分支 `reloadCats()+refreshIndex()` 畫面反映實際狀態。
+- **#3 損毀清單被當空清單(Major)**:`loadCustomCategories` 只有 `os.ErrNotExist` 才回空;讀取/解析失敗回傳錯誤(`EntityTypes` 改 `([]string, error)`,JS 綁定型別不變);`AddCategory`/`DeleteCategory` 因此拒絕操作、不得覆寫原檔;管理分類顯示 `category-load-error` 並停用新增。
+- **#4 清單不同步(Minor)**:`panels/types.ts` 改模組層級共用狀態(訂閱/通知),所有 `useCategories` 消費者共用一份清單,新增/刪除後全部重讀——已開啟的 EntityHeader 類型選單立即更新(SelectTrigger 加 `entity-header-type` testid)。
+- **SPEC §12.2**:自訂分類新增「健壯性」四點(刪除前先存檔、批次原子、損毀不當空、清單同步)。
+- **驗證**:`go test -count=1 ./...` 全過(新增 #2a 第二檔失敗回復/清單寫入失敗回復/損毀不覆蓋 + 既有測試適配 `DeleteCategory` 回傳路徑);`npm run build` 通過;E2E(E2E_SKIP_AI=1)**280/280 passed,略過 8 項**(新增回歸#1、#4)。**破壞驗證(各自紅燈)**:①修補缺席先跑 → 回歸#1、#4 FAIL(基線不中斷);②Go 紅燈先寫 → 第二檔失敗未回復、損毀被覆寫成 `["新分類"]` 兩項 FAIL(對舊實作);③完成後四項修補同時拿掉(rollback 改 no-op、損毀當空、不存檔不重載、不訂閱共享通知)→ #2a/#2b/#3 Go FAIL + 回歸#1/#4 E2E FAIL,還原後三檔 sha256 與綠燈輪完全吻合。如實記錄:「複製到平台顯示結果」在 red/green 各失敗一次(PROGRESS #12 已記錄的既有時序 flake,與本次無關),重跑後 280/280。
 ## 2026-10-06 — 設定頁改為左側導覽版面
 
 - **重現與根因**(作者回饋「非最大化視窗時設定頁排版有問題」;現況圖 8 張在 scratchpad `settings-prefix/pre-*.png`):以 E2E 環境量測 900×600 / 1280×800,三項根因全部量化:(1) 設定頁根節點 `overflow-y-auto` 是整頁捲軸——捲軸貼在視窗右緣、捲動連頁首一起跑(作品頁 774>568 @900、774>768 @1280;模型頁 646>568、平台頁 783>568 @900);(2) 外層 `max-w-5xl px-10` 與內層 ProjectTab `max-w-3xl` 不一致且內層未置中——內容靠左、右側大片空白(左右間距 40/92 @900、168/344 @1280,差 52/176);(3) 研究記錄 `mt-6` 疊在容器 `gap-8` 上——區塊間距 56px。

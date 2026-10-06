@@ -1,6 +1,6 @@
 import {useMemo, useState} from 'react';
 import {Box, Flag, Folder, MapPin, Plus, Search, Tag, User} from 'lucide-react';
-import {AddCategory, CategoryUsage, DeleteCategory, NewDoc} from '../../wailsjs/go/main/App';
+import {AddCategory, CategoryUsage, NewDoc} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
 import {
@@ -14,12 +14,12 @@ export const TYPE_ICON: Record<string, typeof User> = {角色: User, 地點: Map
 // 「其他」沒有具象圖示,列表以文字標示(設計審查 18);自訂分類用通用資料夾圖示
 const iconFor = (t: string) => TYPE_ICON[t] ?? (BUILTIN_TYPES.includes(t) ? undefined : Folder);
 
-export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail}: PanelProps) {
+export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail, deleteCategory}: PanelProps) {
     const [q, setQ] = useState('');
     const [creating, setCreating] = useState(false);
     const [type, setType] = useState('角色');
     const [name, setName] = useState('');
-    const [cats, reloadCats] = useCategories();
+    const [cats, reloadCats, catsError] = useCategories();
     // 管理分類(SPEC §12.2/§16-9):新增、刪除(有設定檔先確認+快照)
     const [managing, setManaging] = useState(false);
     const [catName, setCatName] = useState('');
@@ -73,11 +73,16 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
     const doDelete = async () => {
         if (!confirmDel) return;
         try {
-            await DeleteCategory(confirmDel.name);
+            await deleteCategory(confirmDel.name); // Workspace 協調:先存檔,再快照+改歸其他+重載
             setConfirmDel(null);
             reloadCats();
-            refreshIndex(); // 被改歸「其他」的檔案要重新分組
-        } catch (e) { setConfirmDel(null); fail(e); }
+        } catch (e) {
+            // 失敗分支:重讀分類與索引,畫面反映實際狀態(SPEC §12.2)
+            setConfirmDel(null);
+            reloadCats();
+            refreshIndex();
+            fail(e);
+        }
     };
 
     return (
@@ -160,6 +165,13 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                             內建分類不可刪除。刪除仍有設定檔的分類時會先自動建立快照,再把那些檔案改歸「其他」(檔案不刪)。
                         </DialogDescription>
                     </DialogHeader>
+                    {/* 清單損毀時顯示錯誤並阻止新增(SPEC §12.2:不得覆寫原檔) */}
+                    {catsError && (
+                        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive"
+                           data-testid="category-load-error">
+                            分類清單無法讀取,新增與刪除已停用:{catsError}
+                        </p>
+                    )}
                     <div data-testid="category-list" className="grid max-h-64 gap-1.5 overflow-y-auto">
                         {cats.map(c => {
                             const builtin = BUILTIN_TYPES.includes(c);
@@ -193,7 +205,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                         <div className="flex gap-2">
                             <Input id="newcat" data-testid="category-name" value={catName}
                                    onChange={e => setCatName(e.target.value)} placeholder="例如:組織"/>
-                            <Button size="sm" data-testid="category-add" disabled={!catName.trim()} onClick={addCategory}>新增</Button>
+                            <Button size="sm" data-testid="category-add" disabled={!catName.trim() || !!catsError} onClick={addCategory}>新增</Button>
                         </div>
                         {catErr && <p className="text-xs text-destructive" data-testid="category-error">{catErr}</p>}
                     </div>

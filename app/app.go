@@ -38,6 +38,9 @@ type App struct {
 	research *research.Recorder // 研究記錄(§12.8);關閉時 Log 為 no-op
 	session  string             // 研究記錄的 session id(App 啟動時產生)
 
+	// 自訂分類清單寫入的測試注入點:nil = 暫存檔＋rename 寫入 categories.json
+	writeList func(data []byte) error
+
 	mu     sync.Mutex
 	agent  *agent.Agent
 	cancel context.CancelFunc
@@ -473,30 +476,71 @@ func (a *App) categoriesPath() string {
 	return filepath.Join(a.proj.Root, ".perkins", "categories.json")
 }
 
-func (a *App) loadCustomCategories() []string {
-	out := []string{}
+// loadCustomCategories 讀自訂分類。只有「檔案不存在」才是空清單;讀取或解析失敗
+// 回傳錯誤,不得把損毀清單冒充空清單後覆寫原檔(SPEC §12.2)。
+func (a *App) loadCustomCategories() ([]string, error) {
 	b, err := os.ReadFile(a.categoriesPath())
 	if err != nil {
-		return out
+		if errors.Is(err, os.ErrNotExist) {
+			return []string{}, nil
+		}
+		return nil, fmt.Errorf("讀取分類清單失敗: %w", err)
 	}
 	var list []string
-	if json.Unmarshal(b, &list) != nil {
-		return out
+	if err := json.Unmarshal(b, &list); err != nil {
+		return nil, fmt.Errorf("分類清單 %s 無法解析(請修復或先備份移除該檔): %w", a.categoriesPath(), err)
 	}
+	out := []string{}
 	for _, c := range list {
 		if c = strings.TrimSpace(c); c != "" {
 			out = append(out, c)
 		}
 	}
-	return out
+	return out, nil
 }
 
-// EntityTypes 回傳內建 + 自訂分類(未開作品時只有內建)。
-func (a *App) EntityTypes() []string {
+// EntityTypes 回傳內建 + 自訂分類(未開作品時只有內建)。清單損毀時回傳錯誤,
+// 前端顯示並阻止新增/刪除(SPEC §12.2)。
+func (a *App) EntityTypes() ([]string, error) {
 	if a.proj == nil {
-		return bible.Types
+		return bible.Types, nil
 	}
-	return append(append([]string{}, bible.Types...), a.loadCustomCategories()...)
+	custom, err := a.loadCustomCategories()
+	if err != nil {
+		return nil, err
+	}
+	return append(append([]string{}, bible.Types...), custom...), nil
+}
+
+// writeCategories 寫分類清單:預設以暫存檔＋rename 原子替換,避免截斷到一半損毀原檔。
+func (a *App) writeCategories(list []string) error {
+	b, _ := json.MarshalIndent(list, "", "  ")
+	if a.writeList != nil {
+		return a.writeList(b)
+	}
+	dir := filepath.Dir(a.categoriesPath())
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, "categories-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("寫入分類清單失敗: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, a.categoriesPath()); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("寫入分類清單失敗: %w", err)
+	}
+	return nil
 }
 
 // AddCategory 新增自訂分類,回傳更新後的清單。名稱去空白;不可空、不可與既有分類
@@ -505,6 +549,10 @@ func (a *App) AddCategory(name string) ([]string, error) {
 	if a.proj == nil {
 		return nil, errNoProject
 	}
+	custom, err := a.loadCustomCategories()
+	if err != nil {
+		return nil, err // 損毀清單不得被當空清單覆寫
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, errors.New("分類名稱不能是空的")
@@ -512,7 +560,7 @@ func (a *App) AddCategory(name string) ([]string, error) {
 	if strings.ContainsAny(name, `/\:*?"<>|`+"\r\n") {
 		return nil, errors.New(`分類名稱不能含路徑字元(\ / : * ? " < > | 與換行)`)
 	}
-	for _, e := range a.EntityTypes() {
+	for _, e := range append(append([]string{}, bible.Types...), custom...) {
 		if e == name {
 			return nil, fmt.Errorf("「%s」已經是分類了", name)
 		}
@@ -522,15 +570,11 @@ func (a *App) AddCategory(name string) ([]string, error) {
 			return nil, fmt.Errorf("「%s」是 Notion 匯入的特殊去處,不能當分類", name)
 		}
 	}
-	custom := append(a.loadCustomCategories(), name)
-	b, _ := json.MarshalIndent(custom, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(a.categoriesPath()), 0o755); err != nil {
+	custom = append(custom, name)
+	if err := a.writeCategories(custom); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(a.categoriesPath(), b, 0o644); err != nil {
-		return nil, err
-	}
-	return a.EntityTypes(), nil
+	return append(append([]string{}, bible.Types...), custom...), nil
 }
 
 // CategoryUsage 回傳分類底下的設定檔數(刪除確認對話框的數字來源)。
@@ -551,19 +595,24 @@ func (a *App) CategoryUsage(name string) (int, error) {
 	return n, nil
 }
 
-// DeleteCategory 刪除自訂分類(內建不可刪)。仍有設定檔時:先自動建立快照(G3),
-// 再把這些檔的 frontmatter type 改成「其他」(name/aliases/本文不動,檔案不刪);
-// 快照失敗就不動任何檔案。回傳被改歸「其他」的檔案數。
-func (a *App) DeleteCategory(name string) (int, error) {
+// DeleteCategory 刪除自訂分類(內建不可刪),回傳被改歸「其他」的檔案路徑。
+// 仍有設定檔時:先自動建立快照(G3),備好全部新內容後逐一寫入;任一寫入失敗就把
+// 已寫的檔案寫回原內容再回報,回復也失敗時錯誤列出受影響路徑與快照;
+// 清單以 writeCategories 寫入,清單寫入失敗同樣回復已改的檔案。
+// name/aliases/本文不動,檔案不刪;快照失敗就不動任何檔案。
+func (a *App) DeleteCategory(name string) ([]string, error) {
 	if a.proj == nil {
-		return 0, errNoProject
+		return nil, errNoProject
 	}
 	for _, b := range bible.Types {
 		if b == name {
-			return 0, errors.New("內建分類不能刪除")
+			return nil, errors.New("內建分類不能刪除")
 		}
 	}
-	custom := a.loadCustomCategories()
+	custom, err := a.loadCustomCategories()
+	if err != nil {
+		return nil, err // 損毀清單不得被覆寫
+	}
 	idx := -1
 	for i, c := range custom {
 		if c == name {
@@ -571,50 +620,80 @@ func (a *App) DeleteCategory(name string) (int, error) {
 		}
 	}
 	if idx < 0 {
-		return 0, errors.New("找不到這個自訂分類")
+		return nil, errors.New("找不到這個自訂分類")
 	}
 	ents, err := bible.Load(a.proj)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var affected []bible.Entity
+	paths := []string{}
 	for _, e := range ents {
 		if e.Type == name {
 			affected = append(affected, e)
-		}
-	}
-	if len(affected) > 0 {
-		paths := make([]string, 0, len(affected))
-		for _, e := range affected {
 			paths = append(paths, e.Path)
 		}
-		st, err := a.snaps()
+	}
+	newList := make([]string, 0, len(custom)-1)
+	newList = append(newList, custom[:idx]...)
+	newList = append(newList, custom[idx+1:]...)
+	if len(affected) == 0 {
+		if err := a.writeCategories(newList); err != nil {
+			return nil, err
+		}
+		return paths, nil
+	}
+	st, err := a.snaps()
+	if err != nil {
+		return nil, err
+	}
+	snap, err := st.Take("刪除分類「"+name+"」前", "before-delete-category", paths)
+	if err != nil {
+		return nil, fmt.Errorf("建立快照失敗,分類未刪除: %w", err)
+	}
+	// 先備好全部新內容:讀檔或改寫失敗時尚未動過任何磁碟檔案
+	type change struct{ path, orig, next string }
+	changes := make([]change, 0, len(affected))
+	for _, e := range affected {
+		orig, err := a.proj.ReadFile(e.Path)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		if _, err := st.Take("刪除分類「"+name+"」前", "before-delete-category", paths); err != nil {
-			return 0, fmt.Errorf("建立快照失敗,分類未刪除: %w", err)
+		next, err := bible.SetHeader(orig, bible.TypeOther, e.Name, e.Aliases)
+		if err != nil {
+			return nil, err
 		}
-		for _, e := range affected {
-			content, err := a.proj.ReadFile(e.Path)
-			if err != nil {
-				return 0, err
-			}
-			next, err := bible.SetHeader(content, bible.TypeOther, e.Name, e.Aliases)
-			if err != nil {
-				return 0, err
-			}
-			if err := a.proj.WriteFile(e.Path, next); err != nil {
-				return 0, err
-			}
-		}
+		changes = append(changes, change{e.Path, orig, next})
 	}
-	custom = append(custom[:idx], custom[idx+1:]...)
-	b, _ := json.MarshalIndent(custom, "", "  ")
-	if err := os.WriteFile(a.categoriesPath(), b, 0o644); err != nil {
-		return 0, err
+	rollback := func(done []change) error {
+		var failed []string
+		for _, c := range done {
+			if err := a.proj.WriteFile(c.path, c.orig); err != nil {
+				failed = append(failed, c.path)
+			}
+		}
+		if len(failed) > 0 {
+			return fmt.Errorf("回復失敗的檔案:%s;可用快照「%s」(%s)還原全部", strings.Join(failed, "、"), snap.Label, snap.ID)
+		}
+		return nil
 	}
-	return len(affected), nil
+	var done []change
+	for _, c := range changes {
+		if err := a.proj.WriteFile(c.path, c.next); err != nil {
+			if rerr := rollback(done); rerr != nil {
+				return nil, fmt.Errorf("改歸「其他」失敗: %w;%v", err, rerr)
+			}
+			return nil, fmt.Errorf("改歸「其他」失敗(已回復原內容,分類未刪除,快照 %s): %w", snap.ID, err)
+		}
+		done = append(done, c)
+	}
+	if err := a.writeCategories(newList); err != nil {
+		if rerr := rollback(done); rerr != nil {
+			return nil, fmt.Errorf("寫入分類清單失敗: %w;%v", err, rerr)
+		}
+		return nil, fmt.Errorf("寫入分類清單失敗(已回復檔案,分類未刪除,快照 %s): %w", snap.ID, err)
+	}
+	return paths, nil
 }
 
 func (a *App) ParseEntity(rel, content string) bible.Entity { return bible.Parse(rel, content) }
@@ -1187,7 +1266,11 @@ func (a *App) NotionApply(src string, choices map[string]string, pages map[strin
 	if _, err := s.Take("Notion 匯入前", "before-import", nil); err != nil {
 		return nil, fmt.Errorf("快照失敗,未匯入: %w", err)
 	}
-	return notion.Apply(a.proj, src, choices, pages, a.EntityTypes())
+	types, err := a.EntityTypes()
+	if err != nil {
+		return nil, err
+	}
+	return notion.Apply(a.proj, src, choices, pages, types)
 }
 
 func (a *App) NotionUndo(id string) ([]string, error) {

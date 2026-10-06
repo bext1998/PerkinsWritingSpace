@@ -37,7 +37,7 @@ export function ConvertOptions():Promise<Array<main.Option>>;
 
 export function CopyChapter(arg1:string,arg2:string):Promise<string>;
 
-export function DeleteCategory(arg1:string):Promise<number>;
+export function DeleteCategory(arg1:string):Promise<Array<string>>;
 
 export function DeleteProfile(arg1:string):Promise<main.SettingsView>;
 
