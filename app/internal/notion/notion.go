@@ -55,7 +55,7 @@ type Plan struct {
 	Images int     `json:"images"` // 匯出中的圖片數(不匯入,只告知)
 }
 
-// Target 是作者為一組選擇的去處:bible.Types 之一(→ canon/)、"筆記"、"大綱"、"略過"。
+// Target 是作者為一組選擇的去處:分類(內建或自訂,由呼叫者給定 types,→ canon/)、"筆記"、"大綱"、"略過"。
 const (
 	TargetNotes   = "筆記"
 	TargetOutline = "大綱"
@@ -239,7 +239,7 @@ type Result struct {
 	Skipped []string `json:"skipped"` // 「來源 → 原因」
 }
 
-func targetDir(target string) (string, string, bool) {
+func targetDir(target string, types []string) (string, string, bool) {
 	switch target {
 	case TargetSkip, "":
 		return "", "", false
@@ -248,7 +248,7 @@ func targetDir(target string) (string, string, bool) {
 	case TargetOutline:
 		return project.OutlineDir, "", true
 	}
-	for _, t := range bible.Types {
+	for _, t := range types {
 		if t == target {
 			return project.CanonDir, t, true
 		}
@@ -258,8 +258,9 @@ func targetDir(target string) (string, string, bool) {
 
 // Apply 依作者的選擇匯入。choices:群組 key → 去處;pages:逐頁覆寫(頁面 File.Src → 去處,
 // 與群組同一套值),頁面有覆寫就用覆寫,否則用所屬群組的去處;key 不在掃描結果中時忽略。
-// 同名檔案一律略過並列入報告,絕不覆蓋(B9)。
-func Apply(p *project.Project, src string, choices map[string]string, pages map[string]string) (*Result, error) {
+// 同名檔案一律略過並列入報告,絕不覆蓋(B9)。types:可匯入 canon/ 的分類清單
+// (內建+自訂,SPEC §12.2),targetDir 依它驗證去處。
+func Apply(p *project.Project, src string, choices map[string]string, pages map[string]string, types []string) (*Result, error) {
 	plan, err := Scan(src)
 	if err != nil {
 		return nil, err
@@ -276,8 +277,12 @@ func Apply(p *project.Project, src string, choices map[string]string, pages map[
 			if v, ok := pages[f.Src]; ok {
 				target = v
 			}
-			dir, typ, ok := targetDir(target)
+			dir, typ, ok := targetDir(target, types)
 			if !ok {
+				// 不認得的去處不得靜默跳過:列入略過報告並附原因(第二輪返工)
+				if target != TargetSkip && target != "" {
+					res.Skipped = append(res.Skipped, f.Src+" → 去處「"+target+"」不在可匯入的分類清單,已略過")
+				}
 				continue
 			}
 			if f.Name == "" {

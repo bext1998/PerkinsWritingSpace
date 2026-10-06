@@ -4,7 +4,7 @@ import {bible} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/basic';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
-import {TYPE_ORDER} from './panels/types';
+import {useCategories} from './panels/types';
 
 interface Props {
     entity: bible.Entity;
@@ -27,13 +27,14 @@ export default function EntityHeader({entity, onApply}: Props) {
     }, [entity.type, entity.name, (entity.aliases ?? []).join('、')]);
 
     const changed = type !== entity.type || name !== entity.name || splitAliases(aliases).join('、') !== (entity.aliases ?? []).join('、');
-    const types = TYPE_ORDER.includes(type) ? TYPE_ORDER : [...TYPE_ORDER, type];
+    const [cats] = useCategories(); // 內建+自訂分類(SPEC §12.2)
+    const types = cats.includes(type) ? cats : [...cats, type];
 
     return (
         <form className="flex shrink-0 items-center gap-2 border-b bg-sidebar/60 px-4 py-2"
               onSubmit={e => { e.preventDefault(); onApply(type, name.trim(), splitAliases(aliases)); }}>
             <Select value={type} onValueChange={setType}>
-                <SelectTrigger className="h-8 w-24 text-sm"><SelectValue/></SelectTrigger>
+                <SelectTrigger className="h-8 w-24 text-sm" data-testid="entity-header-type"><SelectValue/></SelectTrigger>
                 <SelectContent>{types.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
             </Select>
             <Input className="h-8 w-40 text-sm" value={name} onChange={e => setName(e.target.value)} placeholder="名稱" data-testid="entity-name"/>

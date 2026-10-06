@@ -1,5 +1,27 @@
 # PROGRESS.md
 
+## 2026-10-06 — PR #17 第三輪返工:目錄安全與在途查詢補查
+
+- **#1(Major,資料安全)E2E 刪除非本次建立目錄**:`e2e.js` 第二專案 B 改用 `fs.mkdtempSync(path.join(os.tmpdir(), 'perkins-e2e-b-'))` 唯一目錄,**絕不 rm 預先存在的 `PROJ-b`**;清理只針對本次建立的路徑(guard 目錄/檔案若非本輪建立就不動)。路徑統一正斜線(反斜線會讓 CSS 屬性選擇器的 `\` 跳脫失敗,卡片選擇器永遠匹配不到——實測踩過)。回歸(回歸#8):跑前預先建立 `PROJ-b` 並放檔案 → 跑完檔案仍在;紅燈=舊 rm 實作把整個目錄刪掉(check FAIL + 目錄消失)。
+- **#2(Minor)舊世代 finally 清掉新世代 in-flight**:`types.ts` 把 `loading` 布林換成 `loadingGen`(在途查詢所屬世代)＋`pending` 旗標——只有「目前世代且仍持有該請求者」才能清 in-flight/補查;舊世代 finally 不動新世代狀態;在途期間收到的刷新記 `pending`,完成後再查一次(不丟棄);`setCategoriesProject` 切作品時重置持有權與 pending;掛載時只判 `!loaded`(在途由 pending 自行補)。
+- **驗證方式與紅燈證據(回歸#9,可控 Promise)**:E2E 用一次性 `EntityTypes` 覆寫(call1=A 掛起回陳舊內建清單、call2=B 掛起回「缺乙新增」的陳舊清單、其後走原函式)編排完成順序:A 在途 → 切 B → **釋放 A(舊回應先回)** → B 清單變更(在途加「乙新增分類」)→ **等待 1s 讓舊碼會啟的第二份查詢先落地** → 釋放 B(**陳舊回應最後到達**)→ 最終清單必須同時有「乙分類」與「乙新增分類」。**紅燈**:修補缺席(舊 `loading` 布林)跑兩輪——第一輪發現時序假設反了(新清單晚到),加 1s 等待後第二輪確定 FAIL(陳舊覆蓋新清單);綠燈 PASS。過程中另修一個我自己寫的選擇器 typo(`]` 多餘)與 mkdtemp 反斜線問題,均如實記錄。
+- **驗證**:`go test -count=1 ./...` 全綠;`npm run build` 通過;E2E(E2E_SKIP_AI=1)**285/286**(回歸#8/#9 與既有全過,僅「複製到平台顯示結果」舊 flake——本分支無 PR #18 修正,照實記錄)。
+## 2026-10-06 — PR #17 第二輪返工:刪除在途保護與分類快照綁定作品
+
+- **#1 刪除在途可中斷(Major)**:`BiblePanel` 管理對話框加 `deleting` 狀態——在途時 `onOpenChange` 擋住 Esc/外點/關閉鈕(對話框是 modal,關不掉就擋住編輯與切檔)、確認鈕停用並顯示「刪除中…」;`Workspace.deleteCategory` 套用重讀內容前確認目前開啟的檔案仍是該路徑,不是就不套用;刪除成功但重讀失敗→**關閉目前檔案**(回到未選檔狀態)並拋錯提示作者重新開啟,舊 buffer 不得再存回已刪除的 type(此時無未存內容,刪除前已存檔)。
+- **#2 分類快照跨作品沿用(Major)**:`panels/types.ts` 共用狀態綁定作品——新增 `setCategoriesProject(路徑)`,切作品時清空清單/錯誤/載入狀態並重查,`generation` 世代計數忽略上一作品的在途結果;`App.tsx` 在 tree 變化時以新綁定 `ProjectPath()`(作品路徑)同步綁定,同作品的 tree 刷新(同路徑)不重置。附帶:`notion.Apply` 對不認得的去處不再靜默 `continue`,列入略過報告並附原因(新 Go 測試)。
+- **驗證**:`go test -count=1 ./...` 全過(notion 新測試:未知去處入報告);`npm run build` 通過;E2E(E2E_SKIP_AI=1)新增 4 項回歸:回歸#5(延遲 DeleteCategory 期間按 Esc/外點對話框仍在、確認鈕停用顯示刪除中)、回歸#6(覆寫 ReadFile 失敗→檔案關閉、磁碟 type 其他、提示重新開啟)、回歸#7×2(A→書櫃→B 後管理清單與 EntityHeader 只顯示 B 的分類;B 以 fs 建第二專案 + ListRecent 覆寫開卡,回程還原並重開 A)。**破壞驗證**:修補缺席先跑→4 項 FAIL(基線不受影響);完成後四項修補同時拿掉(對話框不擋關閉、不關檔、快取不綁作品、Notion 靜默略過)→4 項再度 FAIL(含 R6 診斷 `closed=false`、toast 無「重新開啟」)與 Go T-notion FAIL;還原後最終跑 **283/284** 全綠(除下述 flake)。
+- **破壞驗證插曲如實記錄**:備份指令與破壞 edit 誤放在同一個平行工具區塊,備份到的是「已破壞」檔案,sha256 校驗因此自我循環(比對的是破壞檔)。發現後以四段精確反向 edit 還原(無 TEMP-BREAK 殘留、`go test`/`npm run build`/最終 E2E 全綠確認還原正確)。教訓:備份與破壞必須分開執行、校驗基線要在破壞前單獨完成。
+- **已知 flake 如實記錄**:「複製到平台顯示結果」(既有檢查,讀到上一個「摘要已儲存」toast)本輪 6 次跑了 5 次失敗,即 PR #12 已記錄的時序問題;PR #18 已修正,本分支依指示不修。其中 green3 輪曾達 **284/284**。
+## 2026-10-06 — PR #17 返工:Hemingway 審查四項修正
+
+- **#1 刪除後編輯器寫回舊 type(Major)**:刪除改由 Workspace 協調(`Workspace.tsx` `deleteCategory`):按確認刪除先 `await save()`(序列化存檔迴圈,保存未存內容;失敗即中止、不動檔案),存檔成功才呼叫 `DeleteCategory`(快照因此含作者最新內容);完成後若目前開啟的檔案在受影響清單(`DeleteCategory` 改回傳路徑)內就從磁碟重載 text/latest/dirty 並 `reloadKey+1`,之後存檔不會把舊 type 寫回;確認對話框開著時編輯器被擋,未另加鎖。
+- **#2 批次改型部分失敗(Major)**:`app.go DeleteCategory` 改「先備好全部新內容 → 逐一寫入 → 任一失敗回復已寫檔案」;回復失敗時錯誤列出受影響路徑與快照標籤/ID;清單改 `writeCategories` 暫存檔＋rename 原子寫入,清單寫入失敗同樣回復檔案;前端失敗分支 `reloadCats()+refreshIndex()` 畫面反映實際狀態。
+- **#3 損毀清單被當空清單(Major)**:`loadCustomCategories` 只有 `os.ErrNotExist` 才回空;讀取/解析失敗回傳錯誤(`EntityTypes` 改 `([]string, error)`,JS 綁定型別不變);`AddCategory`/`DeleteCategory` 因此拒絕操作、不得覆寫原檔;管理分類顯示 `category-load-error` 並停用新增。
+- **#4 清單不同步(Minor)**:`panels/types.ts` 改模組層級共用狀態(訂閱/通知),所有 `useCategories` 消費者共用一份清單,新增/刪除後全部重讀——已開啟的 EntityHeader 類型選單立即更新(SelectTrigger 加 `entity-header-type` testid)。
+- **SPEC §12.2**:自訂分類新增「健壯性」四點(刪除前先存檔、批次原子、損毀不當空、清單同步)。
+- **驗證**:`go test -count=1 ./...` 全過(新增 #2a 第二檔失敗回復/清單寫入失敗回復/損毀不覆蓋 + 既有測試適配 `DeleteCategory` 回傳路徑);`npm run build` 通過;E2E(E2E_SKIP_AI=1)**280/280 passed,略過 8 項**(新增回歸#1、#4)。**破壞驗證(各自紅燈)**:①修補缺席先跑 → 回歸#1、#4 FAIL(基線不中斷);②Go 紅燈先寫 → 第二檔失敗未回復、損毀被覆寫成 `["新分類"]` 兩項 FAIL(對舊實作);③完成後四項修補同時拿掉(rollback 改 no-op、損毀當空、不存檔不重載、不訂閱共享通知)→ #2a/#2b/#3 Go FAIL + 回歸#1/#4 E2E FAIL,還原後三檔 sha256 與綠燈輪完全吻合。如實記錄:「複製到平台顯示結果」在 red/green 各失敗一次(PROGRESS #12 已記錄的既有時序 flake,與本次無關),重跑後 280/280。
+
 ## 2026-10-06 — 修正 Notion 匯入展開後排版錯亂(SPEC §16 第 8 項)
 
 - 根因:展開後的逐頁清單渲染在「匯入為」那一欄(`w-40`)的儲存格裡,清單列(頁名＋`w-44` 選單)比欄寬寬,自動表格版面因此重新分配欄寬:「匯入為」欄被撐大、「頁數」欄標題被擠成直排、資料夾列被撐高。

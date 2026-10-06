@@ -4,7 +4,7 @@ import {
     PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
-    ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, GetSettings, GetTree, ParseEntity, ReadFile,
+    ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, DeleteCategory, GetSettings, GetTree, ParseEntity, ReadFile,
     ResearchOpenFile, SaveFile, SetChapterStatus, WordCount,
 } from '../wailsjs/go/main/App';
 import {bible, main, project} from '../wailsjs/go/models';
@@ -195,6 +195,38 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const saveRef = useRef(save);
     saveRef.current = save;
 
+    // 刪除分類(SPEC §12.2 返工#1):由 Workspace 協調——先走序列化存檔迴圈保存未存內容
+    // (存檔失敗就中止,不動任何檔案,快照才含作者最新內容),後端完成快照+改歸「其他」後,
+    // 若目前開啟的檔案受影響就從磁碟重載(此時無未存內容,不丟字),
+    // 避免之後存檔把已被刪除的舊 type 寫回。確認對話框開著時編輯器被擋,無需另加鎖。
+    const deleteCategory = useCallback(async (name: string) => {
+        await save();
+        const affected = await DeleteCategory(name);
+        const cur = latest.current.current;
+        refreshIndex();
+        if (!cur || !affected.includes(cur)) return;
+        let content: string;
+        try {
+            content = await ReadFile(cur);
+        } catch (e) {
+            // 刪除成功但重讀失敗:關掉目前檔案(回到未選檔狀態),舊 buffer 不得再存回已刪除的
+            // type(SPEC §12.2 第二輪);此時沒有未存內容(刪除前已存檔),提示作者重新開啟。
+            loaded.current = null;
+            setCurrent(null);
+            setText('');
+            setDirty(false);
+            latest.current = {...latest.current, current: null, text: '', dirty: false};
+            throw new Error(`「${cur}」已改歸其他,但重新讀取失敗:${errText(e)}。請重新開啟該檔案繼續編輯。`);
+        }
+        if (latest.current.current !== cur) return; // 期間已切到別的檔案:不套用重讀內容
+        loaded.current = cur;
+        setText(content);
+        latest.current = {...latest.current, text: content, dirty: false};
+        setDirty(false);
+        editVersion.current++;
+        setReloadKey(k => k + 1);
+    }, [save, refreshIndex]);
+
     // 緊急存檔:最外層 ErrorBoundary 在 componentDidCatch 時先取救援資料(path+原文)再呼叫 save。
     // 用讀 latest ref 的同一套邏輯,但不依賴卸載後的 setState,只做 SaveFile 本身。
     // 關閉流程走 saveAll(序列化存檔迴圈):崩潰救援只能單次寫入,關閉時 App 還掛著,要用同一條迴圈。
@@ -351,7 +383,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         </Tip>
     );
 
-    const panelProps = {tree, current, counts, index, cfg, openFile, refreshTree, refreshIndex, notify, fail, ask, save};
+    const panelProps = {tree, current, counts, index, cfg, openFile, refreshTree, refreshIndex, notify, fail, ask, save, deleteCategory};
 
     const crumbs = chapter
         ? [volume?.title || '未命名卷', chapter.title]

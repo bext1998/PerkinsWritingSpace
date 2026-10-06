@@ -6,6 +6,10 @@ export function AcceptProposal(arg1, arg2) {
   return window['go']['main']['App']['AcceptProposal'](arg1, arg2);
 }
 
+export function AddCategory(arg1) {
+  return window['go']['main']['App']['AddCategory'](arg1);
+}
+
 export function ApplyEntityHeader(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ApplyEntityHeader'](arg1, arg2, arg3, arg4);
 }
@@ -20,6 +24,10 @@ export function BibleIndex() {
 
 export function CancelAsk() {
   return window['go']['main']['App']['CancelAsk']();
+}
+
+export function CategoryUsage(arg1) {
+  return window['go']['main']['App']['CategoryUsage'](arg1);
 }
 
 export function ChapterWordCounts() {
@@ -44,6 +52,10 @@ export function ConvertOptions() {
 
 export function CopyChapter(arg1, arg2) {
   return window['go']['main']['App']['CopyChapter'](arg1, arg2);
+}
+
+export function DeleteCategory(arg1) {
+  return window['go']['main']['App']['DeleteCategory'](arg1);
 }
 
 export function DeleteProfile(arg1) {
@@ -156,6 +168,10 @@ export function PreviewContext(arg1) {
 
 export function PreviewExport(arg1, arg2) {
   return window['go']['main']['App']['PreviewExport'](arg1, arg2);
+}
+
+export function ProjectPath() {
+  return window['go']['main']['App']['ProjectPath']();
 }
 
 export function ReadFile(arg1) {

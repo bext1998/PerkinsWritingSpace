@@ -13,6 +13,8 @@ import {settings} from '../models';
 
 export function AcceptProposal(arg1:string,arg2:any):Promise<proposal.Proposal>;
 
+export function AddCategory(arg1:string):Promise<Array<string>>;
+
 export function ApplyEntityHeader(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<string>;
 
 export function AskAI(arg1:agent.AskParams):Promise<void>;
@@ -20,6 +22,8 @@ export function AskAI(arg1:agent.AskParams):Promise<void>;
 export function BibleIndex():Promise<bible.Index>;
 
 export function CancelAsk():Promise<void>;
+
+export function CategoryUsage(arg1:string):Promise<number>;
 
 export function ChapterWordCounts():Promise<Record<string, number>>;
 
@@ -32,6 +36,8 @@ export function ConfirmQuit():Promise<void>;
 export function ConvertOptions():Promise<Array<main.Option>>;
 
 export function CopyChapter(arg1:string,arg2:string):Promise<string>;
+
+export function DeleteCategory(arg1:string):Promise<Array<string>>;
 
 export function DeleteProfile(arg1:string):Promise<main.SettingsView>;
 
@@ -88,6 +94,8 @@ export function PickNotionExport(arg1:boolean):Promise<string>;
 export function PreviewContext(arg1:agent.AskParams):Promise<agent.Preview>;
 
 export function PreviewExport(arg1:string,arg2:publish.Rules):Promise<string>;
+
+export function ProjectPath():Promise<string>;
 
 export function ReadFile(arg1:string):Promise<string>;
 
