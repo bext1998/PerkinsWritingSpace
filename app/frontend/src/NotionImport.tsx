@@ -100,11 +100,11 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                 <Fragment key={g.key}>
                                     <tr className="border-t">
                                         <td className="py-2 pr-3">
-                                            <button type="button" className="flex items-center gap-1 text-left"
+                                            <button type="button" className="flex w-full min-w-0 items-center gap-1 text-left" title={g.label}
                                                     data-testid={`expand-${g.key || 'root'}`}
                                                     onClick={() => setOpen(o => ({...o, [g.key]: !o[g.key]}))}>
                                                 {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0"/> : <ChevronRight className="h-3.5 w-3.5 shrink-0"/>}
-                                                <span>{g.label}</span>
+                                                <span className="min-w-0 truncate" data-testid={`group-label-${g.key || 'root'}`}>{g.label}</span>
                                             </button>
                                             <div className="truncate text-xs text-muted-foreground">
                                                 {g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}

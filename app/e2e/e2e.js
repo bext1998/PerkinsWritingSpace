@@ -267,8 +267,9 @@ const maybe = async (name, fn, detail = '') => {
         const h2 = hash('manuscript/第二章.md');
         await page.click('[data-testid=copy-platform]');
         await page.click('[role=menuitem]:has-text("角角者")');
-        await page.waitForSelector('[data-testid=toast]');
-        const toastText = await page.textContent('[data-testid=toast]');
+        // 上一步「摘要已儲存」的通知可能還在畫面上:等到複製結果的通知出現再讀,逾時就讀當下內容讓檢查失敗
+        await page.waitForSelector('[data-testid=toast]:has-text("已複製")', {timeout: 5000}).catch(() => {});
+        const toastText = (await page.$$eval('[data-testid=toast]', els => els.map(e => e.textContent))).join(' | ');
         check('複製到平台顯示結果', toastText.includes('已複製'), toastText);
         check('B8 複製不改動稿件', hash('manuscript/第二章.md') === h2);
 
@@ -1008,6 +1009,21 @@ const maybe = async (name, fn, detail = '') => {
             });
             check('Notion 逐頁清單不在「匯入為」欄內', lay.boxLeft < lay.selLeft, JSON.stringify(lay));
             check('Notion 逐頁清單佔整列寬度', lay.boxW >= lay.tableW * 0.8, JSON.stringify(lay));
+        }
+        // 長資料夾名稱(Notion 匯出常見長英數名稱)要在第一欄內截斷,不得侵入「頁數」欄;設定頁最窄 900×600
+        {
+            await page.setViewportSize({width: 900, height: 600});
+            const lay = await page.evaluate(() => {
+                const label = document.querySelector('[data-testid=group-label-人物]');
+                const orig = label.textContent;
+                label.textContent = 'A'.repeat(120); // 只為量測版面,量完還原
+                const right = label.getBoundingClientRect().right;
+                const th = [...document.querySelectorAll('th')].find(t => t.textContent.trim() === '頁數').getBoundingClientRect();
+                label.textContent = orig;
+                return {labelRight: right, pagesLeft: th.left};
+            });
+            check('Notion 長資料夾名稱不侵入「頁數」欄', lay.labelRight <= lay.pagesLeft, JSON.stringify(lay));
+            await page.setViewportSize({width: 1440, height: 900});
         }
         // 三頁分別設:艾莉絲=跟隨資料夾(人物→角色)、王都=地點、草稿=略過
         const setPage = async (name, target) => {
