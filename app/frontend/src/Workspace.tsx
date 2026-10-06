@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
-    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, NotebookPen, PanelLeftClose, PanelRightClose,
+    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelLeftClose, PanelRightClose,
     PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
@@ -21,7 +21,7 @@ import EntityHeader from './EntityHeader';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/basic';
 import {
-    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger, Tip,
+    DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tip,
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
@@ -100,6 +100,21 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [summaryTick, setSummaryTick] = useState(0);
     const editor = useRef<EditorHandle>(null);
     const loaded = useRef<string | null>(null);
+    // 工具列寬度退化(SPEC §17.1):用 ResizeObserver 量工具列自身寬度(contentRect 不含 px-4 內距),
+    // 依寬度把按鈕從「完整文字」→「只剩圖示(保留 title/aria-label)」→「隱藏次要按鈕」三段退化。
+    // 588/408 是實測門檻:900×600、側欄+資訊欄都開時主編輯區約 288px(content 256)落最窄段;
+    // 1280×800(主編輯區約 668,content 636)回到完整標籤。Tailwind 3.4 未裝 container-queries,不為此加依賴。
+    const [tbW, setTbW] = useState(Number.MAX_SAFE_INTEGER);
+    const tbRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const el = tbRef.current;
+        if (!el) return;
+        const ro = new ResizeObserver(entries => setTbW(entries[0].contentRect.width));
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, []);
+    const iconOnly = tbW < 588;
+    const tight = tbW < 408;
 
     const notify = useCallback((t: Toast) => setToast(t), []);
     const fail = useCallback((e: unknown) => setToast({text: errText(e), kind: 'error'}), []);
@@ -395,32 +410,40 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {/* 主編輯區 */}
             <main className="flex min-w-0 flex-1 flex-col bg-paper">
-                <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+                <div ref={tbRef} data-testid="editor-toolbar" className="flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b px-4">
                     {current ? (
                         <>
-                            <div className="flex min-w-0 items-center gap-1.5 text-sm">
-                                {chapter ? <FileText className="h-4 w-4 text-muted-foreground"/> : <ScrollText className="h-4 w-4 text-muted-foreground"/>}
+                            <div data-testid="crumbs" className="flex min-w-0 items-center gap-1.5 overflow-hidden text-sm">
+                                {chapter
+                                    ? <FileText className={cn('h-4 w-4 shrink-0 text-muted-foreground', tight && 'hidden')}/>
+                                    : <ScrollText className={cn('h-4 w-4 shrink-0 text-muted-foreground', tight && 'hidden')}/>} 
                                 {crumbs.map((c, i) => (
-                                    <span key={i} className={cn('truncate', i === crumbs.length - 1 ? 'font-medium' : 'text-muted-foreground')}>
-                                        {i > 0 && <span className="mx-1.5 text-muted-foreground/60">›</span>}{c}
+                                    <span key={i}
+                                          className={cn('min-w-0 truncate', i === crumbs.length - 1 ? 'font-medium' : 'text-muted-foreground',
+                                              i < crumbs.length - 1 && tight && 'hidden')}>
+                                        {i > 0 && !tight && <span className="mx-1.5 text-muted-foreground/60">›</span>}{c}
                                     </span>
                                 ))}
-                                {dirty && <span className="ml-1 h-2 w-2 rounded-full bg-primary" title="尚未儲存"/>}
+                                {dirty && <span className="ml-1 h-2 w-2 shrink-0 rounded-full bg-primary" title="尚未儲存"/>}
                             </div>
                             {chapter && (
-                                <button onClick={() => setStatus(chapter.path, chapter.status === 'done' ? 'draft' : 'done')}>
+                                <button data-testid="status-badge" className="shrink-0" onClick={() => setStatus(chapter.path, chapter.status === 'done' ? 'draft' : 'done')}>
                                     {chapter.status === 'done'
-                                        ? <Badge variant="success"><CircleCheck className="h-3 w-3"/>完成</Badge>
-                                        : <Badge variant="secondary"><CircleDashed className="h-3 w-3"/>草稿</Badge>}
+                                        ? <Badge variant="success" className="shrink-0 whitespace-nowrap"><CircleCheck className="h-3 w-3"/>完成</Badge>
+                                        : <Badge variant="secondary" className="shrink-0 whitespace-nowrap"><CircleDashed className="h-3 w-3"/>草稿</Badge>}
                                 </button>
                             )}
                             <div className="flex-1"/>
                             {chapter && (
                                 <>
-                                    <Button variant="ghost" size="sm" onClick={() => setSummaryFor(chapter.path)}><ScrollText/>摘要</Button>
+                                    <Button variant="ghost" size="sm" className={cn('shrink-0', tight && 'hidden')}
+                                            aria-label="章節摘要" title="章節摘要"
+                                            onClick={() => setSummaryFor(chapter.path)}><ScrollText/>{!iconOnly && '摘要'}</Button>
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="sm" data-testid="copy-platform"><Share2/>複製到平台</Button>
+                                            <Button variant="ghost" size="sm" data-testid="copy-platform"
+                                                    className={cn('shrink-0', tight && 'hidden')}
+                                                    aria-label="複製到平台" title="複製到平台"><Share2/>{!iconOnly && '複製到平台'}</Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
                                             <DropdownMenuLabel>複製本章為…</DropdownMenuLabel>
@@ -436,15 +459,52 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
                             <Button size="sm"
                                     data-testid="save-button"
+                                    className="shrink-0"
                                     variant={dirty ? 'default' : 'ghost'}
                                     disabled={saving || !dirty}
                                     onClick={saveNow}
-                                    title="儲存(Ctrl+S)">
-                                <Save/>{saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}
+                                    title="儲存(Ctrl+S)"
+                                    aria-label={saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}>
+                                <Save/>{!iconOnly && (saving ? '儲存中…' : dirty ? '儲存' : '已儲存')}
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"><History/>版本</Button>
+                            <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"
+                                    className={cn('shrink-0', tight && 'hidden')}
+                                    aria-label="版本" title="版本"><History/>{!iconOnly && '版本'}</Button>
+                            {/* 最窄段:次要功能收進「更多」下拉,功能一個都不能少(SPEC §17.1 窄寬度不得讓功能無法觸及) */}
+                            {tight && (
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="iconSm" data-testid="toolbar-more" className="shrink-0"
+                                                aria-label="更多操作" title="更多操作">
+                                            <MoreHorizontal/>
+                                        </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                        <DropdownMenuItem disabled={!chapter}
+                                            onSelect={() => chapter && setSummaryFor(chapter.path)}>
+                                            <ScrollText/>章節摘要
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onSelect={() => setVersions(true)}>
+                                            <History/>版本
+                                        </DropdownMenuItem>
+                                        {chapter && !!cfg?.platforms?.length && (
+                                            <>
+                                                <DropdownMenuSeparator/>
+                                                <DropdownMenuLabel>複製到平台為…</DropdownMenuLabel>
+                                                {cfg.platforms.map(p => (
+                                                    <DropdownMenuItem key={p.id} onSelect={() => copyTo(chapter.path, p.id, p.name)}>
+                                                        {p.name}{!p.verified && <span className="ml-auto text-xs text-muted-foreground">未驗證</span>}
+                                                    </DropdownMenuItem>
+                                                ))}
+                                            </>
+                                        )}
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
+                            )}
                             <Tip label={inspector ? '收合資訊欄' : '展開資訊欄'} side="bottom">
-                                <Button variant="ghost" size="iconSm" onClick={() => setInspector(v => !v)}>
+                                <Button variant="ghost" size="iconSm" data-testid="toggle-inspector" className="shrink-0"
+                                        aria-label={inspector ? '收合資訊欄' : '展開資訊欄'}
+                                        onClick={() => setInspector(v => !v)}>
                                     {inspector ? <PanelRightClose/> : <PanelRightOpen/>}
                                 </Button>
                             </Tip>
@@ -470,15 +530,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         <p className="text-sm">從左側選一章開始寫作,或新增章節。</p>
                     </div>
                 )}
-                {/* 狀態列 */}
-                <footer className="flex h-7 shrink-0 items-center gap-4 border-t px-4 text-xs text-muted-foreground">
-                    {chapter && <span data-testid="count-chapter">本章 {liveCount.toLocaleString()} 字</span>}
-                    {volume && <span>本卷 {volumeCount.toLocaleString()} 字</span>}
-                    <span>全書 {totalCount.toLocaleString()} 字</span>
-                    {current && !chapter && <span>{liveCount.toLocaleString()} 字</span>}
+                {/* 狀態列:不換行、不溢出;最窄段省略「本卷」「全書」,模型名以省略號截斷(SPEC §17.1) */}
+                <footer data-testid="statusbar" className="flex h-7 shrink-0 items-center gap-4 overflow-hidden border-t px-4 text-xs text-muted-foreground">
+                    {chapter && <span data-testid="count-chapter" className="shrink-0 whitespace-nowrap">本章 {liveCount.toLocaleString()} 字</span>}
+                    {volume && !tight && <span className="shrink-0 whitespace-nowrap">本卷 {volumeCount.toLocaleString()} 字</span>}
+                    <span className={cn('shrink-0 whitespace-nowrap', tight && 'hidden')}>全書 {totalCount.toLocaleString()} 字</span>
+                    {current && !chapter && <span className="shrink-0 whitespace-nowrap">{liveCount.toLocaleString()} 字</span>}
                     <div className="flex-1"/>
-                    {current && <span>{dirty ? '未儲存' : '已儲存'}</span>}
-                    {activeProfile && <span>AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
+                    {current && <span className="shrink-0 whitespace-nowrap">{dirty ? '未儲存' : '已儲存'}</span>}
+                    {activeProfile && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                 </footer>
             </main>
 

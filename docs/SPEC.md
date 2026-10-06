@@ -283,7 +283,15 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 
 ### 17.1 視窗與關閉(2026-10-05)
 
-- **無原生標題欄**:`app/main.go` 設 `Frameless: true`(保留 Wails 預設的 frameless decorations);最小視窗尺寸 900×600。`app/wails.json` 的 `outputfilename` 維持 `perkins`(產出的執行檔是 `perkins.exe`;`wails dev` 用 `perkins-dev.exe`),不隨顯示名稱改變。視窗邊緣拖曳縮放仍可用(見下方取捨)。
+- **無原生標題欄**:`app/main.go` 設 `Frameless: true`(保留 Wails 預設的 frameless decorations);預設視窗 1280×800,最小尺寸 900×600。`app/wails.json` 的 `outputfilename` 維持 `perkins`(產出的執行檔是 `perkins.exe`;`wails dev` 用 `perkins-dev.exe`),不隨顯示名稱改變。視窗邊緣拖曳縮放仍可用(見下方取捨)。
+- **預設尺寸與啟動時最大化**:`app/main.go` 的 `Width: 1280, Height: 800`(`MinWidth/MinHeight` 仍 900×600)。`OnStartup` 讀 Wails runtime 的螢幕資訊(`runtime.ScreenGetAll`):主螢幕(`IsPrimary`,沒有任何主螢幕標記時退回第一個)的邏輯尺寸放不下 1280×800 就 `runtime.WindowMaximise`;螢幕資訊讀不到或為空就維持預設尺寸,不失敗啟動。**已知限制**:Wails v2.12 的 `Screen` 只有螢幕尺寸(`Size`/`PhysicalSize`)沒有工作區(工作列)欄位,判斷以主螢幕整體尺寸為準,工作列占用的高度未計入;常見螢幕高度(768/900/1080)的判斷結果與用工作區判斷相同。
+- **窄寬度工具列驗收(900×600)**:側欄(272px)與資訊欄(280px)都展開時,主編輯區只剩約 288px。此時編輯區頂端工具列(`Workspace.tsx` 的 `h-12` 列,`data-testid=editor-toolbar`)必須:
+  - 不換行、不溢出到資訊欄(工具列內容右緣 ≤ 資訊欄左緣);
+  - 按鈕依可用寬度退化:寬度不足先只留圖示(文字收起,保留 `title` 與 `aria-label`),更窄時把「摘要」「複製到平台」「版本」收進「更多」(⋯)下拉選單(平台清單以展開項目呈現,`data-testid=toolbar-more`);**窄寬度不得讓任何工具列功能無法觸及**,列上保留「儲存」、資訊欄開關與狀態徽章;
+  - 狀態徽章(草稿/完成)維持單行,不被擠成直排;
+  - 麵包屑以省略號截斷,但至少看得到章名開頭;
+  - **底部狀態列(footer,`data-testid=statusbar`)同樣不換行、每一項不超出 main 右緣**:空間不足時模型名(`AI:…`)以省略號截斷,最窄段省略「本卷」「全書」字數項(「本章」與儲存狀態必留)。
+  寬度判斷用工具列自身的 `ResizeObserver`(Tailwind 3.4 未裝 container-queries,不為此加依賴);1280×800、主編輯區約 668px 時恢復完整文字標籤。
 - **自畫標題欄**(`app/frontend/src/components/TitleBar.tsx`,高度 32px,疊在所有對話框之上):
   - 左側顯示 `Perkins WritingSpace`;有開作品時顯示「作品名 — Perkins WritingSpace」。目前畫面看不見側欄 logo 時(書櫃、設定頁、錯誤畫面)左側加 20px 小 logo;作品編輯畫面已有側欄 logo,標題欄不重複放。是不是看得到側欄 logo 由外殼狀態(`lib/shellState.ts`)決定,不是只看「有沒有開作品」。
   - 右側為最小化、最大化/還原、關閉三顆按鈕(各約 46×32);關閉鈕滑過變紅底白字;最大化/還原圖示依 `WindowIsMaximised` 與 `resize` 事件切換。

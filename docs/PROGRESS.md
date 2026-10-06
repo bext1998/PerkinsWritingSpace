@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-06 — 預設視窗 1280×800 與窄寬度工具列退化(PR #14)
+
+- **預設視窗 1280×800 + 啟動時最大化判斷**(`app/main.go`):`Width/Height` 改 1280×800(`MinWidth/MinHeight` 900×600 不變);`OnStartup` 呼叫 `maximiseIfScreenTooSmall`——`runtime.ScreenGetAll` 讀螢幕,`primaryScreen` 取主螢幕(無 `IsPrimary` 退回第一個,空清單不動),`needsMaximise`(邏輯尺寸小於 1280×800 任一邊)成立才 `runtime.WindowMaximise`;讀不到螢幕就維持預設尺寸不失敗啟動。**已知限制**(已寫入 SPEC §17.1):Wails v2.12 的 `Screen` 只有螢幕尺寸沒有工作區(工作列)欄位,以主螢幕整體尺寸判斷。新測試 `app/main_test.go`(選主螢幕/退回第一個/空清單、1920×1080 與剛好 1280×800 不最大化、1366×768 與 1279×800 最大化)。
+- **編輯區工具列窄寬度退化**(`app/frontend/src/Workspace.tsx`):工具列以自身 `ResizeObserver` 量寬(contentRect 不含 px-4),588/408 兩道門檻三段退化(完整文字 → 只剩圖示並保留 `title`/`aria-label` → 隱藏「摘要」「複製到平台」「版本」;「儲存」與資訊欄開關、狀態徽章必留);麵包屑 span 加 `min-w-0` 真的會截斷,最窄段只留章名(分隔號一併隱藏);徽章 `shrink-0 whitespace-nowrap`;工具列 `overflow-hidden`。900×600、側欄+資訊欄都開(主編輯區約 288px)時不再溢出資訊欄、徽章不再擠成直排、麵包屑省略號截斷且看得到章名開頭。E2E 新增 10 項(900×600/1100×800/1280×800 三種寬度,含「內容右緣 ≤ 資訊欄左緣」用所有可見後代的最大 right 量測,不被 overflow-hidden 的視覺裁切騙過);截圖 `60-toolbar-900x600`、`61-toolbar-1280x800`。
+- 驗證:`npm run build`(tsc+vite)通過、`go test ./...` 全過(含新 `TestPrimaryScreen*`/`TestNeedsMaximise`)、`wails build` 通過;E2E(E2E_SKIP_AI=1)**242/242 passed,略過 8 項**。**破壞驗證**:先在工具列修補缺席時跑同一份檢查 → 6 項新檢查 FAIL 且原因正確(內容右緣 802>620 溢出 182px、徽章 38px 直排、麵包屑被擠到 w=0、標籤未退化、按鈕超出工具列右緣、icon-only 未觸發),既有 232 項全不受影響;套用修補後 242/242。
+- **原生視窗實測**:標準 `wails build` 產物啟動後由應用回報 `ScreenGetAll`=1 主螢幕 2560×1440、`WindowGetSize`=1280×800、`maximised=false`(符合這台螢幕);暫把門檻改 3000×3000 重 build → `maximised=true`、視窗 2576×1408,證明最大化接線真的會執行,驗完已還原。**踩坑如實記**:`go build` 與實測 `wails build -o bin/…` 的產物缺少 `desktop,production` build tags,啟動只會彈「Wails applications will not build without the build tags」對話框、`OnStartup` 根本不會執行(先誤以為是尺寸 bug);原生驗證一律用標準 `wails build`。
+- 當輪範圍外(截圖可見):900×600 時底部狀態列的「已儲存」等文字被擠成直排,第一輪未修;作者看截圖後要求同一個 PR 一併修,見下一條追加修正。
+- **追加修正(PR #14 第二輪,同日)**:(1) 最窄段不再直接隱藏次要按鈕(功能不能消失):`Workspace.tsx` 新增「更多」(⋯)下拉(`data-testid=toolbar-more`,既有 DropdownMenu),收「章節摘要」「版本」與展開的平台清單;列上維持儲存、資訊欄開關、徽章,麵包屑在最窄段連檔案圖示一起讓位。(2) 底部狀態列修直排:footer 加 `overflow-hidden` 與 `data-testid=statusbar`,各項 `shrink-0 whitespace-nowrap`,模型名 `min-w-0 truncate`,最窄段省略「本卷」「全書」(「本章」與儲存狀態必留);1280 時全部項次恢復顯示。SPEC §17.1 驗收同步更新(窄寬度不得讓功能無法觸及、狀態列不換行不溢出)。E2E 新增 7 項(900 寬:狀態列「單行且不超出 main 右緣」、「保留本章/已儲存且模型名截斷」、更多選單「有按鈕/含三功能/開啟摘要/開啟版本/觸發複製」)。**破壞驗證**:修補缺席時 7 項全 FAIL(狀態列每項 h=48px 三行直排、`toolbar-more` 不存在);如實記錄:「不超出右緣」單獨成項時在破壞態因「改用直排而非水平溢出」而 PASS,與「單行」合併成一項後才 FAIL,故合併成一項。最終 E2E(E2E_SKIP_AI=1)**249/249 passed,略過 8 項**;截圖 60/61 重拍、新增 `62-toolbar-more-menu`(等開合動畫 300ms 後拍);`npm run build`、`go test ./...` 重跑通過。
+
 ## 2026-10-05 — PR #12 審查修補(第二輪)
 
 - **(1) 救援原文改在失敗當下才取**:`lib/quitGuard.tsx:63`(catch 分支)重讀 `reg.rescue()`,不再用存檔前(流程開頭)的快照;存檔途中新打的字會出現在提示與「複製全文」。回歸測試 `(a4)`:用 `__perkinsSaveDelay` 把存檔停住 → 繼續打字 → 讓這輪寫入失敗(`__perkinsSaveFailOnce`)→ 提示原文與複製內容都含新打的字、未放行。破壞驗證:改回存檔前的快照 → `(a4) 存檔失敗時提示是最新文字` 與 `(a4) 複製全文也是最新文字` FAIL。
