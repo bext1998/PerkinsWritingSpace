@@ -12,3 +12,6 @@ app/frontend/package.json.md5
 
 # Agent Team runtime state (Herdr pane/agent IDs; not a source of truth)
 .agent/profile/runtime.json
+
+# Author's private manuscript/setting samples used as research material
+docs/user_research/
