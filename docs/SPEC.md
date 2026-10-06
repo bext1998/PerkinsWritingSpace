@@ -311,3 +311,13 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   - Windows 11「滑過最大化鈕顯示貼齊版面(snap layouts)」選單會失去(該 UI 由原生標題列提供);內部標題欄無法重現。
   - `WM_NCCALCSIZE` 會移除標準邊框,但 Wails 保留 `WS_THICKFRAME` 並在 navigation completed 後設 `window.wails.flags.enableResize = true`;前端偵測到距邊界 6px 按下時送 `resize:<edge>`,Go 端以 `WM_NCLBUTTONDOWN` + `HTLEFT/HTRIGHT/HTTOP/HTBOTTOM/…` 交給系統縮放,因此邊緣縮放仍可用。
   - 關閉流程依賴前端回應;若前端 JS 完全失效,視窗無法關閉(工作列結束工作仍可強制結束)。這是「不逾時自動放行」的直接代價。
+
+### 17.2 設定頁(2026-10-06)
+
+- **左側導覽版面**:設定頁維持覆蓋頁(`data-testid=settings-page`,上緣接標題欄),內部改為「頁首(返回鈕＋『設定』標題)→ 下方左右兩欄」:左側固定導覽欄(`data-testid=settings-nav`,約 200px,按鈕含圖示＋文字,選中態明顯),右側內容區(`data-testid=settings-content`,`overflow-y-auto` 獨立捲動,內部 `mx-auto max-w-5xl` 合理最大寬度)。頁面根節點不滾動:垂直捲動只發生在內容區(頁首與導覽欄固定不動),不再是整頁跟著捲;整頁不出現水平捲軸。註:內容區滿寬時其捲軸的像素位置仍貼視窗右緣,這是滿寬內容區的正常行為;作者回報的問題本質是「整頁跟著捲」(根節點滾動),已由「只捲內容區」修正。
+- **頁面只剩三頁**(開啟作品時):「作品」(`tab-project`,分「基本資料」(名稱、封面)、「研究記錄」、「從 Notion 匯入」三個有小標題的區塊)、「AI 模型」(`tab-models`,原「模型端點」)、「平台輸出」(`tab-platforms`)。未開啟作品(書櫃進入設定)時沒有「作品」頁。預設開啟頁面維持 AI 模型。
+- **主題切換**:「外觀」不再是獨立頁;夜間書房／白紙改為導覽欄底部的小型切換(兩個含圖示的小按鈕),所有頁面都看得到;點擊立即套用並寫入設定(`SetTheme`),重開設定與重啟應用都仍是選定主題。
+- **間距單一來源**:作品頁各區塊用同一個容器間距(例如 `gap-8`),不再以個別 `mt-*` 疊加。
+- **封面與欄位**:並排時不重疊;容器寬度不足時自動換成上下排列(`flex-wrap`),維持可讀。
+- **驗收**:900×600 與 1280×800、三頁都要滿足:(1) 內容區 `scrollWidth <= clientWidth`(無水平捲軸);(2) 頁面根節點 `scrollHeight <= clientHeight`(捲軸在內容區、不在視窗邊緣);(3) 內容元素右緣不超過內容區、互相不重疊、不被裁切;(4) 內容左右間距差 ≤16px(置中,沒有單側大片空白);(5) 研究記錄區塊與上一區塊的間距 ≤40px(不重複疊加);(6) 導覽欄可正常切換三頁;(7) 主題切換在任何頁面都可用且會保存到設定。既有 `data-testid`(`tab-platforms`、`tab-project`、`research-switch`、`platform-preview`、`close-settings` 等)沿用,舊 E2E 仍可用。
+- **修正過的排版問題**(2026-10-06 作者回報,量測值見 `docs/PROGRESS.md`):根節點 `overflow-y-auto` 讓整頁跟著垂直捲動、捲軸貼在視窗右緣(作品頁 774>568 @900);外層 `max-w-5xl` 內層 `max-w-3xl` 不一致且內層未置中,內容靠左、右側大片空白(900 寬左右間距 40/92,1280 寬 168/344);研究記錄 `gap-8` 與 `mt-6` 疊加成 56px。新版面分別改為:只捲內容區(根節點不滾)、單一 `max-w-5xl mx-auto`、單一 `gap-8`。

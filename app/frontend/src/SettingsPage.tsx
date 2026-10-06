@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from 'react';
-import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
+import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     ClearCover, ConvertOptions, DeleteProfile, GetCover, GetResearch, GetSettings, ListModels, PickCover, PreviewExport, RenameProject, ResetPlatforms,
     SavePlatforms, SaveProfile, SetResearch, SetTheme,
@@ -7,7 +7,7 @@ import {
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Badge, Input, Label, Switch} from '@/components/ui/basic';
-import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tabs, TabsContent, TabsList, TabsTrigger} from '@/components/ui/overlay';
+import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
 import {GeneratedCover} from './Bookshelf';
@@ -191,7 +191,7 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
                 <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增平台</Button>
             </div>
             {p && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     <div className="grid content-start gap-4">
                         <p className="rounded-md bg-muted p-2 text-xs leading-relaxed text-muted-foreground">
                             內建的平台規則是推測值,沒有實際貼上驗證過。實際發文後如果版面不對,請在這裡調整,確認無誤後打開「已驗證」。
@@ -255,30 +255,34 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
     useEffect(() => { GetCover().then(setCover); GetResearch().then(setResearchOn).catch(e => { setResearchError(errText(e)); }); }, []);
 
     return (
-        <div className="grid max-w-3xl gap-8">
-            <div className="grid grid-cols-[160px_1fr] gap-6">
-                <div className="h-[220px] w-[156px] overflow-hidden rounded-r-md rounded-l-sm border">
-                    {cover ? <img src={cover} className="h-full w-full object-cover" alt=""/> : <GeneratedCover name={name || tree.name}/>}
+        <div className="grid gap-8">
+            {/* 區塊一:基本資料(小標題 + 封面/欄位;窄寬度 flex-wrap 換行,不重疊) */}
+            <section aria-labelledby="proj-basic" className="grid gap-4">
+                <h2 id="proj-basic" className="font-serif text-lg font-semibold">基本資料</h2>
+                <div className="flex flex-wrap items-start gap-6">
+                    <div className="h-[220px] w-[156px] shrink-0 overflow-hidden rounded-r-md rounded-l-sm border">
+                        {cover ? <img src={cover} className="h-full w-full object-cover" alt=""/> : <GeneratedCover name={name || tree.name}/>}
+                    </div>
+                    <div className="grid min-w-[260px] flex-1 content-start gap-4">
+                        <Field label="作品名稱">
+                            <div className="flex gap-2">
+                                <Input value={name} onChange={e => setName(e.target.value)}/>
+                                <Button disabled={!name.trim() || name === tree.name}
+                                        onClick={() => RenameProject(name).then(setTree).catch(e => setError(errText(e)))}><Save/>儲存</Button>
+                            </div>
+                        </Field>
+                        <Field label="封面" hint="顯示在書櫃上。沒有設定時依作品名稱自動產生。">
+                            <div className="flex gap-2">
+                                <Button variant="outline" onClick={() => PickCover().then(c => c && setCover(c)).catch(e => setError(errText(e)))}>選擇圖片</Button>
+                                {cover && <Button variant="ghost" onClick={() => ClearCover().then(() => setCover(''))}>移除封面</Button>}
+                            </div>
+                        </Field>
+                        {error && <p className="text-xs text-destructive">{error}</p>}
+                    </div>
                 </div>
-                <div className="grid content-start gap-4">
-                    <Field label="作品名稱">
-                        <div className="flex gap-2">
-                            <Input value={name} onChange={e => setName(e.target.value)}/>
-                            <Button disabled={!name.trim() || name === tree.name}
-                                    onClick={() => RenameProject(name).then(setTree).catch(e => setError(errText(e)))}><Save/>儲存</Button>
-                        </div>
-                    </Field>
-                    <Field label="封面" hint="顯示在書櫃上。沒有設定時依作品名稱自動產生。">
-                        <div className="flex gap-2">
-                            <Button variant="outline" onClick={() => PickCover().then(c => c && setCover(c)).catch(e => setError(errText(e)))}>選擇圖片</Button>
-                            {cover && <Button variant="ghost" onClick={() => ClearCover().then(() => setCover(''))}>移除封面</Button>}
-                        </div>
-                    </Field>
-                    {error && <p className="text-xs text-destructive">{error}</p>}
-                </div>
-            </div>
-            {/* 研究記錄(§12.8):預設關閉,作者手動開啟;記錄檔隨作品存在 .perkins/research.jsonl */}
-            <div className="mt-6 flex max-w-3xl items-start gap-4 rounded-lg border p-4" data-testid="research-row">
+            </section>
+            {/* 區塊二:研究記錄(§12.8):間距只靠容器 gap-8,不再 mt-6 疊加(SPEC §17.2) */}
+            <div className="flex items-start gap-4 rounded-lg border p-4" data-testid="research-row">
                 <div className="flex-1">
                     <Label className="text-sm font-medium">研究記錄</Label>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -298,6 +302,7 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                             setResearchSaving(false);
                         }}/>
             </div>
+            {/* 區塊三:從 Notion 匯入(NotionImport 自帶小標題) */}
             <NotionImport onDone={() => {}}/>
         </div>
     );
@@ -305,6 +310,7 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
 
 export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: Props) {
     const [cfg, setCfg] = useState<main.SettingsView | null>(null);
+    const [page, setPage] = useState<'project' | 'models' | 'platforms'>('models'); // 預設頁維持 AI 模型(SPEC §17.2)
     useEffect(() => { GetSettings().then(setCfg); }, []);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) onClose(); };
@@ -314,37 +320,55 @@ export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: 
 
     const changeTheme = (t: string) => { setTheme(t); SetTheme(t); };
 
+    const navBtn = (id: 'project' | 'models' | 'platforms', label: string, Icon: typeof Cpu) => (
+        <button data-testid={`tab-${id}`} onClick={() => setPage(id)}
+                aria-current={page === id}
+                className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm',
+                    page === id ? 'bg-accent font-medium text-foreground' : 'text-muted-foreground hover:bg-accent/60')}>
+            <Icon className="h-4 w-4"/>{label}
+        </button>
+    );
+
     return (
         <div style={{top: TITLEBAR_HEIGHT}}
-             className="fixed inset-x-0 bottom-0 z-50 overflow-y-auto bg-background" data-testid="settings-page">
-            <div className="mx-auto max-w-5xl px-10 py-8">
-                <div className="mb-6 flex items-center gap-3">
-                    <Button variant="ghost" size="icon" onClick={onClose} data-testid="close-settings"><ArrowLeft/></Button>
-                    <h1 className="font-serif text-2xl font-bold">設定</h1>
+             className="fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden bg-background" data-testid="settings-page">
+            {/* 頁首:返回 + 標題 */}
+            <div className="flex shrink-0 items-center gap-3 border-b px-6 py-3">
+                <Button variant="ghost" size="icon" onClick={onClose} data-testid="close-settings"><ArrowLeft/></Button>
+                <h1 className="font-serif text-2xl font-bold">設定</h1>
+            </div>
+            <div className="flex min-h-0 flex-1">
+                {/* 左側導覽欄(約 200px,選中態明顯;主題切換在底部,所有頁面都看得到) */}
+                <nav data-testid="settings-nav" className="flex w-[200px] shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
+                    {tree && navBtn('project', '作品', BookMarked)}
+                    {navBtn('models', 'AI 模型', Cpu)}
+                    {navBtn('platforms', '平台輸出', Share2)}
+                    <div className="flex-1"/>
+                    <div className="grid grid-cols-2 gap-1 border-t pt-3">
+                        <button onClick={() => changeTheme('dark')}
+                                aria-pressed={theme === 'dark'}
+                                className={cn('flex items-center justify-center gap-1 rounded-md border px-1 py-1.5 text-xs',
+                                    theme === 'dark' ? 'border-primary text-primary' : 'text-muted-foreground hover:bg-accent')}>
+                            <Moon className="h-3.5 w-3.5 shrink-0"/>夜間書房
+                        </button>
+                        <button onClick={() => changeTheme('light')}
+                                aria-pressed={theme === 'light'}
+                                className={cn('flex items-center justify-center gap-1 rounded-md border px-1 py-1.5 text-xs',
+                                    theme === 'light' ? 'border-primary text-primary' : 'text-muted-foreground hover:bg-accent')}>
+                            <Sun className="h-3.5 w-3.5 shrink-0"/>白紙
+                        </button>
+                    </div>
+                </nav>
+                {/* 內容區:獨立捲動、單一 max-w-5xl 置中(SPEC §17.2) */}
+                <div data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
+                    {cfg && (
+                        <div className="mx-auto w-full max-w-5xl px-6 py-6">
+                            {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree}/>}
+                            {page === 'models' && <ModelsTab cfg={cfg} setCfg={setCfg}/>}
+                            {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg}/>}
+                        </div>
+                    )}
                 </div>
-                {cfg && (
-                    <Tabs defaultValue="models">
-                        <TabsList>
-                            <TabsTrigger value="models"><Cpu className="h-4 w-4"/>模型端點</TabsTrigger>
-                            <TabsTrigger value="platforms" data-testid="tab-platforms"><Share2 className="h-4 w-4"/>平台輸出</TabsTrigger>
-                            {tree && <TabsTrigger value="project" data-testid="tab-project"><BookMarked className="h-4 w-4"/>作品</TabsTrigger>}
-                            <TabsTrigger value="look"><Palette className="h-4 w-4"/>外觀</TabsTrigger>
-                        </TabsList>
-                        <TabsContent value="models" className="mt-6"><ModelsTab cfg={cfg} setCfg={setCfg}/></TabsContent>
-                        <TabsContent value="platforms" className="mt-6"><PlatformsTab cfg={cfg} setCfg={setCfg}/></TabsContent>
-                        {tree && <TabsContent value="project" className="mt-6"><ProjectTab tree={tree} setTree={setTree}/></TabsContent>}
-                        <TabsContent value="look" className="mt-6">
-                            <div className="flex gap-3">
-                                {[{id: 'dark', label: '夜間書房', Icon: Moon}, {id: 'light', label: '白紙', Icon: Sun}].map(({id, label, Icon}) => (
-                                    <button key={id} onClick={() => changeTheme(id)}
-                                            className={cn('flex w-40 flex-col items-center gap-2 rounded-lg border p-4 text-sm', theme === id ? 'border-primary text-primary' : 'hover:bg-accent')}>
-                                        <Icon className="h-6 w-6"/>{label}
-                                    </button>
-                                ))}
-                            </div>
-                        </TabsContent>
-                    </Tabs>
-                )}
             </div>
         </div>
     );
