@@ -302,7 +302,6 @@ const maybe = async (name, fn, detail = '') => {
         const out = await page.textContent('[data-testid=platform-preview]');
         check('平台預覽:兩格縮排、筆記不外流', out.includes('\u3000\u3000清晨的王都很安靜') && !out.includes('伏筆'), JSON.stringify(out));
         await shot('11-settings-platforms');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
@@ -324,7 +323,6 @@ const maybe = async (name, fn, detail = '') => {
         await shot('43-brand-chat-title-light');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=open-settings]');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
 
@@ -415,13 +413,11 @@ const maybe = async (name, fn, detail = '') => {
         // 淺色書櫃:切白紙 → 書櫃 → 切回
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(400);
         await shot('33-1b-bookshelf-light');
         await page.click('[data-testid=open-settings]');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
@@ -834,7 +830,6 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(400);
@@ -846,7 +841,6 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await shot('37-1b-inspector-light');
         await page.click('[data-testid=open-settings]');
-        await page.click('button:has-text("外觀")');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
@@ -1083,6 +1077,159 @@ const maybe = async (name, fn, detail = '') => {
         await page.waitForTimeout(500);
         check('N1 撤銷後王都消失', !fs.existsSync(P('canon/王都.md')));
         check('N1b 撤銷後劉洋消失', !fs.existsSync(P('canon/劉洋.md')));
+
+        // ===== 設定頁左側導覽版面(SPEC §17.2):900×600 與 1280×800 三頁 =====
+        // 量測:根節點是否滾動(捲軸該在內容區)、內容水平捲軸、元素右緣、研究記錄間距、
+        // 內容置中、封面與欄位不重疊;導覽欄與主題切換屬新設計(現況 FAIL 為預期破壞證據)。
+        const geoSettings = () => page.evaluate(() => {
+            const sp = document.querySelector('[data-testid=settings-page]');
+            if (!sp) return null;
+            const isScroller = el => { const o = getComputedStyle(el).overflowY; return o === 'auto' || o === 'scroll'; };
+            const sc = [sp, ...sp.querySelectorAll('*')].find(isScroller) || sp;
+            const scr = sc.getBoundingClientRect();
+            const out = {
+                rootScrollable: sp.scrollHeight > sp.clientHeight + 1,
+                rootScrollH: sp.scrollHeight, rootClientH: sp.clientHeight,
+                scrollerIsRoot: sc === sp,
+                hScroll: sc.scrollWidth > sc.clientWidth + 1,
+                scScrollW: sc.scrollWidth, scClientW: sc.clientWidth,
+                hasNav: !!sp.querySelector('[data-testid=settings-nav]'),
+                hasContent: !!sp.querySelector('[data-testid=settings-content]'),
+                overflowing: [], researchGap: null, centerDiff: null, coverOverlap: null,
+            };
+            const scope = sp.querySelector('[data-testid=settings-content]') || sp;
+            out.overflowing = [...scope.querySelectorAll('input,button,pre,img,label')]
+                .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && (r.right > scr.right + 1 || r.left < scr.left - 1); })
+                .map(el => ((el.textContent || el.tagName).trim()).slice(0, 16));
+            const rr = sp.querySelector('[data-testid=research-row]');
+            if (rr && rr.parentElement) {
+                const prev = rr.previousElementSibling;
+                out.researchGap = prev ? Math.round(rr.getBoundingClientRect().top - prev.getBoundingClientRect().bottom) : null;
+                const wr = rr.parentElement.getBoundingClientRect();
+                out.centerDiff = Math.round(Math.abs((wr.left - scr.left) - (scr.right - wr.right)));
+                const cover = rr.parentElement.querySelector('[class*="220px"]');
+                const fields = cover && cover.nextElementSibling;
+                if (cover && fields) {
+                    const a = cover.getBoundingClientRect(), b = fields.getBoundingClientRect();
+                    out.coverOverlap = a.right > b.left + 1 && b.right > a.left + 1 && a.bottom > b.top + 1 && b.bottom > a.top + 1;
+                }
+            }
+            return out;
+        });
+        const waitSel = sel => page.waitForSelector(sel, {timeout: 5000}).then(() => true).catch(() => false);
+
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.setViewportSize({width: 900, height: 600});
+        await page.waitForTimeout(500);
+
+        let g = await geoSettings();
+        check('設定頁 900×600 AI 模型頁 捲軸在內容區(根節點不滾動)', !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`, scrollerIsRoot: g.scrollerIsRoot}));
+        check('設定頁 900×600 AI 模型頁 內容無水平捲軸', !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+
+        await page.click('[data-testid=tab-platforms]');
+        const plat900 = await waitSel('[data-testid=platform-preview]');
+        await page.waitForTimeout(300);
+        g = await geoSettings();
+        check('設定頁 900×600 平台輸出頁 捲軸在內容區(根節點不滾動)', plat900 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 900×600 平台輸出頁 內容無水平捲軸', plat900 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+
+        await page.click('[data-testid=tab-project]');
+        const proj900 = await waitSel('[data-testid=research-row]');
+        await page.waitForTimeout(300);
+        g = await geoSettings();
+        check('設定頁 900×600 作品頁 捲軸在內容區(根節點不滾動)', proj900 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 900×600 作品頁 內容無水平捲軸', proj900 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        check('作品頁 900×600 元素右緣不超出內容區', proj900 && !!g && g.overflowing.length === 0, JSON.stringify(g && g.overflowing));
+        check('作品頁 900×600 研究記錄上方間距不重複疊加(≤40px)', proj900 && !!g && g.researchGap != null && g.researchGap <= 40,
+            `gap=${g && g.researchGap}`);
+        check('設定頁 900×600 內容置中(左右間距差 ≤16px)', proj900 && !!g && g.centerDiff != null && g.centerDiff <= 16,
+            `diff=${g && g.centerDiff}`);
+        check('作品頁 900×600 封面與欄位區不重疊', proj900 && !!g && g.coverOverlap === false, `overlap=${g && g.coverOverlap}`);
+
+        // 左側導覽欄(新設計才有;現況 FAIL 屬預期破壞證據)
+        const hasNav = !!(await page.$('[data-testid=settings-nav]'));
+        let navSwitch = false;
+        if (hasNav) {
+            await page.click('[data-testid=tab-models]');
+            const n1 = await waitSel('[data-testid=profile-url]');
+            await page.click('[data-testid=tab-platforms]');
+            const n2 = await waitSel('[data-testid=platform-preview]');
+            await page.click('[data-testid=tab-project]');
+            const n3 = await waitSel('[data-testid=research-row]');
+            navSwitch = n1 && n2 && n3;
+        }
+        check('設定頁 900×600 左側導覽欄存在且切換三頁正常', hasNav && navSwitch, `nav=${hasNav} switch=${navSwitch}`);
+
+        // 主題切換:導覽欄底部、任何頁面可用,且立即保存到設定(SetTheme)
+        const themeVisible = await page.isVisible('button:has-text("白紙")');
+        let themeOk = false;
+        if (themeVisible) {
+            await page.click('button:has-text("白紙")');
+            await page.waitForTimeout(300);
+            const lightHtml = await page.evaluate(() => document.documentElement.classList.contains('light'));
+            const savedLight = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => null));
+            await page.click('button:has-text("夜間書房")');
+            await page.waitForTimeout(300);
+            const darkHtml = await page.evaluate(() => document.documentElement.classList.contains('dark'));
+            const savedDark = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => null));
+            themeOk = lightHtml && savedLight === 'light' && darkHtml && savedDark === 'dark';
+            check('設定頁 主題切換在任何頁面可用且會保存(白紙→夜間書房)', themeOk,
+                JSON.stringify({lightHtml, savedLight, darkHtml, savedDark}));
+        } else {
+            check('設定頁 主題切換在任何頁面可用且會保存(白紙→夜間書房)', false, '作品頁看不到「白紙」按鈕');
+        }
+
+        // 截圖:900×600 三頁(現況圖另由一次性腳本拍攝;這裡只在新版面下拍)
+        if (hasNav) {
+            await shot('70-settings-project-900');
+            await page.click('[data-testid=tab-models]');
+            await waitSel('[data-testid=profile-url]');
+            await shot('72-settings-models-900');
+            await page.click('[data-testid=tab-platforms]');
+            await waitSel('[data-testid=platform-preview]');
+            await shot('74-settings-platforms-900');
+        }
+
+        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁
+        await page.setViewportSize({width: 1280, height: 800});
+        await page.waitForTimeout(500);
+        await page.click('[data-testid=tab-project]');
+        const proj1280 = await waitSel('[data-testid=research-row]');
+        await page.waitForTimeout(300);
+        g = await geoSettings();
+        check('設定頁 1280×800 作品頁 捲軸在內容區(根節點不滾動)', proj1280 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 1280×800 作品頁 內容無水平捲軸', proj1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        check('設定頁 1280×800 內容置中(左右間距差 ≤16px)', proj1280 && !!g && g.centerDiff != null && g.centerDiff <= 16,
+            `diff=${g && g.centerDiff}`);
+        if (hasNav) await shot('71-settings-project-1280');
+
+        await page.click('[data-testid=tab-models], button:has-text("模型端點")'); // 現況無 tab-models,用文字
+        const mod1280 = await waitSel('[data-testid=profile-url]');
+        await page.waitForTimeout(300);
+        g = await geoSettings();
+        check('設定頁 1280×800 AI 模型頁 捲軸在內容區(根節點不滾動)', mod1280 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 1280×800 AI 模型頁 內容無水平捲軸', mod1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        if (hasNav) await shot('73-settings-models-1280');
+
+        await page.click('[data-testid=tab-platforms]');
+        const plt1280 = await waitSel('[data-testid=platform-preview]');
+        await page.waitForTimeout(300);
+        g = await geoSettings();
+        check('設定頁 1280×800 平台輸出頁 捲軸在內容區(根節點不滾動)', plt1280 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 1280×800 平台輸出頁 內容無水平捲軸', plt1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        if (hasNav) await shot('75-settings-platforms-1280');
+
+        // 還原:視窗與設定頁關閉(後續測試在 1440×900 進行)
+        await page.setViewportSize({width: 1440, height: 900});
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
         // 錯誤防護(SPEC §16 第 0 項):需在開發模式(wails dev)下執行,__perkinsCrash/__perkinsSaveFail 只存在於 DEV 建置
         if (await page.evaluate(() => typeof window.__perkinsCrash === 'function' && typeof window.__perkinsSaveFail === 'function')) {
             // 情境 1:sidebar/inspector/chat 各自崩潰 → 編輯器寬度不變、仍可輸入,該區顯示錯誤與重試
