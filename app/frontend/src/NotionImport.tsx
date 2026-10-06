@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {Fragment, useState} from 'react';
 import {ChevronDown, ChevronRight, FileArchive, FolderOpen, Import, Loader2, Undo2} from 'lucide-react';
 import {NotionApply, NotionScan, NotionUndo, PickNotionExport} from '../wailsjs/go/main/App';
 import {notion} from '../wailsjs/go/models';
@@ -87,63 +87,69 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
 
             {plan && (
                 <div className="mt-5">
-                    <table className="w-full text-sm">
+                    {/* 固定欄寬:逐頁清單若放在窄欄裡,自動表格版面會把其他欄擠成直排 */}
+                    <table className="w-full table-fixed text-sm">
                         <thead className="text-left text-xs text-muted-foreground">
-                        <tr><th className="pb-2 font-medium">Notion 資料夾</th><th className="pb-2 font-medium">頁數</th><th className="pb-2 font-medium">匯入為</th></tr>
+                        <tr><th className="pb-2 font-medium">Notion 資料夾</th><th className="w-14 pb-2 font-medium">頁數</th><th className="w-44 pb-2 font-medium">匯入為</th></tr>
                         </thead>
                         <tbody>
                         {plan.groups.map(g => {
                             const overridden = g.files.filter(f => pages[f.src] !== undefined).length;
                             const expanded = open[g.key];
                             return (
-                                <tr key={g.key} className="border-t">
-                                    <td className="py-2 pr-3">
-                                        <button type="button" className="flex items-center gap-1 text-left"
-                                                data-testid={`expand-${g.key || 'root'}`}
-                                                onClick={() => setOpen(o => ({...o, [g.key]: !o[g.key]}))}>
-                                            {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0"/> : <ChevronRight className="h-3.5 w-3.5 shrink-0"/>}
-                                            <span>{g.label}</span>
-                                        </button>
-                                        <div className="truncate text-xs text-muted-foreground">
-                                            {g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}
-                                            {overridden > 0 && <span data-testid={`override-count-${g.key || 'root'}`}> · {overridden} 頁另行指定</span>}
-                                        </div>
-                                    </td>
-                                    <td className="py-2 text-muted-foreground">{g.files.length}</td>
-                                    <td className="w-40 py-2">
-                                        <Select value={choices[g.key]} onValueChange={v => setChoices(c => ({...c, [g.key]: v}))}>
-                                            <SelectTrigger className="h-8" data-testid={`group-select-${g.key || 'root'}`}><SelectValue/></SelectTrigger>
-                                            <SelectContent>{TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                                        </Select>
-                                        {expanded && (
-                                            <div className="mt-2 max-h-56 overflow-y-auto rounded-md border p-2" data-testid={`pages-${g.key || 'root'}`}>
-                                                {g.files.map(f => (
-                                                    <div key={f.src} className="mb-1.5 flex items-center gap-2 last:mb-0">
-                                                        <span className="min-w-0 flex-1 truncate text-xs" title={f.name}>{f.name}</span>
-                                                        <Select value={pages[f.src] ?? ''}
-                                                                onValueChange={v => setPages(pg => {
-                                                                    const next = {...pg};
-                                                                    if (v === '') delete next[f.src]; else next[f.src] = v;
-                                                                    return next;
-                                                                })}>
-                                                            <SelectTrigger className="h-7 w-44 shrink-0 text-xs">
-                                                                {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
-                                                                {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
-                                                                <SelectValue placeholder={`跟隨資料夾(目前:${choices[g.key]})`}/>
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                <SelectItem value="" data-testid={`page-follow-${f.name}`}>
-                                                                    跟隨資料夾(目前:{choices[g.key]})
-                                                                </SelectItem>
-                                                                {TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                                                            </SelectContent>
-                                                        </Select>
-                                                    </div>
-                                                ))}
+                                <Fragment key={g.key}>
+                                    <tr className="border-t">
+                                        <td className="py-2 pr-3">
+                                            <button type="button" className="flex items-center gap-1 text-left"
+                                                    data-testid={`expand-${g.key || 'root'}`}
+                                                    onClick={() => setOpen(o => ({...o, [g.key]: !o[g.key]}))}>
+                                                {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0"/> : <ChevronRight className="h-3.5 w-3.5 shrink-0"/>}
+                                                <span>{g.label}</span>
+                                            </button>
+                                            <div className="truncate text-xs text-muted-foreground">
+                                                {g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}
+                                                {overridden > 0 && <span data-testid={`override-count-${g.key || 'root'}`}> · {overridden} 頁另行指定</span>}
                                             </div>
-                                        )}
-                                    </td>
-                                </tr>
+                                        </td>
+                                        <td className="py-2 text-muted-foreground">{g.files.length}</td>
+                                        <td className="py-2">
+                                            <Select value={choices[g.key]} onValueChange={v => setChoices(c => ({...c, [g.key]: v}))}>
+                                                <SelectTrigger className="h-8" data-testid={`group-select-${g.key || 'root'}`}><SelectValue/></SelectTrigger>
+                                                <SelectContent>{TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                                            </Select>
+                                        </td>
+                                    </tr>
+                                    {expanded && (
+                                        <tr>
+                                            <td colSpan={3} className="pb-3 pl-5">
+                                                <div className="max-h-72 overflow-y-auto rounded-md border p-2" data-testid={`pages-${g.key || 'root'}`}>
+                                                    {g.files.map(f => (
+                                                        <div key={f.src} className="mb-1.5 flex items-center gap-2 last:mb-0">
+                                                            <span className="min-w-0 flex-1 truncate text-xs" title={f.name}>{f.name}</span>
+                                                            <Select value={pages[f.src] ?? ''}
+                                                                    onValueChange={v => setPages(pg => {
+                                                                        const next = {...pg};
+                                                                        if (v === '') delete next[f.src]; else next[f.src] = v;
+                                                                        return next;
+                                                                    })}>
+                                                                <SelectTrigger className="h-7 w-52 shrink-0 text-xs">
+                                                                    {/* 閉合時也明示目前跟隨的去處,隨群組選擇即時更新 */}
+                                                                    <SelectValue placeholder={`跟隨資料夾(目前:${choices[g.key]})`}/>
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="" data-testid={`page-follow-${f.name}`}>
+                                                                        跟隨資料夾(目前:{choices[g.key]})
+                                                                    </SelectItem>
+                                                                    {TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </Fragment>
                             );
                         })}
                         </tbody>

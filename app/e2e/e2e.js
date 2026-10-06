@@ -998,6 +998,17 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=expand-人物]');
         await page.waitForSelector('[data-testid=pages-人物]');
         await shot('17-notion-pages');
+        // §16 第 8 項:展開的逐頁清單要排在資料夾列下方的整列,不得塞在「匯入為」窄欄裡(長頁名會把其他欄擠成直排)
+        {
+            const lay = await page.evaluate(() => {
+                const box = document.querySelector('[data-testid=pages-人物]').getBoundingClientRect();
+                const sel = document.querySelector('[data-testid=group-select-人物]').getBoundingClientRect();
+                const table = document.querySelector('[data-testid=pages-人物]').closest('table').getBoundingClientRect();
+                return {boxLeft: box.left, boxW: box.width, selLeft: sel.left, tableW: table.width};
+            });
+            check('Notion 逐頁清單不在「匯入為」欄內', lay.boxLeft < lay.selLeft, JSON.stringify(lay));
+            check('Notion 逐頁清單佔整列寬度', lay.boxW >= lay.tableW * 0.8, JSON.stringify(lay));
+        }
         // 三頁分別設:艾莉絲=跟隨資料夾(人物→角色)、王都=地點、草稿=略過
         const setPage = async (name, target) => {
             await page.click(`[data-testid=pages-人物] div:has(span:text-is("${name}")) button`);
