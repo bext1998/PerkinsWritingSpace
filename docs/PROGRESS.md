@@ -1,5 +1,18 @@
 # PROGRESS.md
 
+## 2026-10-07 — 半螢幕並排支援(SPEC §16 第 7 項)
+
+- **修改前量測**(640×672,側欄+資訊欄都開):圖示列 60+側欄 272+資訊欄 280=612px,主編輯區只剩 **28px**(768 時 156px、960 時 348px);工具列內容右緣 226 超出可視 32px、狀態列 172/32、CodeMirror 114/28,全部被擠爆——這就是回歸檢查要抓的根因。設定頁 640 寬 AI 模型頁內容區溢出(sw472/cw440)、平台輸出頁(sw556/cw440)。書櫃、標題欄(三顆按鈕右緣恰貼視窗右緣)、Perkins Bot 浮窗(初始位置在視窗內、拖到最上停 y=32)、版本/摘要對話框(640 寬全寬不溢出)修改前即正常,未動。
+- **main.go**:`MinWidth` 900→640(`MinHeight` 維持 600);SPEC §17.1 兩處「最小尺寸 900×600」同步改。
+- **側欄/資訊欄互斥**(`Workspace.tsx`):門檻訂為視窗寬 ≤960px(1920×1080 縮放 100% 的半邊、驗收尺寸上限;此範圍兩欄同開主編輯區最多剩 348px@960、28px@640)。`resize` 事件記 `vpW`:由 >960 縮到 ≤960(或初始就在窄寬度)且兩欄都開→自動收資訊欄(側欄是主要導覽,先保住);窄時手動開側欄自動收資訊欄、反之亦然(手動開關一律有效);變寬後不自動重開。實作陷阱:不把 `setPanel(null)` 包進另一個 `setInspector` 的 updater(不保證執行,實測踩過——E2E 側欄未收),改在 onClick 內依當下狀態直接判斷。
+- **設定頁 640 寬溢出根因**:`<input>` 固有 min-content(約 204px)沿巢狀 grid 的 auto track 一路上推——`grid-cols-[220px_1fr]` 的 1fr 欄、`Field`、`Input` 都沒有 `min-w-0`;另外 models「儲存/刪除端點」與 platforms「儲存/恢復內建預設」按鈕列(`flex` 不換行)min-content 分別 204/288。修法:`Input`/`Textarea` 加 `min-w-0`、兩處 `grid-cols-[220px_minmax(0,1fr)]`、`Field` 加 `min-w-0 grid-cols-[minmax(0,1fr)]`、platforms 兩欄 `lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]`、models 表單 `grid-cols-[minmax(0,1fr)]`、兩個按鈕列加 `flex-wrap`、模型輸入列 Input 加 `min-w-0 flex-1`。修完 640 寬三頁內容區 sw=cw=440 無溢出。
+- **E2E**(`app/e2e/e2e.js`):改寫窄寬度區段——原本以「900×600 兩欄都開」為前提,新行為下 640–960 兩欄互斥,該情境不再存在;改為 640×672 側欄開(資訊欄已自動收):標題欄三顆視窗鈕完整、互斥成立、main=308≥300、整頁無水平捲軸、工具列 tight(「更多」選單含摘要/版本/複製到平台且可觸發)、徽章單行、麵包屑截斷、狀態列不溢出且模型名截斷;手動開資訊欄自動收側欄(main=300)再開側欄自動收資訊欄;900×600 圖示化退化+互斥仍成立;1280×800 完整標籤+不自動重開資訊欄。Notion 匯入表格加 640 寬檢查。選擇器陷阱:Inspector 根元素也是 `<aside data-testid=inspector>`,檢查側欄要用 `aside:not([data-testid=inspector])`。E1 崩潰段補開資訊欄並每個 area 重置寬度基準(補開本身會改寬度)。
+- **破壞驗證**(獨立腳本 `break-verify.js`):修補在→互斥/主編輯區寬度/無水平捲軸/設定頁三頁無溢出全 PASS;拿掉 Workspace 修補→「兩者同時存在=true、main=28」FAIL;放回→PASS;拿掉設定頁修補(SettingsPage+basic.tsx)→「models sw472/cw440、platforms sw556/cw440」FAIL;放回→PASS。E2E 新檢查(301 項)每項都由這些修補支撐。
+- **驗證**:`go test -count=1 ./...` 全過;`npm run build` 通過;E2E(E2E_SKIP_AI=1)**301/301 passed,略過 8 項**(AI 流程;提案/摘要等走模型的部分未跑,但本次無 AI 邏輯變更)。1280×800 經既有檢查+新檢查確認不退步。
+- **截圖**(scratchpad `halfscreen-shots/`):修改前 `before/`、`before2/`、`before3/`(workspace 640 兩欄同開 main=28、titlebar、chat、versions、summary、settings×3頁、bookshelf);修改後 `after/`(同尺寸重拍,640 下資訊欄已自動收起);1280×800 確認 `after/workspace-1280x800.png`。
+- **未實測/限制**:Notion 匯入表格 640 寬檢查在 E2E 內以 PickNotionExport 覆寫走流程(非原生對話框);實機 Win+←/→ 貼齊後的 WebView2 行為(含縮放 125%/150% 的 DPI)未在真實環境驗證;`e2e-proj` 重建後 wails dev 有重啟(避免 perkins.json 記憶體覆寫的已知陷阱)。
+
+---
 ## 2026-10-06 — PR #17 第三輪返工:目錄安全與在途查詢補查
 
 - **#1(Major,資料安全)E2E 刪除非本次建立目錄**:`e2e.js` 第二專案 B 改用 `fs.mkdtempSync(path.join(os.tmpdir(), 'perkins-e2e-b-'))` 唯一目錄,**絕不 rm 預先存在的 `PROJ-b`**;清理只針對本次建立的路徑(guard 目錄/檔案若非本輪建立就不動)。路徑統一正斜線(反斜線會讓 CSS 屬性選擇器的 `\` 跳脫失敗,卡片選擇器永遠匹配不到——實測踩過)。回歸(回歸#8):跑前預先建立 `PROJ-b` 並放檔案 → 跑完檔案仍在;紅燈=舊 rm 實作把整個目錄刪掉(check FAIL + 目錄消失)。
