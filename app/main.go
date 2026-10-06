@@ -28,7 +28,7 @@ func main() {
 		Title:     "Perkins WritingSpace",
 		Width:     defaultWidth,
 		Height:    defaultHeight,
-		MinWidth:  900,
+		MinWidth:  640, // 半螢幕並排(SPEC §16 第 7 項):1920×1080 縮放 150% 的半邊;最小高度維持 600
 		MinHeight: 600,
 		Frameless: true, // 標題欄由前端自畫(SPEC §17.1);DisableResize 保持 false,邊緣縮放才有效
 		AssetServer: &assetserver.Options{
