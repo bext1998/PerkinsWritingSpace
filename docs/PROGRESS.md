@@ -22,6 +22,14 @@
 - **SPEC §12.2**:自訂分類新增「健壯性」四點(刪除前先存檔、批次原子、損毀不當空、清單同步)。
 - **驗證**:`go test -count=1 ./...` 全過(新增 #2a 第二檔失敗回復/清單寫入失敗回復/損毀不覆蓋 + 既有測試適配 `DeleteCategory` 回傳路徑);`npm run build` 通過;E2E(E2E_SKIP_AI=1)**280/280 passed,略過 8 項**(新增回歸#1、#4)。**破壞驗證(各自紅燈)**:①修補缺席先跑 → 回歸#1、#4 FAIL(基線不中斷);②Go 紅燈先寫 → 第二檔失敗未回復、損毀被覆寫成 `["新分類"]` 兩項 FAIL(對舊實作);③完成後四項修補同時拿掉(rollback 改 no-op、損毀當空、不存檔不重載、不訂閱共享通知)→ #2a/#2b/#3 Go FAIL + 回歸#1/#4 E2E FAIL,還原後三檔 sha256 與綠燈輪完全吻合。如實記錄:「複製到平台顯示結果」在 red/green 各失敗一次(PROGRESS #12 已記錄的既有時序 flake,與本次無關),重跑後 280/280。
 
+## 2026-10-06 — 設定集自訂分類(SPEC §12.2 / §16 第 9 項)
+
+- **規則**(SPEC §12.2 新增「自訂分類」、§16 第 9 項標已完成):清單存作品內 `.perkins/categories.json`;自訂可刪、內建(角色/地點/勢力/道具/名詞/其他)不可刪;刪除仍有設定檔的分類先確認(告知幾個檔案改歸「其他」)→ 自動快照(G3,reason=`before-delete-category`)→ frontmatter `type` 改「其他」(name/aliases/本文不動、檔案不刪),快照失敗就不動檔案;名稱去空白、非空、不與既有分類或大綱/筆記/略過重複、不含路徑字元。AI 工具白名單不變(G2/G4)。
+- **後端**(`app/app.go`):`AddCategory`/`CategoryUsage`/`DeleteCategory` 綁定,`EntityTypes` 改回內建+自訂;`notion.Apply` 與 `targetDir` 增加 `types` 參數,`NotionApply` 傳 `a.EntityTypes()`(Notion 匯入 Go 端驗證放行自訂分類)。新測試 `app/categories_test.go`(6 個)+ `notion_test.go` 兩個(targetDir/實際建檔),既有 5 處 Apply 呼叫補參數。
+- **前端**:`panels/types.ts` 移除寫死的 `TYPE_ORDER`,改 `useCategories()`(EntityTypes 取清單,回傳[清單, reload]);BiblePanel 頂列加「管理分類」入口(清單+新增+刪除確認對話框,testid: manage-categories/category-list/category-name/category-add/del-cat-*/category-confirm/-go),分組加 `group-*` testid、自訂分類用 Folder 通用圖示、新增設定的類型選單吃 cats;EntityHeader 類型選單、NotionImport TARGETS 與猜測清單同源(NotionImport 只換資料來源,JSX 版面未動)。
+- **驗證**:Go 新增測試涵蓋新增/重複與非法名稱拒絕/不可刪內建/刪除有檔分類(先快照+改歸其他+名稱本文其他欄位全保留)/無檔直刪不建快照/Usage 計數/Notion 接受自訂分類——`go test -count=1 ./...` 全過;`npm run build` 通過;E2E(E2E_SKIP_AI=1)**278/278 passed,略過 8 項**。**破壞驗證**:新 10 項流程檢查在修補缺席(現況)全數 FAIL 且不中斷基線(268/278),套用後全綠——每項新檢查都有對應的紅燈證據。截圖 `80-manage-categories`、`81-sidebar-custom-category`(scratchpad `categories/`)。
+- **如實記錄**:E2E 截圖驗證時發現影像傳輸快取會錯置(同一 read 序列回傳舊圖),以檔案 sha256+像素亮度比對+裁切重讀確認兩張截圖內容正確。
+
 ## 2026-10-06 — 修正 Notion 匯入展開後排版錯亂(SPEC §16 第 8 項)
 
 - 根因:展開後的逐頁清單渲染在「匯入為」那一欄(`w-40`)的儲存格裡,清單列(頁名＋`w-44` 選單)比欄寬寬,自動表格版面因此重新分配欄寬:「匯入為」欄被撐大、「頁數」欄標題被擠成直排、資料夾列被撐高。
