@@ -233,6 +233,90 @@ const maybe = async (name, fn, detail = '') => {
         check('設定的登場索引列出章節', ap.includes('第一章'));
         await shot('07-bible');
 
+        // ===== 設定集自訂分類(SPEC §12.2 與 §16 第 9 項):新增 → 建檔 → 側欄顯示 → 刪除 → 歸其他 =====
+        // 每個步驟都設旗標再統一 check:現況(無此功能)要全部 FAIL 且不能中斷後續測試。
+        const catWait = sel => page.waitForSelector(sel, {timeout: 5000}).then(() => true).catch(() => false);
+        const cat = {manage: false, list: false, add: false, typeSel: false, created: false, usage: false, del: false, retag: false, snap: false, moved: false};
+        cat.manage = !!(await page.$('[data-testid=manage-categories]'));
+        if (cat.manage) {
+            await page.click('[data-testid=manage-categories]');
+            if (await catWait('[data-testid=category-list]')) {
+                const listTxt = await page.textContent('[data-testid=category-list]').catch(() => '');
+                cat.list = listTxt.includes('角色') && listTxt.includes('其他');
+            }
+            if (cat.list) {
+                await page.fill('[data-testid=category-name]', '組織');
+                await page.click('[data-testid=category-add]');
+                cat.add = await catWait('[data-testid=del-cat-組織]');
+                if (cat.add) await shot('80-manage-categories'); // 管理分類介面(含自訂分類與刪除鈕)
+            }
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[data-testid=category-list]', {state: 'detached', timeout: 3000}).catch(() => {});
+        }
+
+        // 以自訂分類建立設定檔(獨立於管理入口:選單沒長出來也要能 FAIL 而不是中斷)
+        await page.click('[data-testid=new-entity]');
+        if (await catWait('[role=dialog]')) {
+            if (await catWait('[data-testid=entity-type]')) {
+                await page.click('[data-testid=entity-type]');
+                cat.typeSel = await catWait('[role=option]:has-text("組織")');
+                if (cat.typeSel) {
+                    await page.click('[role=option]:has-text("組織")');
+                    await page.fill('#ename', '天網');
+                    await page.click('[role=dialog] button:has-text("建立")');
+                    cat.created = await catWait('[data-testid=group-組織] [data-testid=entity-row]:has-text("天網")');
+                    if (cat.created) await shot('81-sidebar-custom-category'); // 側欄出現自訂分類分組
+                } else {
+                    await page.keyboard.press('Escape');
+                }
+            } else {
+                await page.keyboard.press('Escape');
+            }
+        }
+
+        // 刪除:先確認(告知幾個設定檔改歸其他)→ 確認後快照 + 改歸其他
+        if (cat.add) {
+            await page.click('[data-testid=manage-categories]');
+            if (await catWait('[data-testid=del-cat-組織]')) {
+                await page.click('[data-testid=del-cat-組織]');
+                if (await catWait('[data-testid=category-confirm]')) {
+                    const cTxt = await page.textContent('[data-testid=category-confirm]').catch(() => '');
+                    cat.usage = cTxt.includes('其他') && /1\s*個設定檔/.test(cTxt);
+                    if (cat.usage) {
+                        await page.click('[data-testid=category-confirm-go]');
+                        cat.del = await page.waitForSelector('[data-testid=del-cat-組織]', {state: 'detached', timeout: 5000})
+                            .then(() => true).catch(() => false);
+                    }
+                }
+            }
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[data-testid=category-list]', {state: 'detached', timeout: 3000}).catch(() => {});
+        }
+
+        // 刪除後:檔案 type=其他(名稱與本文保留)、快照存在、側欄分組跟著移動
+        const tianWang = fs.existsSync(P('canon/天網.md')) ? read('canon/天網.md') : '';
+        cat.retag = tianWang.includes('type: 其他') && tianWang.includes('name: 天網') && tianWang.includes('# 天網');
+        cat.snap = (() => {
+            const d = P('.perkins/snapshots');
+            if (!fs.existsSync(d)) return false;
+            return fs.readdirSync(d).some(x => {
+                try { return JSON.parse(fs.readFileSync(path.join(d, x, 'meta.json'), 'utf8')).reason === 'before-delete-category'; } catch { return false; }
+            });
+        })();
+        const grpGone = !(await page.$('[data-testid=group-組織]'));
+        cat.moved = grpGone && await catWait('[data-testid=group-其他] [data-testid=entity-row]:has-text("天網")');
+
+        check('自訂分類 側欄有「管理分類」入口', cat.manage);
+        check('自訂分類 管理對話框列出分類(內建在列)', cat.list);
+        check('自訂分類 新增「組織」後出現在清單(有刪除鈕)', cat.add);
+        check('自訂分類 新增設定的類型選單含自訂分類', cat.typeSel);
+        check('自訂分類 以自訂分類建立設定檔後側欄顯示分組', cat.created);
+        check('自訂分類 刪除確認顯示會有 1 個設定檔改歸其他', cat.usage);
+        check('自訂分類 確認後分類從管理清單移除', cat.del);
+        check('自訂分類 刪除後檔案改歸其他且名稱本文保留', cat.retag);
+        check('自訂分類 刪除前有自動快照(before-delete-category)', cat.snap);
+        check('自訂分類 刪除後側欄分組移到其他(原分組消失)', cat.moved);
+
         // 寫法檢查
         await page.click('[data-testid=rail-checks]');
         await page.click('[data-testid=run-variants]');

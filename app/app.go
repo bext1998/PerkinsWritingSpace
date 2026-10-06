@@ -465,7 +465,157 @@ func (a *App) ChapterWordCounts() (map[string]int, error) {
 
 // ---- 設定集(全部是確定性文字比對,不經模型,B3) ----
 
-func (a *App) EntityTypes() []string { return bible.Types }
+// ---- 自訂分類(SPEC §12.2 / §16 第 9 項) ----
+// 清單存作品內 .perkins/categories.json,跟著作品走;這是作者自己的操作,
+// AI 工具白名單不變(G2/G4:AI 不能新增或刪除分類)。
+
+func (a *App) categoriesPath() string {
+	return filepath.Join(a.proj.Root, ".perkins", "categories.json")
+}
+
+func (a *App) loadCustomCategories() []string {
+	out := []string{}
+	b, err := os.ReadFile(a.categoriesPath())
+	if err != nil {
+		return out
+	}
+	var list []string
+	if json.Unmarshal(b, &list) != nil {
+		return out
+	}
+	for _, c := range list {
+		if c = strings.TrimSpace(c); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// EntityTypes 回傳內建 + 自訂分類(未開作品時只有內建)。
+func (a *App) EntityTypes() []string {
+	if a.proj == nil {
+		return bible.Types
+	}
+	return append(append([]string{}, bible.Types...), a.loadCustomCategories()...)
+}
+
+// AddCategory 新增自訂分類,回傳更新後的清單。名稱去空白;不可空、不可與既有分類
+// 或 Notion 匯入特殊去處(大綱/筆記/略過)重複、不可含路徑字元。
+func (a *App) AddCategory(name string) ([]string, error) {
+	if a.proj == nil {
+		return nil, errNoProject
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("分類名稱不能是空的")
+	}
+	if strings.ContainsAny(name, `/\:*?"<>|`+"\r\n") {
+		return nil, errors.New(`分類名稱不能含路徑字元(\ / : * ? " < > | 與換行)`)
+	}
+	for _, e := range a.EntityTypes() {
+		if e == name {
+			return nil, fmt.Errorf("「%s」已經是分類了", name)
+		}
+	}
+	for _, r := range []string{notion.TargetNotes, notion.TargetOutline, notion.TargetSkip} {
+		if r == name {
+			return nil, fmt.Errorf("「%s」是 Notion 匯入的特殊去處,不能當分類", name)
+		}
+	}
+	custom := append(a.loadCustomCategories(), name)
+	b, _ := json.MarshalIndent(custom, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(a.categoriesPath()), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(a.categoriesPath(), b, 0o644); err != nil {
+		return nil, err
+	}
+	return a.EntityTypes(), nil
+}
+
+// CategoryUsage 回傳分類底下的設定檔數(刪除確認對話框的數字來源)。
+func (a *App) CategoryUsage(name string) (int, error) {
+	if a.proj == nil {
+		return 0, errNoProject
+	}
+	ents, err := bible.Load(a.proj)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range ents {
+		if e.Type == name {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// DeleteCategory 刪除自訂分類(內建不可刪)。仍有設定檔時:先自動建立快照(G3),
+// 再把這些檔的 frontmatter type 改成「其他」(name/aliases/本文不動,檔案不刪);
+// 快照失敗就不動任何檔案。回傳被改歸「其他」的檔案數。
+func (a *App) DeleteCategory(name string) (int, error) {
+	if a.proj == nil {
+		return 0, errNoProject
+	}
+	for _, b := range bible.Types {
+		if b == name {
+			return 0, errors.New("內建分類不能刪除")
+		}
+	}
+	custom := a.loadCustomCategories()
+	idx := -1
+	for i, c := range custom {
+		if c == name {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return 0, errors.New("找不到這個自訂分類")
+	}
+	ents, err := bible.Load(a.proj)
+	if err != nil {
+		return 0, err
+	}
+	var affected []bible.Entity
+	for _, e := range ents {
+		if e.Type == name {
+			affected = append(affected, e)
+		}
+	}
+	if len(affected) > 0 {
+		paths := make([]string, 0, len(affected))
+		for _, e := range affected {
+			paths = append(paths, e.Path)
+		}
+		st, err := a.snaps()
+		if err != nil {
+			return 0, err
+		}
+		if _, err := st.Take("刪除分類「"+name+"」前", "before-delete-category", paths); err != nil {
+			return 0, fmt.Errorf("建立快照失敗,分類未刪除: %w", err)
+		}
+		for _, e := range affected {
+			content, err := a.proj.ReadFile(e.Path)
+			if err != nil {
+				return 0, err
+			}
+			next, err := bible.SetHeader(content, bible.TypeOther, e.Name, e.Aliases)
+			if err != nil {
+				return 0, err
+			}
+			if err := a.proj.WriteFile(e.Path, next); err != nil {
+				return 0, err
+			}
+		}
+	}
+	custom = append(custom[:idx], custom[idx+1:]...)
+	b, _ := json.MarshalIndent(custom, "", "  ")
+	if err := os.WriteFile(a.categoriesPath(), b, 0o644); err != nil {
+		return 0, err
+	}
+	return len(affected), nil
+}
 
 func (a *App) ParseEntity(rel, content string) bible.Entity { return bible.Parse(rel, content) }
 
@@ -1037,7 +1187,7 @@ func (a *App) NotionApply(src string, choices map[string]string, pages map[strin
 	if _, err := s.Take("Notion 匯入前", "before-import", nil); err != nil {
 		return nil, fmt.Errorf("快照失敗,未匯入: %w", err)
 	}
-	return notion.Apply(a.proj, src, choices, pages)
+	return notion.Apply(a.proj, src, choices, pages, a.EntityTypes())
 }
 
 func (a *App) NotionUndo(id string) ([]string, error) {

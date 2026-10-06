@@ -5,12 +5,12 @@ import {notion} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
 import {errText} from '@/lib/utils';
-import {TYPE_ORDER} from './panels/types';
-
-const TARGETS = [...TYPE_ORDER, '大綱', '筆記', '略過'];
+import {useCategories} from './panels/types';
 
 /** Notion 一次性匯入(SPEC §12.5):選來源 → 指定每組去處(可在資料夾之下逐頁覆寫)→ 匯入 → 可整批撤銷。 */
 export default function NotionImport({onDone}: {onDone: () => void}) {
+    const [cats] = useCategories(); // 分類清單(內建+自訂)只作 TARGETS 來源;版面不動(SPEC §12.2)
+    const targets = [...cats, '大綱', '筆記', '略過'];
     const [src, setSrc] = useState('');
     const [plan, setPlan] = useState<notion.Plan | null>(null);
     const [choices, setChoices] = useState<Record<string, string>>({});
@@ -36,7 +36,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
             // 預設:資料夾名稱看起來像角色/地點…就直接對應,其餘先匯入為筆記
             const guess: Record<string, string> = {};
             for (const g of p.groups) {
-                const hit = TYPE_ORDER.find(t => g.label.includes(t));
+                const hit = cats.find(t => g.label.includes(t));
                 guess[g.key] = hit ?? (/人物|登場/.test(g.label) ? '角色' : /大綱|劇情/.test(g.label) ? '大綱' : '筆記');
             }
             setChoices(guess);
@@ -113,7 +113,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                     <td className="w-40 py-2">
                                         <Select value={choices[g.key]} onValueChange={v => setChoices(c => ({...c, [g.key]: v}))}>
                                             <SelectTrigger className="h-8" data-testid={`group-select-${g.key || 'root'}`}><SelectValue/></SelectTrigger>
-                                            <SelectContent>{TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                                            <SelectContent>{targets.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
                                         </Select>
                                         {expanded && (
                                             <div className="mt-2 max-h-56 overflow-y-auto rounded-md border p-2" data-testid={`pages-${g.key || 'root'}`}>
@@ -135,7 +135,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                                                 <SelectItem value="" data-testid={`page-follow-${f.name}`}>
                                                                     跟隨資料夾(目前:{choices[g.key]})
                                                                 </SelectItem>
-                                                                {TARGETS.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                                                                {targets.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                                                             </SelectContent>
                                                         </Select>
                                                     </div>
