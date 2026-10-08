@@ -1,5 +1,45 @@
 # PROGRESS.md
 
+## 2026-10-08 — 編輯器手感返工二(PR #26 複審:全域鍵守衛與 Select 檢查情境)
+
+- **#1(Minor)popper wrapper 擋住 Tooltip**:Select 守衛用了所有 Radix 浮層共用的 `[data-radix-popper-content-wrapper]`,Tooltip 顯示時(滑鼠停在「設定」等按鈕上)Ctrl+F 也被擋。存在檢查收斂為 `[data-testid=settings-page], [role=dialog], [role=menu], [role=listbox]`;`closest` 的 popper wrapper 保留(Tooltip 焦點不會進 popper content,不影響;其他浮層焦點在內時仍擋)。**回歸檢查**:hover「設定」鈕等 Tooltip 出現 → Ctrl+F 面板開啟且聚焦搜尋欄。
+- **#2(Minor)Select 檢查情境無效**:原本在設定頁內開 Select(平台輸出的章節標題),設定頁守衛本來就擋,單獨移除 Select 守衛仍會通過(破壞驗證證實)。改為**作品畫面內**的 Select:設定集 EntityHeader 的類型選單(`[data-testid=entity-header-type]`),開啟後 Ctrl+F 面板不得開啟;檢查後切回稿件。
+- **破壞驗證(兩輪分離歸因)**:(A) 還原 popper wrapper 到存在檢查 → Tooltip 檢查 FAIL(面板被擋)、Select 檢查 PASS(設定頁情境的舊檢查確實無法失敗);(B) 移除 `[role=listbox]`(closest 與存在檢查)→ Select 檢查 FAIL(焦點在 Select content 內,面板在選單背後開啟搶焦點)、Tooltip 檢查 PASS。兩輪各自證明對應檢查能抓到對應守衛的缺失。還原後全綠。
+- **E2E 流程陷阱**:EntityHeader 檢查途中切到 canon 檔,`openFile` 把先前貼上的字存了檔,回到第一章後是乾淨的 — 長章檢查的 Ctrl+S 對乾淨檔不觸發 refreshTree,新章節列不出來(waitForSelector 15s 逾時);改用「空格+Backspace」弄髒(內容不變)再存。另外合成 Ctrl+Shift+F 會切禪模式(合併後),檢查後有 `[data-testid=zen-exit]` 就用真實快捷鍵離開;Orchestrator 合併時新增的「CapsLock 下 Ctrl+Shift+F 進入禪模式」檢查與本段共存。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**367/367 passed,略過 8 項**;長章量測無回歸(輸入中位 20–21ms、捲動 16–26ms)。
+
+## 2026-10-08 — 編輯器手感返工(PR #26 審查修復)
+
+- **#1 還原重試拉走明確定位**:位置還原是 rAF 重試(等 CM 排版,最多約 40 frame),作者在這個視窗內點場景/搜尋結果跳行(`scrollToLine`),稍後仍被拉回舊位置(實測 scrollTop 741→10708)。修法:追蹤還原 rAF(`restoreRafRef`)與旗標(`restoringRef`),`cancelRestore()` 在三個時機呼叫 — 作者操作(編輯器內 `pointerdown`/`wheel`/`keydown`)、明確定位(`scrollToLine`、`openSearch`)、卸載。
+- **#2 縮放保護拉走閱讀位置**:縮放保護原本只看「縮放後」游標是否可見,作者游標在開頭、捲到中段閱讀時縮放會被拉回開頭(scrollTop 2610→4)。修法:`cursorVisibleRef` 在選取/捲動時記錄「縮放前」游標可見性,原本就在畫面外就不拉回。
+- **#3 全域鍵守衛漏設定頁與 Radix Select 浮層**:設定頁是 fixed 覆蓋層(無 `role=dialog`),Radix Select 開啟時焦點還在觸發鈕上。除了 `closest` 檢查,補「覆蓋層存在即不攔截」的整體檢查(`[data-testid=settings-page]`、`[data-radix-popper-content-wrapper]`、`[role=dialog]`、`[role=menu]`)——焦點可能在 body 或不在覆蓋層元素內,以覆蓋層開著為準。
+- **#4 全域鍵不攔 Shift/Alt/defaultPrevented/IME**:CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f會被當成搜尋(PR #24 禪模式用 Ctrl+Shift+F,合併後兩個 handler 都會跑);補 `e.shiftKey||e.altKey`、`e.defaultPrevented`、`e.isComposing||e.keyCode===229` 守衛。
+- **#5 刪檔後位置記憶殘留**:同名新檔案會套用已刪文件的位置。修法:tree 更新時清掉不存在的路徑;E2E 驗證「刪除後建立同名文件從預設位置開始」。
+- **#6 貼上檢查拿掉雙軌備援**:原「剪貼簿內容不符時只驗文件變長」允許貼入錯誤內容(只看長度)。改為暫時替換 `clipboard.readText()` 固定回傳測試字串,斷言實際插入內容(含 `\r\n` 正規化),再還原替身。
+- **E2E**:新增/改寫 9 項檢查(貼上改替身斷言、設定頁/Select 浮層/Shift+Alt/defaultPrevented/IME 229 五項守衛、還原中點場景、閱讀中縮放、刪除清記憶、同名重建);長章 fixture 加場景標題(場景清單只在章節為作用中時渲染)。**破壞驗證(六項修正同時移除)**:9 項全 FAIL,各自重現原問題 — C1(anchor 已跳到 8 但捲動被拉回 48212)、C2(閱讀中縮放被拉回 scrollTop 50)、F5(記憶未清、同名重建套用舊位置 anchor 7)、全域鍵四項開了面板、貼上 FAIL。還原後全綠。
+- **E2E 陷阱**:側欄場景清單用 `li` 的 `startsWith` 匹配(外層章節 li 的 textContent 含場景名,`includes` 會點錯);Radix Dialog Escape 後要 `waitForSelector('[role=dialog]', {state: 'hidden'})`;設定頁預設在 AI 模型分頁,先切 `[data-testid=tab-project]` 才找得到 research-row。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**358/358 passed,略過 8 項**。截圖:`74-resize-reading-preserved.png`(閱讀中縮放保留位置)已親自檢視。
+
+## 2026-10-08 — 編輯器手感(§16 第 24 項第一層剩餘)
+
+- **切章位置記憶**:`Workspace` 持有 `posMemo` Map(檔案路徑 → {anchor, head, scrollTop},只存記憶體不寫檔);`Editor` 掛載時讀取還原、選取/捲動變動時持續寫回(updateListener + scroll 事件 rAF 節流),因此外部重載(`reloadCurrent`、接受提案、`applyHeader`)重掛後也回到原位置。相容性靠既有機制:過期導覽由 `navSeq` 擋、重掛由 `key={current}:{reloadKey}`。陷阱:
+  - 掛載還原的 `dispatch(selection)` 自己會觸發 `selectionSet` → 把 `scrollTop=0` 寫回 Map 蓋掉記住的值:還原期間用旗標擋 `savePos`。
+  - 捲動還原要等 CM 排版(首次排版捲動高度逐步長大),等不到目標高度就重試(最多約 40 frame);不額外 `scrollIntoView`(游標在可視範圍外時會把捲動位置拉走)。
+  - 超出文件長度夾住(`Math.min(saved, len)`):外部重載縮短後 `EditorSelection.range` 超界會拋錯(「Selection points outside of document」),E2E 已驗。
+- **全域 Ctrl+F / Ctrl+H**:`Workspace` 的 window keydown;編輯器聚焦時不會走到這裡(cm-content 是 contenteditable,由 Editor 的 searchKeymap 處理);守衛 `input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [data-testid=chat-window]`(對話框、Perkins Bot 浮窗、選單內不攔截);沒有開檔不做任何事。Editor 新增 `openSearch(replace?)` handle。
+- **視窗縮放游標穩定**:Editor 內 `ResizeObserver`(rAF 節流)觀察自身寬高,游標(`coordsAtPos`)落在可視範圍外才以 `scrollIntoView(nearest)` 最小捲動帶回(不跳到頂端,本來就看得到就不動);≤960 側欄/資訊欄互斥收合的情境由 E2E 以 640×672 實測。
+- **貼上的格式處理**:CodeMirror 原生 paste 只取純文字圖層(帶 `text/html` 雙格式的合成 paste 事件也只插入 plain,已驗證,不需改);右鍵選單「貼上」走前端 `clipboard.readText()`,補 `\r\n→\n` 正規化(不做其他改寫)。
+- **長章節實測**:約 7.7 萬字章節(E2E fixture 動態建立),輸入一個字到畫面更新中位數 19–22ms、最大 21–31ms(10 次),捲動定位 16–27ms;無明顯問題,**未改程式**。
+- **E2E**:新增 13 項檢查(貼上 3、全域鍵 4、長章量測 1、縮放穩定 1、位置記憶 3 + 前置 1);全段在 IME 段之後,檢查間會關閉開著的面板。**破壞驗證(三輪)**:(1) 移除夾住 + 縮放保護 + 全域鍵 + 貼上正規化 → 縮放穩定 FAIL(游標不可視)、夾住移除後「Selection points outside of document」炸掉編輯器(JS 錯誤檢查抓到)、貼上檢查 FAIL;(2) 移除還原 + 不攔截守衛 → 切章還原 FAIL(anchor 46→0、scroll 360→0)、Perkins Bot 輸入框與對話框內 Ctrl+F 被攔截(兩項 FAIL);(3) 全域鍵移除 + 貼上插錯內容 → 全域鍵兩項 FAIL;貼上檢查原以「文件變長」為容差,收緊為「嚴格內容斷言 + 剪貼簿確認」後破壞版必 FAIL。還原後全綠。
+- **E2E 陷阱(重要)**:
+  - E4a 段(crash/救援)把 `navigator.clipboard.writeText` 換成不寫真剪貼簿的替身,之後未還原;該段結尾 app 會 reload(替身消失),但無頭環境真 `writeText` 在此之後仍偶發不生效(寫入 resolve、讀回仍是舊內容)→ 右鍵貼上檢查用雙軌斷言:剪貼簿是預期測試文字時驗內容,不生效時(殘留的救援複本仍含 `\r\n`)以「文件精確變長 + 無 `\r`」驗正規化,兩軌都能抓到破壞。
+  - Chromium 右鍵點擊會把游標移到點擊處(貼入位置在中間,不是檔尾);右鍵選單用明確座標 + `waitForSelector('.ctxmenu')`。
+  - 還原捲動的 `maxScroll` 掛載當下為 0(視埠未排版),要等排版完成重試。
+  - 每輪 run 前重建 fixture + 重啟 wails dev(run 會新增章節/修改檔案,不重置會讓章節數檢查與存檔類檢查互相汙染)。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**349/349 passed,略過 8 項**。截圖:`app/e2e/shots/70-global-find.png`(全域 Ctrl+F)、`71-resize-640-stable.png`(640 縮放後游標可視)、`72-long-chapter.png`(長章)、`73-position-restored.png`(切章還原選取+捲動),均已親自檢視。**IME(A9)未驗證**:無頭環境無真實 IME,真實 IME(注音/倉頡)仍待作者實機確認。
+
+## 2026-10-08 — 搜尋面板返工二(PR #23 審查修復)
+
 ## 2026-10-08 — 評測案例返工二(PR #25 第二輪審查)
 
 - **#1(Minor)快照接線修正缺回歸驗證**:原先只斷言總結果不合格,但沒有提案本來就會讓總結果不合格,換回錯誤快照仍會通過。修法:在 `TestEvalJudgeWithScriptedLLM` 第二情境的 Ask 事件 callback 中受控改寫 `dir2` 的虛構 fixture(測試直接寫檔,不經模型工具;G1 限制的是模型工具,不是測試),並單獨斷言「檔案未被改動」這一項檢查失敗且詳情列出被改檔案,不只看總結果。**破壞驗證**:把 `before2` 的快照時機換回 Ask 之後(舊錯誤接線)→ 「應抓到檔案未被改動失敗」斷言轉紅(證實舊接線確實假通過);還原 → 全綠。

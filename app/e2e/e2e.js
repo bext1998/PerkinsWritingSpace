@@ -2880,6 +2880,340 @@ const maybe = async (name, fn, detail = '') => {
             check('IME(CDP) 組字結束後一般 Enter 恢復(選取仍同步在雷恩比對)', false, e.message);
         }
 
+        // ===== 編輯器手感(§16 第 24 項第一層):切章位置記憶、縮放穩定、全域 Ctrl+F/H、貼上純文字、長章節量測 =====
+        try {
+            // --- 貼上的格式處理:CodeMirror 預設只貼純文字;\r\n 統一成 \n(右鍵貼上路徑由前端正規化) ---
+            // 無頭環境原生 Ctrl+V 不穩定,用合成 paste 事件驅動同一條 CM paste 處理路徑
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            const docText = () => page.evaluate(() => document.querySelector('.cm-content').innerText);
+            await page.evaluate(() => {
+                const dt = new DataTransfer();
+                dt.setData('text/plain', '甲乙\r\n丙丁\r');
+                document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+            });
+            await page.waitForTimeout(300);
+            const pasteTxt = await docText();
+            check('貼上(paste 事件)只貼純文字且 \\r\\n 統一成 \\n',
+                pasteTxt.includes('甲乙\n丙丁') && !pasteTxt.includes('\r'));
+            // 帶 text/html 的剪貼簿資料:只能取 text/plain 圖層(雙格式)
+            await page.evaluate(() => {
+                const dt = new DataTransfer();
+                dt.setData('text/html', '<b>HTML標記不應出現</b>');
+                dt.setData('text/plain', '純文字版');
+                const el = document.querySelector('.cm-content');
+                el.dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+            });
+            await page.waitForTimeout(300);
+            const rich = await docText();
+            check('貼上含 HTML 格式時只取純文字圖層',
+                rich.includes('純文字版') && !rich.includes('HTML標記不應出現'));
+            // 右鍵選單「貼上」走前端的 clipboard.readText():\r\n 也要正規化(點擊座標固定在可見編輯區內)
+            // 暫時替換 clipboard.readText() 固定回傳含 \r\n 的測試字串(不依賴真剪貼簿,拿掉無頭環境
+            // writeText 不生效時的雙軌備援),斷言實際插入內容,再還原替身
+            await page.evaluate(() => { if (window.__clipStubs?.orig) navigator.clipboard.writeText = window.__clipStubs.orig; });
+            await page.evaluate(() => {
+                window.__readOrig = navigator.clipboard.readText.bind(navigator.clipboard);
+                navigator.clipboard.readText = async () => '戊己\r\n庚辛';
+            });
+            const sc = await page.evaluate(() => { const r = document.querySelector('.cm-scroller').getBoundingClientRect(); return {x: r.left + 150, y: r.top + r.height / 2}; });
+            await page.mouse.click(sc.x, sc.y, {button: 'right'});
+            await page.waitForSelector('.ctxmenu', {timeout: 5000});
+            await page.click('.ctxmenu div:text-is("貼上")');
+            await page.waitForTimeout(300);
+            await page.evaluate(() => { navigator.clipboard.readText = window.__readOrig; delete window.__readOrig; });
+            const menuPaste = await docText();
+            check('右鍵選單貼上同樣把 \r\n 統一成 \n(替身固定內容,驗實際插入)',
+                menuPaste.includes('戊己\n庚辛') && !menuPaste.includes('\r'), `tail=${JSON.stringify(menuPaste.slice(-20))}`);
+
+            // --- 全域 Ctrl+F / Ctrl+H:編輯器未聚焦時也開面板;輸入框/對話框/浮窗內不攔;沒開檔不做任何事 ---
+            await page.keyboard.press('Escape');
+            await page.click('[data-testid=sidebar-title]'); // 焦點離開編輯器
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            const gf = await page.evaluate(() => ({
+                open: !!document.querySelector('.perkins-search'),
+                focus: document.activeElement?.name || document.activeElement?.tagName,
+            }));
+            check('全域 Ctrl+F(編輯器未聚焦)開啟搜尋面板並聚焦搜尋欄',
+                gf.open && gf.focus === 'search', JSON.stringify(gf));
+            await shot('70-global-find');
+            await page.keyboard.press('Control+h');
+            await page.waitForTimeout(200);
+            const gh = await page.evaluate(() => ({
+                replaceVisible: document.querySelector('.perkins-search .perkins-replace-row')?.style.display,
+                focus: document.activeElement?.name || document.activeElement?.tagName,
+            }));
+            check('全域 Ctrl+H(編輯器未聚焦)展開取代列並聚焦「取代為」欄',
+                gh.replaceVisible === 'flex' && gh.focus === 'replace', JSON.stringify(gh));
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(200);
+            // Perkins Bot 浮窗:焦點在輸入框時不攔截
+            await page.click('[data-testid=chat-fab]');
+            await page.waitForSelector('[data-testid=chat-window]:visible');
+            await page.click('[data-testid=question]');
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            const chatGuard = await page.evaluate(() => ({
+                panel: !!document.querySelector('.perkins-search'),
+                focus: document.activeElement?.getAttribute('data-testid') || document.activeElement?.tagName,
+            }));
+            check('Perkins Bot 輸入框內 Ctrl+F 不被攔截(面板不開、焦點留在輸入框)',
+                !chatGuard.panel && chatGuard.focus === 'question', JSON.stringify(chatGuard));
+            await page.keyboard.press('Escape');
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+            await page.waitForTimeout(300);
+            // 對話框內不攔截(版本對話框)
+            await page.click('[data-testid=open-versions]');
+            await page.waitForTimeout(300);
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            check('對話框內 Ctrl+F 不被攔截(面板不開)',
+                !(await page.$('.perkins-search')));
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[role=dialog]', {state: 'hidden', timeout: 5000});
+            // 設定頁(非輸入框焦點)內 Ctrl+F 不被攔截(設定頁是 fixed 覆蓋層,無 role=dialog)
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=tab-project]');
+            await page.waitForSelector('[data-testid=research-row]');
+            await page.click('[data-testid=research-row]'); // 焦點落在設定頁非輸入框區域
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            check('設定頁內 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
+            await page.click('[data-testid=close-settings]');
+            await page.waitForTimeout(400);
+            // Tooltip(radix popper wrapper)只是提示,不是選單:滑鼠停在按鈕上時 Ctrl+F 仍要能開搜尋
+            await page.hover('[data-testid=open-settings]');
+            await page.waitForSelector('[data-radix-popper-content-wrapper]', {timeout: 5000});
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            const tt = await page.evaluate(() => ({
+                panel: !!document.querySelector('.perkins-search'),
+                focus: document.activeElement?.name || document.activeElement?.tagName,
+            }));
+            check('Tooltip 顯示時 Ctrl+F 仍可開搜尋(滑鼠停在按鈕上不被擋)', tt.panel && tt.focus === 'search', JSON.stringify(tt));
+            await page.mouse.move(10, 400);
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(200);
+            // Radix Select 浮層(role=listbox)在作品畫面內(設定集 EntityHeader 類型選單)開啟時不被攔截
+            await page.click('[data-testid=rail-bible]');
+            await page.waitForSelector('[data-testid=entity-row]');
+            await page.click('[data-testid=entity-row]:has-text("艾莉絲")');
+            await page.waitForSelector('[data-testid=entity-header-type]');
+            await page.click('[data-testid=entity-header-type]');
+            await page.waitForSelector('[data-radix-popper-content-wrapper] [role=listbox]', {timeout: 5000});
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            check('Radix Select 浮層開啟時 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
+            await page.keyboard.press('Escape'); // 收起 Select 浮層
+            await page.waitForTimeout(200);
+            await page.click('[data-testid=rail-manuscript]');
+            await page.waitForTimeout(200);
+            await page.click('aside li:has-text("第一章")'); // 回到稿件,後續檢查需要 manuscript 檔案
+            await page.waitForSelector('.cm-content');
+            // Shift/Alt 組合(CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f)與 defaultPrevented 不攔截
+            await page.evaluate(() => {
+                const fire = init => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...init}));
+                const pe = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, key: 'f', ctrlKey: true});
+                pe.preventDefault();
+                fire({key: 'f', ctrlKey: true, shiftKey: true});   // CapsLock 下 Ctrl+Shift+F(禪模式快捷鍵)
+                fire({key: 'f', ctrlKey: true, altKey: true});     // Ctrl+Alt+F
+                document.body.dispatchEvent(pe);                   // 已被處理(defaultPrevented)
+            });
+            await page.waitForTimeout(200);
+            check('Ctrl+Shift+F / Ctrl+Alt+F / defaultPrevented 不開搜尋面板', !(await page.$('.perkins-search')));
+            // 合併禪模式後 Ctrl+Shift+F(含 CapsLock 小寫 f)應切進禪模式;確認後離開,後續步驟需要側欄
+            check('CapsLock 下 Ctrl+Shift+F 進入禪模式(未被搜尋搶走)', await page.isVisible('[data-testid=zen-exit]'));
+            if (await page.isVisible('[data-testid=zen-exit]')) await page.click('[data-testid=zen-exit]');
+            await page.waitForSelector('[data-testid=rail]:visible');
+            // IME 組字中(keyCode 229)的 Ctrl+F 不開面板(CDP 模擬真實 keydown)
+            const cdpG = await page.context().newCDPSession(page);
+            await cdpG.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
+            await cdpG.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
+            await page.waitForTimeout(200);
+            check('IME 組字中(229)的 Ctrl+F 不開搜尋面板', !(await page.$('.perkins-search')));
+            // 合併禪模式後,上面的合成 Ctrl+Shift+F 會切禪模式:有進入就離開
+            if (await page.$('[data-testid=zen-exit]')) {
+                await page.keyboard.press('Control+Shift+F');
+                await page.waitForSelector('[data-testid=rail]:visible', {timeout: 3000}).catch(() => {});
+            }
+            await page.waitForTimeout(300);
+
+            // --- 長章節:建約 5 萬字章節,量測捲動與輸入延遲(只在有明顯問題時才改程式) ---
+            const LONG = 'manuscript/長章測試.md';
+            fs.mkdirSync(path.join(PROJ, 'manuscript'), {recursive: true});
+            fs.writeFileSync(P(LONG), '# 長章測試\n\n## 場景一\n\n' + '這是一段測試用的長篇文字,描述森林裡的冒險故事與角色之間的對話。'.repeat(2400) + '\n');
+            // EntityHeader 檢查途中的切檔已把貼上的字存檔,第一章在此是乾淨的:
+            // Ctrl+S 對乾淨檔不觸發 refreshTree,新章節列不出來 — 空格+Backspace 弄髒(內容不變)再存
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type(' ');
+            await page.keyboard.press('Backspace');
+            await page.keyboard.press('Control+s'); // 存檔後 refreshTree,新章節才會出現在側欄
+            await page.waitForSelector('aside li:has-text("長章測試")', {timeout: 15000});
+            await page.click('aside li:has-text("長章測試")');
+            await page.waitForTimeout(800);
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.waitForTimeout(300);
+            await page.evaluate(() => { document.querySelector('.cm-scroller').scrollTop = 0; });
+            await page.waitForTimeout(300);
+            const scrollMs = await page.evaluate(() => new Promise(res => {
+                const s = document.querySelector('.cm-scroller');
+                s.scrollTop = s.scrollHeight;
+                let last = -1, stable = 0;
+                const t0 = performance.now();
+                const tick = () => {
+                    if (performance.now() - t0 > 5000) return res(-1);
+                    if (s.scrollTop === last) { if (++stable >= 2) return res(performance.now() - t0); }
+                    else stable = 0;
+                    last = s.scrollTop;
+                    requestAnimationFrame(tick);
+                };
+                requestAnimationFrame(tick);
+            }));
+            const lat = [];
+            for (let i = 0; i < 10; i++) {
+                const word = '好' + i;
+                const t0 = Date.now();
+                await page.keyboard.insertText(word);
+                await page.waitForFunction(w => {
+                    const ls = document.querySelectorAll('.cm-content .cm-line');
+                    return ls[ls.length - 1]?.textContent.includes(w);
+                }, word, {timeout: 5000});
+                lat.push(Date.now() - t0);
+            }
+            lat.sort((a, b) => a - b);
+            console.log(`量測:長章捲動定位 ${scrollMs.toFixed(0)}ms;輸入到畫面更新 中位 ${lat[Math.floor(lat.length/2)]}ms / 最大 ${lat[lat.length-1]}ms(10 次)`);
+            check('長章節輸入延遲在可用範圍(中位數 < 500ms)', lat[Math.floor(lat.length/2)] < 500, `median=${lat[Math.floor(lat.length/2)]}ms max=${lat[lat.length-1]}ms scroll=${scrollMs.toFixed(0)}ms`);
+            await shot('72-long-chapter');
+
+            // --- 視窗縮放後游標穩定(縮放前可見的游標):游標在末端且可視,縮到 640(資訊欄自動收合)後仍可視、不跳到頂端 ---
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.waitForTimeout(200);
+            await page.evaluate(() => { document.querySelector('.cm-scroller').scrollTop = document.querySelector('.cm-scroller').scrollHeight; });
+            await page.waitForTimeout(300);
+            const before = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            await page.setViewportSize({width: 640, height: 672}); // 觸發 ≤960 互斥收合
+            await page.waitForTimeout(500);
+            const after = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            check('縮放到 640(互斥收合)後游標行仍在可視範圍、未跳到頂端',
+                after.vis === true && after.pos.scrollTop > 0, `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
+            await shot('71-resize-640-stable');
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.waitForTimeout(400);
+
+            // --- C1:還原(rAF 重試)進行中,點場景跳行(scrollToLine)不得被拉回舊位置 ---
+            await page.click('aside li:has-text("第三章")');
+            await page.waitForTimeout(400);
+            await page.click('aside li:has-text("長章測試")'); // 切回,還原開始
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(300);
+            const c1memo = await page.evaluate(() => window.__perkinsPosMemo?.current?.get('manuscript/長章測試.md') ?? null);
+            await page.evaluate(() => { [...document.querySelectorAll('aside li')].find(e => e.textContent.trim().startsWith('場景一'))?.click(); }); // 還原視窗內立刻點場景項目(scrollToLine);startsWith 避免match到外層章節 li
+            await page.waitForTimeout(1200);
+            const c1after = await page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
+            check('還原進行中點場景跳行,不被拉回舊位置',
+                !!c1memo && !!c1after && c1after.scrollTop < c1memo.scrollTop * 0.5,
+                `memo=${JSON.stringify(c1memo)} after=${JSON.stringify(c1after)}`);
+
+            // --- C2:游標在開頭、捲到中段閱讀時縮放,保留閱讀位置不被拉回游標 ---
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await page.waitForTimeout(200);
+            await page.evaluate(() => { const s = document.querySelector('.cm-scroller'); s.scrollTop = (s.scrollHeight - s.clientHeight) * 0.5; });
+            await page.waitForTimeout(300);
+            const c2before = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            check('前置:游標在開頭且被捲出畫面(閱讀中)', c2before.vis === false && c2before.pos.scrollTop > 5000, JSON.stringify(c2before));
+            await page.setViewportSize({width: 640, height: 672});
+            await page.waitForTimeout(500);
+            const c2after = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            check('游標在畫面外(閱讀中)縮放保留閱讀位置,不拉回開頭',
+                c2after.vis === false && Math.abs(c2after.pos.scrollTop - c2before.pos.scrollTop) <= 400,
+                `before=${JSON.stringify(c2before)} after=${JSON.stringify(c2after)}`);
+            await shot('74-resize-reading-preserved');
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.waitForTimeout(400);
+
+            // --- 切章位置記憶:游標(選取)與捲動回到上次位置;外部改檔後超出長度要夾住不報錯 ---
+            await page.click('aside li:has-text("第三章")');
+            await page.waitForTimeout(500);
+            await page.click('aside li:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(400);
+            // 捲到中段,雙擊選一個詞(選取記憶可從浮動列觀察)
+            await page.evaluate(() => {
+                const s = document.querySelector('.cm-scroller');
+                s.scrollTop = Math.max(0, (s.scrollHeight - s.clientHeight) * 0.6);
+            });
+            await page.waitForTimeout(300);
+            await page.click('.cm-content >> text=雷恩點起營火', {clickCount: 2});
+            await page.waitForTimeout(200);
+            const memo = await page.evaluate(() => ({
+                sel: document.querySelector('[data-testid=selection-bar]') ? window.getSelection().toString() : null,
+                pos: window.__perkinsEditor?.pos(),
+            }));
+            check('前置:已選取文字並捲動(位置記憶的素材)', !!memo.sel && memo.pos.scrollTop > 0, JSON.stringify(memo));
+            await page.click('aside li:has-text("第三章")');
+            await page.waitForTimeout(500);
+            const stored = await page.evaluate(() => window.__perkinsEditor?.posAll?.());
+            await page.click('aside li:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(500);
+            const restored = await page.evaluate(() => ({
+                bar: !!document.querySelector('[data-testid=selection-bar]'),
+                pos: window.__perkinsEditor?.pos(),
+            }));
+            check('切章後回到上次游標(選取)與捲動位置',
+                restored.bar && restored.pos.anchor === memo.pos.anchor && Math.abs(restored.pos.scrollTop - memo.pos.scrollTop) <= 80,
+                `sel ${JSON.stringify(memo.sel)} bar=${restored.bar}, anchor ${memo.pos.anchor}→${restored.pos.anchor}, scroll ${memo.pos.scrollTop}→${restored.pos.scrollTop}, stored=${JSON.stringify(stored)}`);
+            await shot('73-position-restored');
+            // 外部改檔(縮短)後切回:位置超出文件長度要夾住,不報錯
+            await page.keyboard.press('Control+s'); // 確保非 dirty,否則切檔存檔會蓋掉外部修改
+            await page.waitForTimeout(600);
+            fs.writeFileSync(P('manuscript/第一章.md'), '縮水測試\n');
+            await page.click('aside li:has-text("第三章")');
+            await page.waitForTimeout(500);
+            await page.click('aside li:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(500);
+            const clamped = await page.evaluate(() => {
+                const p = window.__perkinsEditor?.pos();
+                const len = document.querySelector('.cm-content').textContent.length;
+                return {head: p?.head, lines: p?.lines, len};
+            });
+            check('外部重載後游標超出長度會夾住(不報錯、游標在文件內)',
+                clamped.head <= clamped.len + 1 && clamped.lines === 2, JSON.stringify(clamped));
+
+            // --- C6:刪除章節後位置記憶清除;同名新章節從預設位置開始 ---
+            await page.hover('[data-testid=chapter-row]:has-text("第一章")');
+            await page.click('[data-testid=chapter-row]:has-text("第一章") button:has(svg.lucide-more-horizontal)');
+            await page.click('[role=menu] div:has-text("移到回收區")');
+            await page.waitForSelector('[role=dialog]');
+            await page.click('[role=dialog] button:has-text("移到回收區")');
+            await page.waitForTimeout(800); // refreshTree + 位置記憶清理
+            const memoAfterDel = await page.evaluate(() => [...((window.__perkinsPosMemo?.current) ?? new Map()).keys()]);
+            check('刪除章節後位置記憶一併清除', !memoAfterDel.includes('manuscript/第一章.md'), JSON.stringify(memoAfterDel));
+            // 建立同名新章節,開啟後從預設位置開始(head 0)
+            await page.click('[data-testid=add-chapter-0]');
+            await page.fill('[data-testid=chapter-name]', '第一章');
+            await page.click('[data-testid=chapter-create]');
+            await page.waitForSelector('[data-testid=chapter-row]:has-text("第一章")', {timeout: 15000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(400);
+            const recreated = await page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
+            check('刪除後建立同名文件,從預設位置開始(游標在開頭)',
+                !!recreated && recreated.head === 0, JSON.stringify(recreated));
+        } catch (e) {
+            check('貼上的格式處理', false, e.message);
+            check('全域 Ctrl+F / Ctrl+H / 不攔截檢查', false, e.message);
+            check('長章節量測與縮放/位置記憶檢查', false, e.message);
+        }
+
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');
