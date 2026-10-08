@@ -62,6 +62,9 @@ const printUsage = () => {
     if (process.env.PROJ) console.log(`\nPROJ=${process.env.PROJ}`);
 };
 
+// 無參數:只印用法與組清單,不啟動瀏覽器(不論有沒有設 PROJ)
+if (args.length === 0) { printUsage(); process.exit(1); }
+
 const PROJ = process.env.PROJ;
 if (!PROJ) { console.error('需要 PROJ=<測試專案> 環境變數(wails dev 的 PERKINS_OPEN 同一個專案)'); process.exit(1); }
 

@@ -101,7 +101,7 @@ async function ensureProject(page, chapter, panel) {
             }, chapter);
             if (!ok) {
                 await page.locator(`[data-testid=chapter-row]:has-text("${chapter}")`).first().click({timeout: 15000});
-                await page.waitForSelector('.cm-content', {timeout: 15000});
+                await waitChapterLoaded(page, chapter);
             }
         }
         // 最後把側欄帶到該組需要的面板(可與開章節用的面板不同)
@@ -118,11 +118,19 @@ async function ensureProject(page, chapter, panel) {
     if (chapter) {
         await ensurePanel(page, 'manuscript');
         await page.locator(`[data-testid=chapter-row]:has-text("${chapter}")`).first().click({timeout: 15000});
-        await page.waitForSelector('.cm-content', {timeout: 15000});
+        await waitChapterLoaded(page, chapter);
     }
     return ensurePanel(page, panel);
 }
 
+// 等指定章節真的載入:.cm-content 在 + 麵包屑含章名。切章時 .cm-content 一直存在,
+// 只等它可能在新章載入前返回;麵包屑(目前檔案路徑)才是載入完成的指標。
+async function waitChapterLoaded(page, chapter) {
+    await page.waitForFunction(c => {
+        const crumbs = (document.querySelector('[data-testid=crumbs]')?.textContent || '');
+        return !!document.querySelector('.cm-content') && crumbs.includes(c);
+    }, chapter, {timeout: 15000});
+}
 // 確認側欄在指定面板;各組第一步可能是「切換面板」的 rail 點擊(已在該面板時會變成收合),
 // 起始面板要對齊原始流程
 async function ensurePanel(page, panel) {
@@ -153,7 +161,7 @@ async function ensureChapter(page, name) {
         if (!ok) {
             // locator 自動重試:對話框關閉後側欄重渲染不會打斷點擊
             await page.locator(`[data-testid=chapter-row]:has-text("${name}")`).first().click({timeout: 15000});
-            await page.waitForSelector('.cm-content', {timeout: 15000});
+            await waitChapterLoaded(page, name);
         }
         return;
     }
@@ -163,13 +171,21 @@ async function ensureChapter(page, name) {
     await page.click('[data-testid=chapter-create]');
     // 建立後 refreshTree 會重渲染列,用 locator(自動重試)開啟
     await page.locator(`[data-testid=chapter-row]:has-text("${name}")`).first().click({timeout: 15000});
-    await page.waitForSelector('.cm-content', {timeout: 15000});
+    await waitChapterLoaded(page, name);
 }
 
 // 回到書櫃(在書櫃就 no-op)
 async function ensureBookshelf(page) {
     const atShelf = await page.$('[data-testid=bookshelf-title]');
     if (atShelf) return;
+    const hasHouse = await page.$('nav button:has(svg.lucide-house)');
+    if (!hasHouse) {
+        // 應用尚未載入(新頁面 about:blank 或空白狀態):goto 後依畫面導到書櫃
+        await page.goto(BASE);
+        await page.waitForSelector('text=E2E測試, [data-testid=bookshelf-title]', {timeout: 30000});
+        const atShelf2 = await page.$('[data-testid=bookshelf-title]');
+        if (atShelf2) return;
+    }
     await page.click('nav button:has(svg.lucide-house)');
     await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
 }

@@ -45,16 +45,22 @@ module.exports = {
         await page.waitForSelector('.perkins-search', {timeout: 5000});
         check('冒煙 搜尋面板開啟', !!(await page.$('.perkins-search')));
         await page.keyboard.press('Escape');
-        await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000}).catch(() => {});
+        // 搜尋面板該關閉:等不到就讓此組 FAIL(不再用空 catch 吞掉)
+        await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
 
-        // 打字存檔:標記字落盤
+        // 打字存檔:打初始內容沒有的新標記(第 19 行只寫入 smokeMark),
+        // 斷言磁碟完整內容等於編輯器內容 — 只查 includes 會被初始寫入假通過
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
-        await page.keyboard.type(smoke);
+        await page.keyboard.type(smoke + 'Saved2');
         await page.waitForSelector('[data-testid=statusbar] >> text=未儲存');
         await page.keyboard.press('Control+s');
         await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
-        check('冒煙 打字後存檔落盤', smokeFile().includes(smoke));
+        const editorAfterSave = await page.evaluate(() =>
+            [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n'));
+        check('冒煙 打字後存檔落盤(磁碟完整內容等於編輯器)',
+            smokeFile() === editorAfterSave && smokeFile().includes(smoke + 'Saved2'),
+            `len=${smokeFile().length}/${editorAfterSave.length}`);
 
         // 提案預覽不外流:移除「目前文件」標籤後,預覽不含私人筆記內文
         await page.click('[data-testid=chat-fab]');
