@@ -359,8 +359,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             if (!(e.ctrlKey || e.metaKey) || (e.key.toLowerCase() !== 'f' && e.key.toLowerCase() !== 'h')) return;
             const t = e.target as HTMLElement | null;
             if (t?.closest?.('input, textarea, select, [contenteditable="true"], [role=dialog], [role=menu], [role=listbox], [data-radix-popper-content-wrapper], [data-testid=chat-window], [data-testid=settings-page]')) return;
-            // 焦點可能在 body 或 Select 觸發鈕上(不在覆蓋層元素內):以覆蓋層「開著」為準,開著就不攔截
-            if (document.querySelector('[data-testid=settings-page], [data-radix-popper-content-wrapper], [role=dialog], [role=menu]')) return;
+            // 焦點可能在 body 或 Select 觸發鈕上(不在覆蓋層元素內):以覆蓋層「開著」為準,開著就不攔截。
+            // popper wrapper 是所有 Radix 浮層(含 Tooltip)共用的 portal wrapper,不能單獨拿來擋:
+            // Tooltip 只是提示,作者滑鼠停在按鈕上時 Ctrl+F 仍要能開搜尋;Select 選單看 [role=listbox]。
+            if (document.querySelector('[data-testid=settings-page], [role=dialog], [role=menu], [role=listbox]')) return;
             if (!latest.current.current) return; // 沒有開檔:不做任何事
             e.preventDefault();
             editor.current?.openSearch(e.key.toLowerCase() === 'h');

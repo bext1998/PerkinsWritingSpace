@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-08 — 編輯器手感返工二(PR #26 複審:全域鍵守衛與 Select 檢查情境)
+
+- **#1(Minor)popper wrapper 擋住 Tooltip**:Select 守衛用了所有 Radix 浮層共用的 `[data-radix-popper-content-wrapper]`,Tooltip 顯示時(滑鼠停在「設定」等按鈕上)Ctrl+F 也被擋。存在檢查收斂為 `[data-testid=settings-page], [role=dialog], [role=menu], [role=listbox]`;`closest` 的 popper wrapper 保留(Tooltip 焦點不會進 popper content,不影響;其他浮層焦點在內時仍擋)。**回歸檢查**:hover「設定」鈕等 Tooltip 出現 → Ctrl+F 面板開啟且聚焦搜尋欄。
+- **#2(Minor)Select 檢查情境無效**:原本在設定頁內開 Select(平台輸出的章節標題),設定頁守衛本來就擋,單獨移除 Select 守衛仍會通過(破壞驗證證實)。改為**作品畫面內**的 Select:設定集 EntityHeader 的類型選單(`[data-testid=entity-header-type]`),開啟後 Ctrl+F 面板不得開啟;檢查後切回稿件。
+- **破壞驗證(兩輪分離歸因)**:(A) 還原 popper wrapper 到存在檢查 → Tooltip 檢查 FAIL(面板被擋)、Select 檢查 PASS(設定頁情境的舊檢查確實無法失敗);(B) 移除 `[role=listbox]`(closest 與存在檢查)→ Select 檢查 FAIL(焦點在 Select content 內,面板在選單背後開啟搶焦點)、Tooltip 檢查 PASS。兩輪各自證明對應檢查能抓到對應守衛的缺失。還原後全綠。
+- **E2E 流程陷阱**:EntityHeader 檢查途中切到 canon 檔,`openFile` 把先前貼上的字存了檔,回到第一章後是乾淨的 — 長章檢查的 Ctrl+S 對乾淨檔不觸發 refreshTree,新章節列不出來(waitForSelector 15s 逾時);改用「空格+Backspace」弄髒(內容不變)再存。另外合成 Ctrl+Shift+F 會切禪模式(合併後),檢查後有 `[data-testid=zen-exit]` 就用真實快捷鍵離開;Orchestrator 合併時新增的「CapsLock 下 Ctrl+Shift+F 進入禪模式」檢查與本段共存。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**367/367 passed,略過 8 項**;長章量測無回歸(輸入中位 20–21ms、捲動 16–26ms)。
+
 ## 2026-10-08 — 編輯器手感返工(PR #26 審查修復)
 
 - **#1 還原重試拉走明確定位**:位置還原是 rAF 重試(等 CM 排版,最多約 40 frame),作者在這個視窗內點場景/搜尋結果跳行(`scrollToLine`),稍後仍被拉回舊位置(實測 scrollTop 741→10708)。修法:追蹤還原 rAF(`restoreRafRef`)與旗標(`restoringRef`),`cancelRestore()` 在三個時機呼叫 — 作者操作(編輯器內 `pointerdown`/`wheel`/`keydown`)、明確定位(`scrollToLine`、`openSearch`)、卸載。

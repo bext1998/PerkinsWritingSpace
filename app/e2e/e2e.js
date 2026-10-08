@@ -2982,19 +2982,37 @@ const maybe = async (name, fn, detail = '') => {
             await page.keyboard.press('Control+f');
             await page.waitForTimeout(200);
             check('設定頁內 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
-            // Radix Select 浮層(role=listbox)開啟時不被攔截
-            await page.click('[data-testid=tab-platforms]');
+            await page.click('[data-testid=close-settings]');
             await page.waitForTimeout(400);
-            const selField = page.locator('div:has(> label:has-text("章節標題")) button[role=combobox]');
-            await selField.click();
+            // Tooltip(radix popper wrapper)只是提示,不是選單:滑鼠停在按鈕上時 Ctrl+F 仍要能開搜尋
+            await page.hover('[data-testid=open-settings]');
+            await page.waitForSelector('[data-radix-popper-content-wrapper]', {timeout: 5000});
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            const tt = await page.evaluate(() => ({
+                panel: !!document.querySelector('.perkins-search'),
+                focus: document.activeElement?.name || document.activeElement?.tagName,
+            }));
+            check('Tooltip 顯示時 Ctrl+F 仍可開搜尋(滑鼠停在按鈕上不被擋)', tt.panel && tt.focus === 'search', JSON.stringify(tt));
+            await page.mouse.move(10, 400);
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(200);
+            // Radix Select 浮層(role=listbox)在作品畫面內(設定集 EntityHeader 類型選單)開啟時不被攔截
+            await page.click('[data-testid=rail-bible]');
+            await page.waitForSelector('[data-testid=entity-row]');
+            await page.click('[data-testid=entity-row]:has-text("艾莉絲")');
+            await page.waitForSelector('[data-testid=entity-header-type]');
+            await page.click('[data-testid=entity-header-type]');
             await page.waitForSelector('[data-radix-popper-content-wrapper] [role=listbox]', {timeout: 5000});
             await page.keyboard.press('Control+f');
             await page.waitForTimeout(200);
             check('Radix Select 浮層開啟時 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
             await page.keyboard.press('Escape'); // 收起 Select 浮層
             await page.waitForTimeout(200);
-            await page.click('[data-testid=close-settings]');
-            await page.waitForTimeout(400);
+            await page.click('[data-testid=rail-manuscript]');
+            await page.waitForTimeout(200);
+            await page.click('aside li:has-text("第一章")'); // 回到稿件,後續檢查需要 manuscript 檔案
+            await page.waitForSelector('.cm-content');
             // Shift/Alt 組合(CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f)與 defaultPrevented 不攔截
             await page.evaluate(() => {
                 const fire = init => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...init}));
@@ -3016,13 +3034,23 @@ const maybe = async (name, fn, detail = '') => {
             await cdpG.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
             await page.waitForTimeout(200);
             check('IME 組字中(229)的 Ctrl+F 不開搜尋面板', !(await page.$('.perkins-search')));
+            // 合併禪模式後,上面的合成 Ctrl+Shift+F 會切禪模式:有進入就離開
+            if (await page.$('[data-testid=zen-exit]')) {
+                await page.keyboard.press('Control+Shift+F');
+                await page.waitForSelector('[data-testid=rail]:visible', {timeout: 3000}).catch(() => {});
+            }
             await page.waitForTimeout(300);
 
             // --- 長章節:建約 5 萬字章節,量測捲動與輸入延遲(只在有明顯問題時才改程式) ---
             const LONG = 'manuscript/長章測試.md';
             fs.mkdirSync(path.join(PROJ, 'manuscript'), {recursive: true});
             fs.writeFileSync(P(LONG), '# 長章測試\n\n## 場景一\n\n' + '這是一段測試用的長篇文字,描述森林裡的冒險故事與角色之間的對話。'.repeat(2400) + '\n');
+            // EntityHeader 檢查途中的切檔已把貼上的字存檔,第一章在此是乾淨的:
+            // Ctrl+S 對乾淨檔不觸發 refreshTree,新章節列不出來 — 空格+Backspace 弄髒(內容不變)再存
             await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type(' ');
+            await page.keyboard.press('Backspace');
             await page.keyboard.press('Control+s'); // 存檔後 refreshTree,新章節才會出現在側欄
             await page.waitForSelector('aside li:has-text("長章測試")', {timeout: 15000});
             await page.click('aside li:has-text("長章測試")');
