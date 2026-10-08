@@ -40,7 +40,8 @@
 
 作者可用以下縮寫下指令；這些是 Agent 理解的語意，不是 CLI 程式。
 
-- `todo ls`：列出待辦。來源是 `docs/SPEC.md` §16「待辦」中尚未標示「已完成」的項目，以及 GitHub 上開著的 Issues（`gh issue list`）。
-- `todo add <task>`：把內容加到 `docs/SPEC.md` §16 的清單末尾（標註日期與「作者回饋」或來源）。只新增待辦，不開始實作。
+- `todo ls`：列出待辦。來源是 GitHub 上開著的 Issues（`gh issue list`），依狀態標籤（可開工、待作者決定、待討論、進行中、等外部條件、待作者實測）分組呈現。
+- `todo add <task>`：開一個 GitHub Issue（標題簡述；內文註明日期與「作者回饋」或來源、相關 SPEC 章節與 Issue；加上狀態與領域標籤）。只新增待辦，不開始實作。倉庫是公開的：不得寫入作者稿件、私人設定內容或 `docs/user_research/` 的內容。
+- 待辦完成以 PR 的 `Closes #<編號>` 關閉 Issue；定案的規則寫回 `docs/SPEC.md` 對應章節，不在 SPEC 維護待辦清單。
 - `orch start [task]`：由 Orchestrator 開始處理工作；未指定 task 時，從 `todo ls` 中挑一項並先說明選擇理由。Orchestrator 自行：讀取任務與必要的專案資訊 → 判斷是否拆工 → 參考 Team Profile 了解可用角色 → Herdr 可用時依需要派工、可平行的就平行安排 → 收集成果 → 必要時安排 Reviewer → 有有效問題時安排返工 → 完成必要驗證；直到工作完成或真正需要作者決策才停止。
 - `orch note <message>`：提供想法、方向、偏好或背景給 Orchestrator。不等同正式待辦，也不代表立即實作；Orchestrator 自行判斷它是否影響目前工作、值得轉成待辦（`todo add`），或只作為後續決策背景。
