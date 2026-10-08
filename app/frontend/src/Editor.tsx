@@ -25,6 +25,9 @@ export interface EditorHandle {
     openSearch: (replace?: boolean) => void;
 }
 
+// 唯讀(#56):readOnly 只擋作者直接輸入;changeFilter 連程式送出的修改(右鍵剪下/貼上)一起擋下
+const lockExt = (on: boolean) => on ? [EditorState.readOnly.of(true), EditorState.changeFilter.of(() => false)] : [];
+
 // AI 改動標示(#45 a):只是暫時的裝飾,不改文件內容;數秒後移除,查歷史到「版本」
 const AI_FLASH_MS = 3000;
 const setAiFlash = StateEffect.define<{from: number; to: number} | null>();
@@ -59,7 +62,7 @@ interface Props {
     posStore?: Map<string, EditorPos>;
     // 接受提案後重掛時短暫標示的範圍(#45 a);只在掛載時讀取
     flash?: {from: number; to: number} | null;
-    // 唯讀(接受提案期間,#56):可捲動、選取,不能修改
+    // 唯讀(接受提案、版本還原期間,#56):可捲動、選取,不能修改;程式直接送出的修改(右鍵剪下/貼上)也擋下
     readOnly?: boolean;
 }
 
@@ -453,7 +456,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
                     aiFlashField,
-                    readOnlyComp.current.of(EditorState.readOnly.of(readOnly)),
+                    readOnlyComp.current.of(lockExt(readOnly)),
                     EditorView.lineWrapping,
                     theme,
                     EditorView.updateListener.of(u => {
@@ -572,7 +575,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
 
     // 唯讀切換(#56):掛載後隨 prop 重新設定
     useEffect(() => {
-        view.current?.dispatch({effects: readOnlyComp.current.reconfigure(EditorState.readOnly.of(readOnly))});
+        view.current?.dispatch({effects: readOnlyComp.current.reconfigure(lockExt(readOnly))});
     }, [readOnly]);
 
     const onContextMenu = (e: React.MouseEvent) => {

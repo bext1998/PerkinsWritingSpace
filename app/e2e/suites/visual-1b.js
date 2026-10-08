@@ -214,10 +214,61 @@ module.exports = {
             check('#56 接受完成後解除唯讀', (await page.textContent('.cm-content')).includes('解鎖後輸入'));
             await page.keyboard.press('Control+s');
             await waitDisk(raceA, '解鎖後輸入');
+
+            // 重複按接受:第二次失敗不得提早解鎖;右鍵「剪下」(程式直接送出的修改)也要被擋
+            const srcA3 = read(raceA);
+            const at3 = Buffer.byteLength(srcA3.slice(0, srcA3.indexOf('甲章再改。')));
+            projWrite('.perkins/proposals/20261009-130200-race56c.json', JSON.stringify({
+                id: '20261009-130200-race56c', createdAt: '2026-10-09T13:02:00+08:00', model: 'E2E', target: raceA,
+                original: '甲章再改。', replacement: '甲章三改。', rationale: 'E2E 重複接受測試', assumptions: [],
+                baseHash: require('crypto').createHash('sha256').update(srcA3).digest('hex'),
+                start: at3, end: at3 + Buffer.byteLength('甲章再改。'), status: 'pending',
+            }));
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await gateRead(raceA);
+            const acc3 = '[data-testid=proposal]:has-text("甲章三改") [data-testid=accept]';
+            await page.click(acc3);
+            await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
+            await page.click(acc3); // 提案已接受 → 第二次失敗,其解鎖不得解開第一次仍需要的鎖
+            await page.waitForSelector('[data-testid=chat-error]', {timeout: 5000});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('重複接受後輸入');
+            await page.keyboard.press('Shift+Home'); // 選取最後一行,右鍵剪下
+            await page.click('.cm-content', {button: 'right'});
+            await page.click('div:text-is("剪下")');
+            await settle(80, 700);
+            const dupBody = await page.textContent('.cm-content');
+            check('#56 重複按接受後仍唯讀:打字與右鍵剪下都不會改動編輯器',
+                !dupBody.includes('重複接受後輸入') && dupBody.includes('解鎖後輸入'), JSON.stringify(dupBody.slice(-40)));
+            await releaseRead();
+            check('#56 重複接受:完成後顯示套用後內容', (await page.textContent('.cm-content')).includes('甲章三改'));
+            await restoreRead();
+
+            // 版本還原:還原期間關掉對話框繼續打字,也不得被重載覆蓋(還原期間唯讀)
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+            await page.click('[data-testid=open-versions]');
+            await page.waitForSelector('text=建立快照');
+            await page.evaluate(() => { (document.querySelector('ul.w-56 li')).click(); }); // 最新快照:接受「甲章三改」之前
+            await page.waitForSelector('[data-testid=restore-file]');
+            await gateRead(raceA);
+            await page.click('[data-testid=restore-file]');
+            await page.click('[data-testid=restore-confirm-go]');
+            await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('還原中輸入');
+            const restoreBody = await page.textContent('.cm-content');
+            check('#56 版本還原期間唯讀:關掉對話框後打的字不會進入編輯器', !restoreBody.includes('還原中輸入'), JSON.stringify(restoreBody.slice(-40)));
+            await releaseRead();
+            const restoredBody = await page.textContent('.cm-content');
+            check('#56 版本還原完成後顯示快照內容', restoredBody.includes('甲章再改') && !restoredBody.includes('甲章三改'), JSON.stringify(restoredBody.slice(-40)));
         } finally {
             await restoreRead();
         }
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
-        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },
 };

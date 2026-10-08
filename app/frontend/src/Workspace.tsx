@@ -122,8 +122,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const loaded = useRef<string | null>(null);
     // 開檔世代(#56):每次開檔遞增;重載讀檔期間若開過檔(含 A→B→A 回到原檔),該次重載作廢
     const navGen = useRef(0);
-    // 接受提案期間(存檔→套用→重載)編輯器唯讀(#56):否則期間的新輸入會被重載覆蓋
+    // 接受提案、版本還原期間(存檔→寫入→重載)編輯器唯讀(#56):否則期間的新輸入會被重載覆蓋。
+    // 計數:多個操作重疊時(例如重複按接受),全部結束才解鎖;lockEdits 回傳解鎖函式
     const [editLocked, setEditLocked] = useState(false);
+    const lockCount = useRef(0);
+    const lockEdits = useCallback(() => {
+        lockCount.current++;
+        setEditLocked(true);
+        return () => { if (--lockCount.current === 0) setEditLocked(false); };
+    }, []);
     // 切章位置記憶(§16 第 24 項第一層):檔案路徑 → 上次游標(選取)與捲動位置;
     // 只存在記憶體(本次執行期間),不寫檔。Editor 掛載時讀取還原、編輯/捲動時寫回,
     // 因此外部重載(reloadCurrent、接受提案)重掛後也回到原位置,超出文件長度由 Editor 夾住。
@@ -724,7 +731,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onAcceptLock={setEditLocked} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
@@ -733,7 +740,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             </div>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
-                           onRestored={files => { reloadCurrent(files); refreshTree(); }}/>
+                           lockEdits={lockEdits} onRestored={files => { refreshTree(); return reloadCurrent(files); }}/>
 
             <SummaryDialog chapter={summaryFor} onClose={() => { setSummaryFor(null); setSummaryTick(t => t + 1); }} cfg={cfg}
                            remoteOk={remoteOk} setRemoteOk={setRemoteOk} saveFirst={save} notify={notify}/>
