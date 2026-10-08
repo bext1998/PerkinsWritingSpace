@@ -85,8 +85,6 @@ module.exports = {
         const orig = await page.evaluate(() => window.go.main.App.GetSettings());
         const origModel = orig.profiles.find(p => p.id === orig.active).model;
         const DEAD = 'e2e-unreachable';
-        await page.evaluate(id => window.go.main.App.SaveProfile({id, name: 'E2E 不可達', baseUrl: 'http://127.0.0.1:9/v1', model: 'e2e', contextTokens: 32768}, null), DEAD);
-        await page.evaluate(id => window.go.main.App.SetActiveModel(id, 'e2e'), DEAD);
         // 切換研究記錄;關閉設定頁時 Workspace 重新讀設定,對話框才不會沿用舊端點(雲端端點要求送出前確認)
         const toggleResearch = async () => {
             await page.click('[data-testid=open-settings]');
@@ -98,6 +96,8 @@ module.exports = {
             await page.click('[data-testid=close-settings]');
             await settle(80, 700);
         };
+        // 對話框的模型按鈕顯示目前端點的模型:用它確認 Workspace 已重讀設定(DOM 靜默不代表 GetSettings 已回來)
+        const waitModel = m => page.waitForFunction(m => document.querySelector('[data-testid=model-btn]')?.textContent.trim() === m, m, {timeout: 5000});
         // 送出並等到這次提問的 ask 事件寫入、對話框結束忙碌,回傳該筆事件
         const sendAsk = async () => {
             const n = asks().length;
@@ -115,8 +115,11 @@ module.exports = {
             await page.click('[data-testid=selection-quick]');
             await page.click(`[data-testid=selection-bar] div:text-is("${label}")`);
             await page.waitForSelector('[data-testid=chat-window]:visible');
+            await waitModel('e2e');
         };
         try {
+            await page.evaluate(id => window.go.main.App.SaveProfile({id, name: 'E2E 不可達', baseUrl: 'http://127.0.0.1:9/v1', model: 'e2e', contextTokens: 32768}, null), DEAD);
+            await page.evaluate(id => window.go.main.App.SetActiveModel(id, 'e2e'), DEAD);
             await toggleResearch();
             const on = await page.evaluate(() => window.go.main.App.GetResearch());
             check('R3 前置:研究記錄已開啟', on === true, `research=${on}`);
@@ -150,18 +153,24 @@ module.exports = {
             await ensureProject('第一章', 'checks');
             await page.click('button:has-text("人物設定矛盾")');
             await page.waitForSelector('[data-testid=chat-window]:visible');
+            await waitModel('e2e');
             await page.waitForFunction(() => document.querySelector('[data-testid=question]')?.value.startsWith('請檢查本章中角色'));
             const e4 = await sendAsk();
             check('R3 檢查面板 AI 檢查:ask 記 quickId=char、quickEdited=false',
                 e4?.detail.quickId === 'char' && e4?.detail.quickEdited === false, JSON.stringify(e4?.detail ?? null).slice(0, 200));
-            // 新對話:清掉本段帶入的選取、附加、報告模式,不讓後續組(polish U2)沿用舊選取
-            await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
-            await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         } finally {
-            // 還原端點與模型、刪掉暫時端點;再開關一次設定頁讓 Workspace 重讀設定(研究記錄同時關回)
+            // 先還原使用者設定(原端點與模型、刪掉暫時端點;暫時端點未建立時刪除也無副作用),不受後面介面清理失敗影響
             await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [orig.active, origModel]);
             await page.evaluate(id => window.go.main.App.DeleteProfile(id), DEAD);
+            // 開關一次設定頁讓 Workspace 重讀設定(研究記錄同時關回),確認對話框回到原模型
+            if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
             await toggleResearch();
+            await page.click('[data-testid=chat-fab]');
+            await waitModel(origModel || '選擇模型');
+            // 最後才按新對話:清掉本段帶入的選取、附加、報告模式(重開對話框會把舊選取帶回來,所以放在開啟之後),
+            // 中途失敗也不讓後續組(polish U2)沿用舊選取
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         }
         // 恢復:把研究記錄關閉狀態留在專案(拋棄式測試專案,不需還原)
     },
