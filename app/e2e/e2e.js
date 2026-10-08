@@ -2478,6 +2478,70 @@ const maybe = async (name, fn, detail = '') => {
             check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', okRepl);
         } catch (e) { check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', false, e.message); }
 
+        // 回歸(PR #23 審查#1):面板顯示與實際取代條件同步。
+        // 面板開著輸入「森林→樹林」,回編輯器選取「天」再按 Ctrl+H:openSearchPanel 會以編輯器選取字
+        // 重設 query(天→空),面板若未同步會顯示舊條件,實際全部取代卻刪「天」
+        try {
+            // 先關掉上一段遺留的開啟面板(取代列展開中),重開才是全新狀態
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await openPanel('Control+f');
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
+            await page.click('button[name=toggle-replace]');
+            await page.click('.perkins-search input[name=replace]');
+            await page.keyboard.type('樹林', {delay: 20});
+            // 回編輯器選取「天」:行內文字包在 span 裡,用 TreeWalker 找文字節點;點到字元左緣,Shift+→ 選一個字
+            const pos = await page.evaluate(() => {
+                const root = document.querySelector('.cm-content');
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                let n;
+                while ((n = walker.nextNode())) {
+                    const i = (n.textContent || '').indexOf('天');
+                    if (i < 0) continue;
+                    const r = document.createRange();
+                    r.setStart(n, i); r.setEnd(n, i + 1);
+                    const rect = r.getBoundingClientRect();
+                    if (rect.width === 0) continue;
+                    return {x: rect.left + 1, y: rect.top + rect.height / 2};
+                }
+                return null;
+            });
+            await page.mouse.click(pos.x, pos.y);
+            await page.keyboard.press('Shift+ArrowRight');
+            let selChar = await page.evaluate(() => window.getSelection()?.toString() || '');
+            for (let tries = 0; selChar !== '天' && tries < 5; tries++) {
+                await page.keyboard.press('ArrowLeft');
+                await page.keyboard.press('Shift+ArrowRight');
+                selChar = await page.evaluate(() => window.getSelection()?.toString() || '');
+            }
+            await page.keyboard.press('Control+h');
+            await page.waitForTimeout(200);
+            const synced = await page.evaluate(() => ({
+                search: document.querySelector('.perkins-search input[name=search]').value,
+                replace: document.querySelector('.perkins-search input[name=replace]').value,
+                count: document.querySelector('.perkins-search .perkins-search-count').textContent,
+                sel: document.querySelector('.cm-searchMatch-selected')?.textContent || '',
+            }));
+            await page.click('.perkins-search button[name=replaceAll]');
+            await page.waitForTimeout(300);
+            const t2 = await editorTxt();
+            check('面板顯示與實際取代條件同步(Ctrl+H 後顯示「天→空」,全部取代移除的正是天)',
+                selChar === '天' && synced.search === '天' && synced.replace === '' && synced.count === '1/1' && synced.sel === '天'
+                && !t2.includes('天很黑') && t2.includes('很黑'), JSON.stringify({selChar, synced, tail: t2.slice(-40)}));
+            check('同步後取代走正常編輯流程(未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+        } catch (e) {
+            check('面板顯示與實際取代條件同步(Ctrl+H 後顯示「天→空」,全部取代移除的正是天)', false, e.message);
+            check('同步後取代走正常編輯流程(未儲存)', false, e.message);
+        }
+
         // 取代:先加入固定字樣,全部取代,驗證走 onChange → dirty → 存檔流程
         try {
             await page.click('.cm-content');
@@ -2570,52 +2634,94 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
 
-        // IME 組字:(a) 合成事件驗證 isComposing 防護(組字中不更新比對數,提交後才更新);
-        // (b) CDP 模擬組字中按 Enter(keyCode 229)不得觸發 findNext 捲動。
-        // 註:CDP imeSetComposition 在無頭環境不會發 composition 事件,「組字中不提交」只能用合成事件驗;真實 IME 建議作者實機確認。
+        // IME 組字(PR #23 審查#2/#3)。三個防護分支的驗證:
+        // (a) 合成 InputEvent(isComposing: true):組字中途不提交比對數;提交不同字(一般 input)後才更新。
+        // (b) CDP:imeSetComposition 會發真實 composition 事件(旗標生效);keyCode 229 的 Enter/Escape
+        //     key='Enter' 才會進 Enter 分支,配合 229 才能驗防護本身)不觸發 findNext/不關面板;
+        //     提交與原 query 不同的文字後核對值/比對數/選取;組字結束後一般 Enter(keyCode 13)恢復。
+        // 註:無頭環境無真實 IME,真實 IME 建議作者實機確認。
         try {
             await page.setViewportSize({width: 1440, height: 900});
             await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
             await openPanel('Control+f');
-            await page.click('.perkins-search input[name=search]', {clickCount: 3}); // 全選,不接在上次的 query 後面
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
             await page.keyboard.type('森林', {delay: 20});
             await page.keyboard.press('Enter');
             await page.waitForTimeout(200);
             const ime = await page.evaluate(() => {
                 const input = document.querySelector('.perkins-search input[name=search]');
-                const count = document.querySelector('.perkins-search .perkins-search-count');
-                const before = count.textContent;
-                input.value = 'ㄙㄣ'; // 模擬組字中途的暫存字串
+                const count = () => document.querySelector('.perkins-search .perkins-search-count').textContent;
+                const r = {};
+                r.start = count(); // 森林:1/2
+                input.value = 'ㄙㄣ'; // 組字中途的暫存字串
                 input.dispatchEvent(new InputEvent('input', {bubbles: true, isComposing: true}));
-                const during = count.textContent;
-                input.value = '森林'; // 提交組字
-                input.dispatchEvent(new CompositionEvent('compositionend', {bubbles: true}));
-                const after = count.textContent;
-                return {before, during, after};
+                r.mid = count(); // 不得提交(isComposing 事件層防護)
+                input.value = '營火'; // 提交(一般 input 事件,非組字)
+                input.dispatchEvent(new InputEvent('input', {bubbles: true}));
+                r.afterSubmit = count(); // 營火:1/2
+                return r;
             });
-            check('IME 組字中不更新比對數(isComposing 略過),提交後才更新',
-                ime.during === ime.before && /2/.test(ime.after), JSON.stringify(ime));
-            const cdp = await page.context().newCDPSession(page);
-            const scrollOf = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
-            const s0 = await scrollOf();
-            await cdp.send('Input.imeSetComposition', {text: 'ㄙㄣ', selectionStart: 1, selectionEnd: 1});
-            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Process', code: 'Enter', windowsVirtualKeyCode: 229});
-            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Process', code: 'Enter', windowsVirtualKeyCode: 229});
+            check('IME 組字中不提交(isComposing 略過),提交不同字後更新',
+                ime.start === '1/2' && ime.mid === ime.start && ime.afterSubmit === '1/2', JSON.stringify(ime));
+
+            // 重新搜尋森林,改用 CDP 驗 keydown 防護(真實 composition 事件讓組字旗標生效)
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
             await page.waitForTimeout(200);
+            const countOf = () => page.evaluate(() => document.querySelector('.perkins-search .perkins-search-count')?.textContent);
+            const scrollOf = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
+            const cdp = await page.context().newCDPSession(page);
+            const c0 = await countOf(); // 1/2
+            const s0 = await scrollOf();
+            const doc0 = await editorTxt();
+            await cdp.send('Input.imeSetComposition', {text: 'ㄙㄣ', selectionStart: 1, selectionEnd: 1});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 229});
+            await page.waitForTimeout(200);
+            const c1 = await countOf();
             const s1 = await scrollOf();
-            const stillOpen = !!(await page.$('.perkins-search'));
-            check('IME 組字中按 Enter 不觸發搜尋跳動(捲動不變、面板未關)', s1 === s0 && stillOpen, `scrollTop ${s0}→${s1}, open=${stillOpen}`);
-            try {
-                await cdp.send('Input.insertText', {text: '森林'});
-                await page.waitForTimeout(200);
-                const q = await page.$eval('.perkins-search input[name=search]', el => el.value);
-                check('IME 提交後搜尋欄收到完整字串並更新比對', q.includes('森林') && !q.includes('ㄙㄣ'), q);
-            } catch (e) { check('IME 提交後搜尋欄收到完整字串並更新比對', false, e.message); }
+            const open1 = !!(await page.$('.perkins-search'));
+            const doc1 = await editorTxt();
+            check('IME(CDP) 組字中 229 的 Enter/Escape 不跳比對、不關面板、文件不變',
+                c1 === c0 && s1 === s0 && open1 && doc1 === doc0, `count ${c0}→${c1}, scroll ${s0}→${s1}, open=${open1}`);
+            // 提交與原 query 不同的文字,核對值/比對數/選取
+            // 事件記錄(診斷用):組字/提交的實際事件流
+            await page.evaluate(() => {
+                window.__evts = [];
+                const input = document.querySelector('.perkins-search input[name=search]');
+                for (const t of ['compositionstart', 'compositionend', 'input', 'keydown'])
+                    input.addEventListener(t, e => window.__evts.push({t, isComp: !!e.isComposing, keyCode: e.keyCode, text: (e.target?.value || '').slice(0, 12)}));
+            });
+            // 提交與原 query 不同的文字:組字仍在,insertText 會提交組字並結束
+            const doc2 = await editorTxt();
+            await cdp.send('Input.insertText', {text: '營火'});
+            await page.waitForTimeout(300);
+            const q2 = await page.$eval('.perkins-search input[name=search]', el => el.value);
+            const c2 = await countOf();
+            const doc2b = await editorTxt();
+            const evts2 = await page.evaluate(() => window.__evts);
+            check('IME(CDP) 提交不同文字後更新(值、比對總數=營火的 2 筆、文件不變、組字結束)',
+                q2 === '營火' && (c2 || '').split('/')[1] === '2' && doc2b === doc2 && evts2.some(x => x.t === 'compositionend'),
+                `value=${q2}, count=${c2}, evts=${JSON.stringify(evts2)}`);
+            // 組字結束後一般 Enter 恢復:跳到下一筆營火比對(游標位置無關)
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
+            await page.waitForTimeout(200);
+            const c3 = await countOf();
+            const sel3 = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
+            check('IME(CDP) 組字結束後一般 Enter 恢復(跳下一筆營火、選取同步)',
+                sel3 === '營火' && (c3 || '').split('/')[1] === '2', `count=${c3}, sel=${sel3}`);
             await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000}).catch(() => {});
         } catch (e) {
-            check('IME 組字中不更新比對數(isComposing 略過),提交後才更新', false, e.message);
-            check('IME 組字中按 Enter 不觸發搜尋跳動(捲動不變、面板未關)', false, e.message);
-            check('IME 提交後搜尋欄收到完整字串並更新比對', false, e.message);
+            check('IME 組字中不提交(isComposing 略過),提交不同字後更新', false, e.message);
+            check('IME(CDP) 組字中 229 的 Enter/Escape 不跳比對、不關面板、文件不變', false, e.message);
+            check('IME(CDP) 提交不同文字後更新(值、比對總數=營火的 2 筆、文件不變、組字結束)', false, e.message);
+            check('IME(CDP) 組字結束後一般 Enter 恢復(跳下一筆營火、選取同步)', false, e.message);
         }
 
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {

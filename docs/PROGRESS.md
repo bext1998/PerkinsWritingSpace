@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-08 — 搜尋面板返工二(PR #23 審查修復)
+
+- **#1(Major)面板顯示與實際取代條件不同步**:`openSearchPanel` 等內建流程會用 `setSearchQuery` effect 帶入新條件(例如回編輯器選取「天」再按 Ctrl+H,實際 query 變成「天→空」),自訂面板的 `update()` 沒處理,會顯示舊條件(森林→樹林),作者按「全部取代」實際卻刪「天」。修法:`update()` 掃 transactions 的 effects,`setSearchQuery` 且不等於目前 query 時呼叫 `setQuery()` 同步兩欄與比對數。**回歸檢查**:面板開著輸入「森林→樹林」→ 回編輯器選取「天」(TreeWalker 找文字節點,行內文字包在 highlight span 裡,不能用 `.cm-line` 直接子節點找)→ Ctrl+H → 斷言面板顯示「天→空」、比對數 1/1、選取高亮在「天」→ 全部取代後文件確實移除「天」且走正常 dirty → 存檔流程。**破壞驗證**:拿掉 update() 同步 → FAIL,症狀與審查描述一致(synced=森林/樹林/2/2,sel=天);還原 → PASS。
+- **#2(Major)IME 防護不足**:keydown 只看 `e.isComposing`,漏掉 `this.composing`(旗標)與 `keyCode===229`(IME 轉送邊界)的組字按鍵,搜尋欄會跳下一筆、取代欄可能誤取代、Escape 會誤關面板。三條件合併防護,直接 `return` 不 `preventDefault`(不影響正常 IME 輸入)。
+- **#3(Minor)e2e IME 檢查假通過**:舊檢查提交的值與原 query 相同、CDP key 用 `key:'Process'` 進不了 Enter 分支、只看捲動與 input 值。重寫:(a) 合成 `InputEvent(isComposing: true)` 驗組字中途不提交(用總數不同的字區分 stale);(b) CDP `imeSetComposition` 會發**真實** composition 事件(旗標生效),`key:'Enter'`+keyCode 229 驗 Enter/Escape 都不動作(比對數/捲動/文件不變、面板未關);(c) 提交與原 query 不同總數的字(森林 total 2 → 雷恩 total 1),斷言值、總數變化、選取文字同步、文件不變;(d) 組字結束後一般 Enter(keyCode 13)恢復,選取跳到新字比對。**破壞驗證**:拿掉 keydown+input 防護 → 組字中途立即提交(mid='0')、229 Escape 關掉面板(兩項 IME 檢查 FAIL);還原 → 全綠。
+- **環境陷阱(重要)**:CDP 模擬的 composition 事件**不會觸發 `on*` 屬性 handler**(addEventListener 會),實測 `input.oncompositionend` 有指派、事件有到 input,handler 卻沒被呼叫。面板的 input/composition 事件改用 `addEventListener` 掛(keydown 維持 property,實測正常);這同時讓 CDP 路徑與真實瀏覽器行為一致。另外合成 `CompositionEvent` dispatch 也不會觸發 property handler,組字旗標的防護只能靠真實(CDP)composition 事件驗,無頭環境無法模擬「真實 IME 組字中按一般鍵」的情境。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**329/329 passed,略過 8 項**。真實 IME(注音/倉頡)仍建議作者實機確認。
+
 ## 2026-10-08 — 編輯器搜尋/取代 + 右鍵選單改名(SPEC §16 第 13 項、第 24 項第一層)
 
 - **右鍵選單改名**:「詢問 AI…」→「詢問 Perkins Bot…」(`Editor.tsx`);ChatWindow 空白狀態提示引用的文字一併更新。E2E 沒有比對舊字串的檢查,不需改。

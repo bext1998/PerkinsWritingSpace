@@ -107,18 +107,22 @@ class PerkinsSearchPanel implements Panel {
 
     constructor(private view: EditorView) {
         this.query = getSearchQuery(view.state);
-        const mkInput = (name: string, label: string) => h('input', {
-            class: 'perkins-search-input', name, placeholder: label, 'aria-label': label,
-            value: name === 'search' ? this.query.search : this.query.replace,
-            spellcheck: false, 'main-field': name === 'search' ? 'true' : null,
-            oninput: (e: Event) => {
-                // 組字中途不提交:composing 旗標 + 事件的 isComposing(雙重防護,防 composition 事件漏發)
+        const mkInput = (name: string, label: string) => {
+            const el = h('input', {
+                class: 'perkins-search-input', name, placeholder: label, 'aria-label': label,
+                value: name === 'search' ? this.query.search : this.query.replace,
+                spellcheck: false, 'main-field': name === 'search' ? 'true' : null,
+            }) as HTMLInputElement;
+            // 組字/輸入事件用 addEventListener:composition 事件在某些環境(如 CDP 模擬輸入)不會觸發 on* 屬性 handler
+            el.addEventListener('input', e => {
+                // 組字中途不提交:組字旗標 + 事件的 isComposing(雙重防護)
                 if (this.composing || (e as InputEvent).isComposing) return;
                 this.commit();
-            },
-            oncompositionstart: () => { this.composing = true; },
-            oncompositionend: () => { this.composing = false; this.commit(); },
-        }) as HTMLInputElement;
+            });
+            el.addEventListener('compositionstart', () => { this.composing = true; });
+            el.addEventListener('compositionend', () => { this.composing = false; this.commit(); });
+            return el;
+        };
         this.searchInput = mkInput('search', '搜尋');
         this.replaceInput = mkInput('replace', '取代為');
         this.countEl = h('span', {class: 'perkins-search-count', 'aria-live': 'polite'});
@@ -181,7 +185,10 @@ class PerkinsSearchPanel implements Panel {
     }
 
     keydown(e: KeyboardEvent) {
-        if (e.isComposing) return; // 組字中的按鍵(Enter/Esc)不觸發搜尋動作
+        // 組字中的按鍵不觸發面板動作(搜尋跳下一筆/誤取代/關閉):
+        // 事件的 isComposing、組字旗標、keyCode 229(IME 轉送邊界)三種都要擋;
+        // 直接 return 不 preventDefault,正常 IME 輸入不受影響
+        if (e.isComposing || this.composing || e.keyCode === 229) return;
         const target = e.target as HTMLElement;
         if (e.key === 'Escape') {
             e.preventDefault();
@@ -198,8 +205,19 @@ class PerkinsSearchPanel implements Panel {
         }
     }
 
+    // 面板顯示要與實際 query 同步:openSearchPanel 等內建流程會用 setSearchQuery effect 帶入新條件
+    // (例如以編輯器選取字當搜尋字、取代清空);不同步會顯示舊條件,實際取代卻用新條件,作者會改錯
     update(u: ViewUpdate) {
+        for (const tr of u.transactions) for (const effect of tr.effects)
+            if (effect.is(setSearchQuery) && !effect.value.eq(this.query)) this.setQuery(effect.value);
         if (u.docChanged || u.selectionSet) this.updateCount();
+    }
+
+    setQuery(query: SearchQuery) {
+        this.query = query;
+        this.searchInput.value = query.search;
+        this.replaceInput.value = query.replace;
+        this.updateCount();
     }
 
     mount() {
