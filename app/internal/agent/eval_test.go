@@ -461,8 +461,10 @@ func TestEvalJudgeWithScriptedLLM(t *testing.T) {
 	if !ok {
 		t.Errorf("假 LLM 的正常提案應合格: %+v", checks)
 	}
-	// 破壞:模型給了不存在的原文 → 提案建立失敗 → 需要提案的情境不合格
-	// 快照在 a2.Ask 前後分別取,檔案被改才抓得到(返工:不再共用第一個情境的目錄)。
+	// 破壞:模型給了不存在的原文 → 提案建立失敗 → 需要提案的情境不合格。
+	// 快照接線的回歸驗證:在 Ask 的事件 callback 中受控改寫 dir2 的虛構 fixture(測試直接寫檔,
+	// 不經模型工具;G1 限制的是模型工具,不是測試),單獨斷言「檔案未被改動」這一項檢查失敗,
+	// 不能只看總結果——沒有提案本來就會讓總結果不合格,換回錯誤快照也要能被抓到。
 	a2, s2, dir2 := setup(t)
 	before2 := snapshot(t, dir2)
 	s2.replies = []llm.Message{
@@ -470,11 +472,36 @@ func TestEvalJudgeWithScriptedLLM(t *testing.T) {
 			Arguments: `{"path":"manuscript/第一章.md","original":"小明慢慢走入森林深處","replacement":"x","rationale":"r"}`}}},
 		{Role: "assistant", Content: "已提案。"},
 	}
-	reply2, err2 := a2.Ask(context.Background(), lc.Params, func(Event) {})
+	touched := false
+	reply2, err2 := a2.Ask(context.Background(), lc.Params, func(Event) {
+		if touched {
+			return
+		}
+		touched = true
+		if werr := os.WriteFile(filepath.Join(dir2, "manuscript", "第一章.md"), []byte("# 第一章\n被蹿改的內容。\n"), 0o644); werr != nil {
+			t.Errorf("測試改寫 fixture 失敗: %v", werr)
+		}
+	})
 	ps2 := deref(a2.Proposals)
-	ok2, checks2, _ := judgeCase(lc, docTextsOf(t, a2, ps2), before2, snapshot(t, dir2), nil, ps2, reply2, err2)
+	after2 := snapshot(t, dir2)
+	ok2, checks2, _ := judgeCase(lc, docTextsOf(t, a2, ps2), before2, after2, nil, ps2, reply2, err2)
 	if ok2 {
 		t.Errorf("不存在的原文應判不合格: %+v", checks2)
+	}
+	var fileCheck *evalCheck
+	for i := range checks2 {
+		if checks2[i].Name == "檔案未被改動" {
+			fileCheck = &checks2[i]
+		}
+	}
+	if fileCheck == nil {
+		t.Fatalf("判定結果缺少「檔案未被改動」檢查: %+v", checks2)
+	}
+	if fileCheck.Pass {
+		t.Errorf("Ask 進行中檔案被改,快照比對應抓到「檔案未被改動」失敗: %+v", *fileCheck)
+	}
+	if !strings.Contains(fileCheck.Detail, "第一章") {
+		t.Errorf("檔案未被改動的詳情應列出被改的檔案: %+v", *fileCheck)
 	}
 	_ = dir
 }
