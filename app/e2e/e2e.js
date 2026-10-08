@@ -184,12 +184,16 @@ const maybe = async (name, fn, detail = '') => {
         // 禪模式中照常寫作:打字變未儲存,Ctrl+S 存檔
         await page.click('.cm-content');
         await page.keyboard.press('Control+End');
-        await page.keyboard.type('禪');
+        await page.keyboard.type('禪記');
         await page.waitForSelector('[data-testid=statusbar] >> text=未儲存');
-        await page.keyboard.press('Backspace');
         await page.keyboard.press('Control+s');
         await page.waitForSelector('[data-testid=statusbar] >> text=已儲存', {timeout: 5000}).catch(() => {});
-        check('禪模式 中可打字並存檔', (await page.textContent('[data-testid=statusbar]')).includes('已儲存'));
+        check('禪模式 中可打字並存檔(內容確實落盤)', (await page.textContent('[data-testid=statusbar]')).includes('已儲存')
+            && read(ch1).includes('禪記'));
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => document.querySelector('[data-testid=statusbar]')?.textContent.includes('已儲存'), null, {timeout: 5000}).catch(() => {});
         await page.click('[data-testid=zen-exit]');
         await page.waitForSelector('[data-testid=rail]:visible');
         const zOut = await zenVisible();
@@ -220,6 +224,23 @@ const maybe = async (name, fn, detail = '') => {
         const aOut = await zenVisible();
         check('禪模式 選取後詢問 Perkins Bot 會離開禪模式並顯示對話窗', aOut.chat && aOut.rail && !aOut.exit, JSON.stringify(aOut));
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        // 設定集文件:欄位表單也要隱藏,且未套用的輸入在退出後保留
+        await page.click('[data-testid=rail-bible]');
+        await page.click('[data-testid=entity-row] >> nth=0');
+        await page.waitForSelector('[data-testid=entity-name]');
+        const nameBefore = await page.inputValue('[data-testid=entity-name]');
+        await page.fill('[data-testid=entity-name]', nameBefore + '禪');
+        await page.keyboard.press('Control+Shift+F');
+        await page.waitForSelector('[data-testid=zen-exit]');
+        const nameHidden = await page.evaluate(() => document.querySelector('[data-testid=entity-name]')?.getClientRects().length === 0);
+        await page.keyboard.press('Control+Shift+F');
+        await page.waitForSelector('[data-testid=rail]:visible');
+        check('禪模式 設定集欄位表單一併隱藏,退出後未套用的輸入仍在',
+            nameHidden && (await page.inputValue('[data-testid=entity-name]')) === nameBefore + '禪');
+        await page.fill('[data-testid=entity-name]', nameBefore);
+        await page.click('[data-testid=rail-manuscript]');
+        await page.click('[data-testid=chapter-row]:has-text("第一章")');
+        await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
 
         const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'title');
         check('品牌 開啟按鈕標題為 Perkins Bot', fabTitle === 'Perkins Bot', String(fabTitle));

@@ -604,7 +604,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     ) : null}
                 </div>
                 {current && current.startsWith('canon/') && entity && (
-                    <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
+                    <div className={zen ? 'hidden' : 'contents'}>
+                        <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
+                    </div>
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
