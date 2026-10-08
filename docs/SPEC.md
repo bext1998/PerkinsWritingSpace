@@ -318,6 +318,11 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
      - 作者點名的服務商:OpenRouter `https://openrouter.ai/api/v1`、Fireworks AI `https://api.fireworks.ai/inference/v1`、Together AI `https://api.together.xyz/v1`、OpenAI `https://api.openai.com/v1`、Google AI Studio `https://generativelanguage.googleapis.com/v1beta/openai/`、DeepSeek `https://api.deepseek.com/v1`、MiniMax `https://api.minimax.io/v1`、z.ai `https://api.z.ai/api/paas/v4`、Anthropic `https://api.anthropic.com/v1/`。
      - 其他常見(Agent 建議加入):xAI(Grok)、Groq、Mistral、Cerebras、DeepInfra、Moonshot(Kimi)`https://api.moonshot.ai/v1`、阿里雲百煉/通義千問 DashScope 國際站 `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`、SiliconFlow。
    - **須定案/注意**:(a) Anthropic 的 OpenAI 相容層官方定位為測試用,不支援 extended thinking 與 prompt caching、不支援的欄位會被靜默忽略,與第 10 項思考強度相關,是否改接原生 Messages API 須定案;(b) z.ai、DashScope、MiniMax、Moonshot 有國際站與中國站兩組網址,預設用國際站,是否同時提供中國站待定;(c) z.ai 沒有 `/models` 端點,模型清單無法自動抓取,需預設模型名稱或讓作者手填;(d) 預設 Profile 只填網址、名稱與建議上下文長度,API 金鑰仍由作者自行填入並存 keyring,雲端端點沿用雲端外流確認;(e) 與第 17 項 Perkins Bot 設定頁一起設計入口。
+24. **編輯器寫作質感打磨:從「編輯 Markdown」到「寫小說」**(2026-10-08 作者回饋,整合作者與 ChatGPT 的討論及 Agent 查核):作者覺得目前「不是在寫文章,而是在編輯 Markdown 文件」。根因:CodeMirror 6 是程式碼編輯器,目前只為標記上色(`Editor.tsx` 的 `HighlightStyle`),`#`、`**`、`<!-- -->` 等符號仍在畫面上,段落也照 Markdown 規則(空一行才算新段)。定位:安靜、可靠的小說正文工作區,需要時無縫喚起 Perkins Bot。保留 CodeMirror 與純文字檔(§0 第 6 條),只改呈現;**不做**富文本、頁面式排版、Word 式樣式管理、大量 Markdown 工具列、block editor、slash command 大全。依優先順序分四層:
+   1. **手感與基本功能**:編輯器內搜尋/取代(Agent 查核:目前未安裝 `@codemirror/search`,Ctrl+F 沒有作用);切章後游標與捲動位置回到上次位置;視窗縮放後游標穩定;長章節捲動順暢;貼上的格式處理;中文 IME 重新驗證(A9)。
+   2. **稿紙化(核心)**:游標不在該行時隱藏 Markdown 標記、只顯示效果(類似 Obsidian 即時預覽,以 CodeMirror decoration 實作,不改檔案內容);段首縮排與段距以樣式呈現;場景分隔畫成置中 ◇◇◇ 或細線;章名呈現為標題而非 `# ` 行;註解弱化;版心寬度、字級、段距可調;打字機捲動、專注模式(淡化其他段落)。與第 6 項禪模式一起設計。**待作者決定**:段落規則是否改為「一個 Enter 就是一段」——影響檔案格式(是否仍以空行分段)、既有稿件相容與「複製為平台格式」的轉換規則(§12、B8)。隱藏標記可能干擾 IME 組字,實作後須重做 A9。
+   3. **與 Perkins Bot 融合**:流程「選取 → 問 Bot → 編輯器內看到差異 → 接受/修改/拒絕 → 繼續寫」越短越好。(a) 接受提案後短暫標示 AI 改動範圍、數秒後淡掉,查歷史再到 Provenance(可沿用 `cm-flash`,成本低,可先做;呼應第 1 項「看得出每次改動是誰造成的」);(b) 提案差異進入編輯器(輕量行內/ghost diff),重新評估 §12「編輯器內行內 diff 暫不做」的決定,與第 14 項懸浮審查框一起設計,接受仍須作者明確操作(G1、G3);(c) 選取成為一級互動物件,作者幾乎不用想上下文就能交給 Bot。
+   4. **小說小工具(節制)**:中文全形標點與引號(「」『』成對、刪節號、破折號);段落上移/下移;選取字數顯示;場景標題快速插入與跳轉。
 
 ## 15. 第二階段實作時代為決定的事項(2026-09-30,作者可推翻)
 
