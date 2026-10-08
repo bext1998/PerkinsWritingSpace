@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-08 — 評測案例返工(PR #25 審查修復)
+
+- **#1(Major)錯誤目標的提案也能通過**:`RequireProposal` 只看提案數量,原文檢查又跳過 `Target != DocPath` 的提案,模型只改附件 Canon 沒改稿件仍判通過。修法:`judgeCase` 新增「指定文件有提案」硬檢查(需要提案時必須對 `DocPath` 有提案),原文逐字改用路徑 → 內容對照表(`docTexts`)依各提案**實際目標檔**驗證;live runner 會讀取每個提案目標檔的內容,讀不到視為不合格。補單元測試:只有錯誤目標 → 不合格、混合目標 → 照各目標驗。**破壞驗證**:拿掉「指定文件有提案」檢查 → `TestEvalJudgeCase` 的「只有錯誤目標的提案應不合格」轉紅;還原 → 全綠。
+- **#2(Major)字串條件不能當語意硬判定**:伏筆情境「羅盤宛如舊時代的遺物」(比喻,沒洩漏)會誤判失敗,「羅盤裡刻著他失聯孩子的姓名」(換說法洩漏)反而通過;敘事意圖情境「小嵐留好傘,我踏進書店」改了視角也抓不到。修法:把伏筆與敘事意圖的字串條件從硬判定改成 `ScanHints`——只記錄在報告的「字串提示」列供人工檢索,不影響 Pass;`docs/LIVE_EVAL.md` 改為明說字串提示「未出現不代表沒有洩漏、不能證明意圖未變」,人工檢查以語意為準。**破壞驗證**:把提示改回硬判定(突變)→ 「字串提示不得影響硬判定」斷言轉紅;還原 → 全綠。
+- **#3(Minor)整合測試未設 live 開關也寫檔**:`TestEvalJudgeWithScriptedLLM` 改為 opt-in(`PERKINS_EVAL_INTEGRATION=1`),skip 訊息與 `docs/LIVE_EVAL.md` 明說它只寫進 Go 測試的 `t.TempDir()`(測試結束自動清除),不寫其他位置;純判定測試(`TestEvalJudge*`,不寫任何檔案)預設執行。**驗證**:預設 skip、設環境變數後跑且通過。
+- **#4(Minor)第二個整合情境快照假通過**:原本丟棄 `a2` 的目錄、before/after 都在 Ask 之後取自第一個情境的目錄,檔案變更偵測永遠空轉。修法:保留 `dir2`,在 `a2.Ask` 前後分別對 `dir2` 取快照。**說明**:透過 scripted LLM 無法真的讓 agent 在 Ask 中途改檔(G1 設計上無寫入路徑),檔案變更偵測本身的正確性由 `TestEvalJudgeFileChange` 與破壞驗證 1(快照不一致 → 不合格)涵蓋。
+- **驗證**:`go vet ./internal/agent` 通過;`go test ./internal/agent -count=1` 全過(實機測試 skip、整合測試 opt-in)。依指示未再實跑模型。
+
 ## 2026-10-08 — Perkins Bot 評測案例(SPEC §16 第 22 項)
 
 - 新增 `app/internal/agent/live_eval_test.go`:6 個固定情境(角色口吻、設定衝突、伏筆不可擅自補完、改寫不改變敘事意圖、提案原文逐字複製、報告模式不提案),每情境一個子測試,以 `PERKINS_LIVE_MODEL` 啟用(本機 LM Studio),平常 skip。情境資料為自行撰寫的小型虛構作品(海邊小鎮)。

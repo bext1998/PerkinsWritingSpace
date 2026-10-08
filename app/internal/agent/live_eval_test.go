@@ -33,6 +33,9 @@ func TestLiveEvalCases(t *testing.T) {
 			res := runEvalCase(t, model, lc)
 			rep.Cases = append(rep.Cases, res)
 			t.Logf("工具呼叫:%v", res.Tools)
+			for _, n := range res.Notes {
+				t.Logf("提示:%s", n)
+			}
 			t.Logf("回覆:%s", res.Reply)
 			for _, c := range res.Checks {
 				if !c.Pass {
@@ -76,13 +79,20 @@ func runEvalCase(t *testing.T, model string, lc evalCase) evalCaseResult {
 	if err != nil {
 		res.AskErr = err.Error()
 	}
-	docText := ""
-	if lc.DocPath != "" {
-		if text, derr := a.Proj.ReadFile(lc.DocPath); derr == nil {
-			docText = text
+	// 原文比對照各提案實際的目標檔驗,不是只看 DocPath
+	docTexts := map[string]string{}
+	for _, path := range append(proposalTargets(res.Proposals), lc.DocPath) {
+		if path == "" {
+			continue
+		}
+		if _, ok := docTexts[path]; ok {
+			continue
+		}
+		if text, derr := a.Proj.ReadFile(path); derr == nil {
+			docTexts[path] = text
 		}
 	}
-	res.Pass, res.Checks = judgeCase(&lc, docText, before, snapshot(t, dir), tools, res.Proposals, reply, err)
+	res.Pass, res.Checks, res.Notes = judgeCase(&lc, docTexts, before, snapshot(t, dir), tools, res.Proposals, reply, err)
 	return res
 }
 
@@ -136,10 +146,12 @@ func liveEvalCases() []evalCase {
 				Selection:   "阿海摸了摸腰間的舊羅盤,望向霧裡的海面。",
 				Attachments: []string{"outline/第一卷.md"},
 			},
-			DocPath:                "manuscript/第一章.md",
-			RequireProposal:        true,
-			ForbiddenInReplacement: []string{"女兒", "失蹤", "遺物"},
-			Manual:                 "改寫是否只加強氛圍,沒有把大綱裡尚未揭露的伏筆(羅盤與女兒的關聯)寫進正文。",
+			DocPath:         "manuscript/第一章.md",
+			RequireProposal: true,
+			// 字串無法對應語意(例如「宛如舊時代的遺物」的比喻沒有洩漏,換個說法的洩漏也抓不到),
+			// 只作為提示記錄在報告供人工檢索,不影響判定。
+			ScanHints: []string{"女兒", "失蹤", "遺物"},
+			Manual:    "請人工確認改寫是否只加強氛圍,沒有把大綱裡尚未揭露的伏筆(羅盤與女兒的關聯)寫進正文;字串提示僅供檢索,不能證明沒有洩漏。",
 		},
 		{
 			Name: "改寫不改變敘事意圖",
@@ -150,11 +162,12 @@ func liveEvalCases() []evalCase {
 				Question: "請讓這句更有畫面感,用 propose_patch 提案;不得改變敘事視角與誰做了什麼。",
 				Doc:      "manuscript/第一章.md",
 			},
-			DocPath:                "manuscript/第一章.md",
-			RequireProposal:        true,
-			RequiredInReplacement:  []string{"小嵐"},
-			ForbiddenInReplacement: []string{"我把", "我走進"},
-			Manual:                 "視角(第三人稱)未變、動作主體未變(小嵐留傘、小嵐進書店)、時間順序未變。",
+			DocPath:         "manuscript/第一章.md",
+			RequireProposal: true,
+			// 視角與意圖是語意判斷,字串(人名、第一人稱代詞)抓不到換說法的改寫,
+			// 只作為提示記錄在報告供人工檢索,不影響判定。
+			ScanHints: []string{"小嵐", "我把", "我走進"},
+			Manual:    "請人工確認視角(第三人稱)、動作主體與時間順序未變(誰留傘、誰進書店);字串提示不能證明意圖未變。",
 		},
 		{
 			Name: "提案原文逐字複製",

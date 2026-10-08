@@ -4,9 +4,10 @@ package agent
 // 本檔只放「程式可判定」的評測邏輯與不需要模型的單元測試;
 // 需要本機 LM Studio 的實機情境在 live_eval_test.go(以 PERKINS_LIVE_MODEL 啟用,平常 skip)。
 //
-// 判定原則(SPEC §0 第 4 條):檔案未改動、有無建立提案、原文是否逐字存在於文件、
-// 提案改寫是否含禁止字串,一律由程式判定;口吻、氛圍、是否指出衝突等主觀項目
-// 只記錄輸出供人工比對,不寫成會隨機失敗的斷言。
+// 判定原則(SPEC §0 第 4 條):檔案未改動、有無對指定文件建立提案、
+// 提案原文是否逐字存在於其目標檔,由程式判定(硬標準);
+// 字串掃描(伏筆字眼、視角代詞等)無法可靠對應語意,只作為提示記錄在報告中
+// 供人工檢查,不影響判定;口吻、氛圍等主觀項目同樣只記錄供人工比對。
 
 import (
 	"context"
@@ -31,15 +32,14 @@ type evalCheck struct {
 
 // evalCase 描述一個評測情境:測試資料、提問參數與程式判定條件。
 type evalCase struct {
-	Name                   string
-	Fixture                func(a *Agent) error // 在預設專案上寫入本情境的測試資料
-	Params                 AskParams
-	DocPath                string   // 原文逐字檢查的目標文件(空 = 不檢查)
-	RequireProposal        bool     // 是否必須建立提案
-	RequiredInReplacement  []string // 提案改寫必須包含的字串(有提案時)
-	ForbiddenInReplacement []string // 提案改寫不得包含的字串(伏筆、視角改變等)
-	ForbidProposalTool     bool     // 不得建立任何提案(報告模式)
-	Manual                 string   // 需人工比對的項目說明
+	Name               string
+	Fixture            func(a *Agent) error // 在預設專案上寫入本情境的測試資料
+	Params             AskParams
+	DocPath            string   // 評測針對的文件(空 = 不指定);RequireProposal 時要求對這個檔案有提案
+	RequireProposal    bool     // 是否必須對 DocPath(或任一檔案)建立提案
+	ForbidProposalTool bool     // 不得建立任何提案(報告模式)
+	ScanHints          []string // 改寫文字的字串提示:只記錄在報告供人工檢查,不影響判定(字串無法對應語意)
+	Manual             string   // 需人工比對的項目說明
 }
 
 // evalCaseResult 是一個情境跑完後的完整記錄,寫進評測報告。
@@ -47,6 +47,7 @@ type evalCaseResult struct {
 	Case      evalCase
 	Pass      bool
 	Checks    []evalCheck
+	Notes     []string // 字串提示等僅供人工檢查的記錄,不影響判定
 	Tools     []string // 實際獲准執行的工具呼叫
 	Proposals []proposal.Proposal
 	Reply     string
@@ -72,21 +73,24 @@ func evalChangedFiles(before, after map[string][32]byte) []string {
 	return out
 }
 
-// evalNonVerbatimProposals 回傳 original 不是逐字存在 docText 中的提案 id。
-func evalNonVerbatimProposals(path, docText string, ps []proposal.Proposal) []string {
+// evalNonVerbatimProposals 依各提案「實際的目標檔」驗證原文是否逐字存在,
+// 回傳不合格(原文不存在、為空或無法取得目標檔內容)的提案 id。
+func evalNonVerbatimProposals(docTexts map[string]string, ps []proposal.Proposal) []string {
 	var out []string
 	for _, p := range ps {
-		if p.Target != path {
+		text, ok := docTexts[p.Target]
+		if !ok {
+			out = append(out, p.ID+"(無法讀取目標檔 "+p.Target+")")
 			continue
 		}
-		if p.Original == "" || !strings.Contains(docText, p.Original) {
+		if p.Original == "" || !strings.Contains(text, p.Original) {
 			out = append(out, p.ID)
 		}
 	}
 	return out
 }
 
-// evalForbiddenHits 回傳 text 中出現的禁止字串。
+// evalForbiddenHits 回傳 text 中出現的提示字串。
 func evalForbiddenHits(text string, forbidden []string) []string {
 	var out []string
 	for _, s := range forbidden {
@@ -97,9 +101,11 @@ func evalForbiddenHits(text string, forbidden []string) []string {
 	return out
 }
 
-// judgeCase 對一個情境的執行結果做程式判定。回傳整體是否合格與逐項檢查。
-func judgeCase(lc *evalCase, docText string, before, after map[string][32]byte,
-	tools []string, ps []proposal.Proposal, reply string, askErr error) (bool, []evalCheck) {
+// judgeCase 對一個情境的執行結果做程式判定。
+// docTexts 是提案目標檔(至少含 lc.DocPath)的路徑 → 內容對照,用來逐提案驗證原文。
+// 回傳整體是否合格、逐項檢查,以及不影響判定的字串提示。
+func judgeCase(lc *evalCase, docTexts map[string]string, before, after map[string][32]byte,
+	tools []string, ps []proposal.Proposal, reply string, askErr error) (bool, []evalCheck, []string) {
 	var checks []evalCheck
 	pass := func(name string, ok bool, detail string) {
 		checks = append(checks, evalCheck{Name: name, Pass: ok, Detail: detail})
@@ -119,20 +125,36 @@ func judgeCase(lc *evalCase, docText string, before, after map[string][32]byte,
 		pass("檔案未被改動", false, "被改動的檔案: "+strings.Join(changed, ", "))
 	}
 
-	nonVerbatim := evalNonVerbatimProposals(lc.DocPath, docText, ps)
-	if lc.DocPath == "" {
-		pass("提案原文逐字複製文件", true, "(本情境不指定文件,略過)")
-	} else if len(nonVerbatim) == 0 {
-		pass("提案原文逐字複製文件", true, fmt.Sprintf("共 %d 個提案", len(ps)))
+	// 原文逐字:依各提案實際目標驗證,不是只看 DocPath
+	if len(ps) == 0 {
+		pass("提案原文逐字複製文件", true, "(沒有提案可檢查)")
+	} else if bad := evalNonVerbatimProposals(docTexts, ps); len(bad) == 0 {
+		pass("提案原文逐字複製文件", true, fmt.Sprintf("共 %d 個提案,全部通過", len(ps)))
 	} else {
-		pass("提案原文逐字複製文件", false, "原文比對失敗的提案: "+strings.Join(nonVerbatim, ", "))
+		pass("提案原文逐字複製文件", false, "原文比對失敗的提案: "+strings.Join(bad, ", "))
 	}
 
+	// 需要提案時,要求「指定的文件」確實有提案;只改到其他檔案(例如附件設定)不算數
 	if lc.RequireProposal {
-		if len(ps) > 0 {
-			pass("有建立提案", true, fmt.Sprintf("共 %d 個提案", len(ps)))
+		if lc.DocPath == "" {
+			if len(ps) > 0 {
+				pass("有建立提案", true, fmt.Sprintf("共 %d 個提案", len(ps)))
+			} else {
+				pass("有建立提案", false, "模型沒有成功建立任何提案")
+			}
 		} else {
-			pass("有建立提案", false, "模型沒有成功建立任何提案")
+			n := 0
+			for _, p := range ps {
+				if p.Target == lc.DocPath {
+					n++
+				}
+			}
+			if n > 0 {
+				pass("指定文件有提案", true, fmt.Sprintf("對 %s 共 %d 個提案", lc.DocPath, n))
+			} else {
+				pass("指定文件有提案", false, fmt.Sprintf("沒有對 %s 的提案(共 %d 個提案,目標:%s)",
+					lc.DocPath, len(ps), strings.Join(proposalTargets(ps), ", ")))
+			}
 		}
 	}
 	if lc.ForbidProposalTool {
@@ -143,23 +165,21 @@ func judgeCase(lc *evalCase, docText string, before, after map[string][32]byte,
 		}
 	}
 
-	// 提案改寫的必要字串與禁止字串
-	if len(ps) > 0 {
-		var all string
+	// 字串提示:字串無法可靠對應語意(例如「遺物」可能出現在毫無關聯的比喻裡),
+	// 只記錄供人工檢查,不寫成會隨機失敗的斷言。
+	var notes []string
+	if len(ps) > 0 && len(lc.ScanHints) > 0 {
+		var all strings.Builder
 		for _, p := range ps {
-			all += p.Replacement + "\n"
+			all.WriteString(p.Replacement)
+			all.WriteString("\n")
 		}
-		for _, req := range lc.RequiredInReplacement {
-			if strings.Contains(all, req) {
-				pass("提案改寫包含「"+req+"」", true, "")
+		for _, h := range lc.ScanHints {
+			if strings.Contains(all.String(), h) {
+				notes = append(notes, fmt.Sprintf("字串提示「%s」:出現在提案改寫中,請人工確認是否恰當(字串出現不代表違規)", h))
 			} else {
-				pass("提案改寫包含「"+req+"」", false, "改寫文字中找不到")
+				notes = append(notes, fmt.Sprintf("字串提示「%s」:未出現在提案改寫中(未出現也不代表沒有洩漏或未改意圖)", h))
 			}
-		}
-		if hits := evalForbiddenHits(all, lc.ForbiddenInReplacement); len(hits) == 0 {
-			pass("提案改寫不含禁止字串", true, "")
-		} else {
-			pass("提案改寫不含禁止字串", false, "出現禁止字串: "+strings.Join(hits, ", "))
 		}
 	}
 
@@ -169,7 +189,15 @@ func judgeCase(lc *evalCase, docText string, before, after map[string][32]byte,
 			okAll = false
 		}
 	}
-	return okAll, checks
+	return okAll, checks, notes
+}
+
+func proposalTargets(ps []proposal.Proposal) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.Target
+	}
+	return out
 }
 
 // reportData 是一份完整評測跑完後的結果集合。
@@ -207,6 +235,9 @@ func evalReportMarkdown(r reportData) string {
 				line += "(" + ck.Detail + ")"
 			}
 			b.WriteString(line + "\n")
+		}
+		for _, n := range c.Notes {
+			b.WriteString("- " + n + "\n")
 		}
 		fmt.Fprintf(&b, "- 工具呼叫:%s\n", orNone(c.Tools, "無"))
 		if len(c.Proposals) > 0 {
@@ -247,28 +278,62 @@ func indent(s, prefix string) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), " \t\n")
 }
 
-// ---- 不需要模型的單元測試:驗證判定邏輯本身 ----
+// writeEvalReport 把報告寫到 PERKINS_EVAL_OUT 指定的路徑;未設定時只用 t.Log。
+func writeEvalReport(t *testing.T, rep reportData) {
+	t.Helper()
+	md := evalReportMarkdown(rep)
+	out := strings.TrimSpace(os.Getenv("PERKINS_EVAL_OUT"))
+	if out == "" {
+		t.Log("\n" + md)
+		return
+	}
+	if st, err := os.Stat(out); err == nil && st.IsDir() {
+		out = filepath.Join(out, "perkins-eval-report.md")
+	}
+	if dir := filepath.Dir(out); dir != "" {
+		_ = os.MkdirAll(dir, 0o755)
+	}
+	if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
+		t.Logf("評測報告寫入 %s 失敗: %v\n%s", out, err, md)
+		return
+	}
+	t.Logf("評測報告已寫入 %s", out)
+}
 
-// 原文不逐字 → 判不合格;逐字 → 合格。
+// ---- 不需要模型的單元測試:驗證判定邏輯本身(純判定,不寫任何檔案)----
+
+// 原文不逐字 → 判不合格;逐字(含部分段落)→ 合格;依各提案實際目標驗證。
 func TestEvalJudgeOriginalVerbatim(t *testing.T) {
-	doc := "# 第一章\n小明走進森林。\n"
-	path := "manuscript/第一章.md"
-	good := []proposal.Proposal{{ID: "p1", Target: path, Original: "小明走進森林。", Replacement: "小明朝霧裡走去。"}}
-	if got := evalNonVerbatimProposals(path, doc, good); len(got) != 0 {
+	docs := map[string]string{
+		"manuscript/第一章.md":   "# 第一章\n小明走進森林。\n",
+		"canon/characters.md": "小明:十二歲,怕黑。\n",
+	}
+	good := []proposal.Proposal{{ID: "p1", Target: "manuscript/第一章.md", Original: "小明走進森林。", Replacement: "小明朝霧裡走去。"}}
+	if got := evalNonVerbatimProposals(docs, good); len(got) != 0 {
 		t.Errorf("逐字原文應合格,被判不合格: %v", got)
 	}
-	// 原文只要逐字存在於文件就合格(可以是其中一段);完全不存在的原文才不合格。
-	part := []proposal.Proposal{{ID: "p4", Target: path, Original: "小明走進森林", Replacement: "x"}}
-	if got := evalNonVerbatimProposals(path, doc, part); len(got) != 0 {
-		t.Errorf("存在於文件中的一段應合格: %v", got)
+	// 原文只要逐字存在於目標檔就合格(可以是其中一段);完全不存在的原文才不合格。
+	part := []proposal.Proposal{{ID: "p4", Target: "manuscript/第一章.md", Original: "小明走進森林", Replacement: "x"}}
+	if got := evalNonVerbatimProposals(docs, part); len(got) != 0 {
+		t.Errorf("存在於目標檔中的一段應合格: %v", got)
 	}
-	bad := []proposal.Proposal{{ID: "p2", Target: path, Original: "小明走進了森林。", Replacement: "x"}} // 措辭與文件不同
-	if got := evalNonVerbatimProposals(path, doc, bad); len(got) != 1 || got[0] != "p2" {
+	bad := []proposal.Proposal{{ID: "p2", Target: "manuscript/第一章.md", Original: "小明走進了森林。", Replacement: "x"}} // 措辭與文件不同
+	if got := evalNonVerbatimProposals(docs, bad); len(got) != 1 || got[0] != "p2" {
 		t.Errorf("不存在的原文應被抓到, got %v", got)
 	}
-	other := []proposal.Proposal{{ID: "p3", Target: "canon/characters.md", Original: "不存在的原文", Replacement: "x"}}
-	if got := evalNonVerbatimProposals(path, doc, other); len(got) != 0 {
-		t.Errorf("不同目標檔的提案不應參與此文件比對: %v", got)
+	// 目標檔內容拿不到 → 視為無法驗證,判不合格而不是放行
+	missing := []proposal.Proposal{{ID: "p5", Target: "canon/characters.md", Original: "怕黑", Replacement: "x"}}
+	if got := evalNonVerbatimProposals(map[string]string{}, missing); len(got) != 1 {
+		t.Errorf("無法驗證的提案應判不合格, got %v", got)
+	}
+	// 逐字與否照各提案自己的目標檔驗:canon 的提案用 canon 的內容驗,不用稿件驗
+	mixed := []proposal.Proposal{
+		{ID: "p6", Target: "canon/characters.md", Original: "怕黑", Replacement: "怕水"},
+		{ID: "p7", Target: "canon/characters.md", Original: "不存在的設定", Replacement: "x"},
+	}
+	got := evalNonVerbatimProposals(docs, mixed)
+	if len(got) != 1 || !strings.Contains(got[0], "p7") {
+		t.Errorf("混合目標應只抓到不合格的那筆, got %v", got)
 	}
 }
 
@@ -286,49 +351,101 @@ func TestEvalJudgeFileChange(t *testing.T) {
 	}
 }
 
-// 禁止字串 → 抓到;正常提案 → 合格。整組判定(正常/檔案被改/原文不逐字)三種輸入。
+// 整組判定:正常提案合格;檔案被改、原文不逐字、需要提案而沒有(或只有錯誤目標)、Ask 失敗 → 不合格;
+// 字串提示只進 Notes,不影響判定。
 func TestEvalJudgeCase(t *testing.T) {
 	lc := &evalCase{
 		Name: "潤飾", DocPath: "manuscript/第一章.md", RequireProposal: true,
-		ForbiddenInReplacement: []string{"女兒"},
+		ScanHints: []string{"女兒"},
 	}
-	doc := "# 第一章\n阿海摸了摸腰間的舊羅盤。\n"
+	docTexts := map[string]string{
+		"manuscript/第一章.md":   "# 第一章\n阿海摸了摸腰間的舊羅盤。\n",
+		"canon/characters.md": "阿海:六十歲老漁夫。\n",
+	}
 	before := map[string][32]byte{"m": {1}}
 	after := map[string][32]byte{"m": {1}}
-	ps := []proposal.Proposal{{ID: "p1", Target: lc.DocPath, Original: "阿海摸了摸腰間的舊羅盤。", Replacement: "阿海指尖摩挲著腰間的舊羅盤。"}}
+	ps := []proposal.Proposal{{ID: "p1", Target: "manuscript/第一章.md", Original: "阿海摸了摸腰間的舊羅盤。", Replacement: "阿海指尖摩挲著腰間的舊羅盤。"}}
 
-	if ok, checks := judgeCase(lc, doc, before, after, []string{"propose_patch"}, ps, "好", nil); !ok {
+	ok, checks, notes := judgeCase(lc, docTexts, before, after, []string{"propose_patch"}, ps, "好", nil)
+	if !ok {
 		t.Errorf("正常提案應合格: %+v", checks)
 	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "未出現") {
+		t.Errorf("字串提示應記錄在 Notes: %v", notes)
+	}
+
 	// 破壞驗證 1:檔案被改 → 不合格
-	if ok, checks := judgeCase(lc, doc, before, map[string][32]byte{"m": {2}}, nil, ps, "好", nil); ok {
+	if ok, checks, _ := judgeCase(lc, docTexts, before, map[string][32]byte{"m": {2}}, nil, ps, "好", nil); ok {
 		t.Errorf("檔案被改應不合格: %+v", checks)
 	}
 	// 破壞驗證 2:原文不逐字 → 不合格
-	badPS := []proposal.Proposal{{ID: "p2", Target: lc.DocPath, Original: "阿海摸了摸舊羅盤", Replacement: "x"}}
-	if ok, checks := judgeCase(lc, doc, before, after, nil, badPS, "好", nil); ok {
+	badPS := []proposal.Proposal{{ID: "p2", Target: "manuscript/第一章.md", Original: "阿海摸了摸舊羅盤", Replacement: "x"}}
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, badPS, "好", nil); ok {
 		t.Errorf("原文不逐字應不合格: %+v", checks)
 	}
-	// 破壞驗證 3:改寫寫出伏筆 → 不合格
-	reveal := []proposal.Proposal{{ID: "p3", Target: lc.DocPath, Original: "阿海摸了摸腰間的舊羅盤。", Replacement: "羅盤裡藏著失蹤女兒的名字。"}}
-	if ok, checks := judgeCase(lc, doc, before, after, nil, reveal, "好", nil); ok {
-		t.Errorf("改寫寫出伏筆應不合格: %+v", checks)
-	}
-	// 破壞驗證 4:需要提案但模型只回文字 → 不合格
-	if ok, checks := judgeCase(lc, doc, before, after, nil, nil, "我覺得不用改", nil); ok {
+	// 破壞驗證 3:需要提案但模型只回文字 → 不合格
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, nil, "我覺得不用改", nil); ok {
 		t.Errorf("需要提案而沒有提案應不合格: %+v", checks)
 	}
+	// 破壞驗證 4(返工):只有錯誤目標的提案(改到附件設定、沒改到指定文件)→ 不合格
+	wrongTarget := []proposal.Proposal{{ID: "p3", Target: "canon/characters.md", Original: "阿海:六十歲老漁夫。", Replacement: "x"}}
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, wrongTarget, "好", nil); ok {
+		t.Errorf("只有錯誤目標的提案應不合格: %+v", checks)
+	}
+	// 混合目標:指定文件有提案 → 該項合格;各提案原文仍照各自目標驗
+	mixed := []proposal.Proposal{
+		{ID: "p8", Target: "canon/characters.md", Original: "阿海:六十歲老漁夫。", Replacement: "x"},
+		{ID: "p9", Target: "manuscript/第一章.md", Original: "阿海摸了摸腰間的舊羅盤。", Replacement: "y"},
+	}
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, mixed, "好", nil); !ok {
+		t.Errorf("混合目標且指定文件有提案應合格: %+v", checks)
+	}
+	// 混合目標但指定文件那筆原文不逐字 → 不合格
+	mixedBad := []proposal.Proposal{
+		{ID: "p10", Target: "canon/characters.md", Original: "阿海:六十歲老漁夫。", Replacement: "x"},
+		{ID: "p11", Target: "manuscript/第一章.md", Original: "阿海摸了摸舊羅盤", Replacement: "y"},
+	}
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, mixedBad, "好", nil); ok {
+		t.Errorf("指定文件的提案原文不逐字應不合格: %+v", checks)
+	}
 	// Ask 本身失敗 → 不合格
-	if ok, checks := judgeCase(lc, doc, before, after, nil, nil, "", fmt.Errorf("connection refused")); ok {
+	if ok, checks, _ := judgeCase(lc, docTexts, before, after, nil, nil, "", fmt.Errorf("connection refused")); ok {
 		t.Errorf("Ask 失敗應不合格: %+v", checks)
+	}
+	// 字串提示不影響判定:改寫含提示字串仍合格,但 Notes 要標示
+	reveal := []proposal.Proposal{{ID: "p12", Target: "manuscript/第一章.md", Original: "阿海摸了摸腰間的舊羅盤。", Replacement: "羅盤裡刻著失蹤女兒的名字。"}}
+	ok, _, notes = judgeCase(lc, docTexts, before, after, nil, reveal, "好", nil)
+	if !ok {
+		t.Error("字串提示不得影響硬判定(應由人工檢查)")
+	}
+	if len(notes) == 0 || !strings.Contains(notes[0], "女兒") || !strings.Contains(notes[0], "出現在提案改寫中") {
+		t.Errorf("含提示字串應記錄在 Notes 供人工檢查: %v", notes)
 	}
 }
 
-// 用假 LLM 走完整 Ask 流程驗證判定:正常提案 → 合格;不存在的原文 → 不合格。
+// 用假 LLM 走完整 Ask 流程驗證判定與快照比對的銜接。
+// 這是會寫檔的整合測試:只寫進 Go 測試的 t.TempDir()(測試結束自動清除),
+// 以 PERKINS_EVAL_INTEGRATION=1 選用執行;純判定測試(上述 TestEvalJudge*)預設就會執行。
 func TestEvalJudgeWithScriptedLLM(t *testing.T) {
+	if os.Getenv("PERKINS_EVAL_INTEGRATION") == "" {
+		t.Skip("檔案整合測試(只寫 t.TempDir());以 PERKINS_EVAL_INTEGRATION=1 啟用,純判定邏輯由 TestEvalJudge* 預設涵蓋")
+	}
 	lc := &evalCase{
 		Name: "潤飾", DocPath: "manuscript/第一章.md", RequireProposal: true,
 		Params: AskParams{Question: "潤飾第一句", Doc: "manuscript/第一章.md"},
+	}
+	docTextsOf := func(t *testing.T, a *Agent, ps []proposal.Proposal) map[string]string {
+		t.Helper()
+		texts := map[string]string{}
+		if lc.DocPath != "" {
+			texts[lc.DocPath] = mustDoc(t, a, lc.DocPath)
+		}
+		for _, p := range ps {
+			if _, ok := texts[p.Target]; !ok {
+				texts[p.Target] = mustDoc(t, a, p.Target)
+			}
+		}
+		return texts
 	}
 	// 正常:逐字原文 + 正當提案
 	a, s, dir := setup(t)
@@ -340,19 +457,22 @@ func TestEvalJudgeWithScriptedLLM(t *testing.T) {
 	}
 	reply, err := a.Ask(context.Background(), lc.Params, func(Event) {})
 	ps := deref(a.Proposals)
-	ok, checks := judgeCase(lc, mustDoc(t, a, lc.DocPath), before, snapshot(t, dir), []string{"propose_patch"}, ps, reply, err)
+	ok, checks, _ := judgeCase(lc, docTextsOf(t, a, ps), before, snapshot(t, dir), []string{"propose_patch"}, ps, reply, err)
 	if !ok {
 		t.Errorf("假 LLM 的正常提案應合格: %+v", checks)
 	}
 	// 破壞:模型給了不存在的原文 → 提案建立失敗 → 需要提案的情境不合格
-	a2, s2, _ := setup(t)
+	// 快照在 a2.Ask 前後分別取,檔案被改才抓得到(返工:不再共用第一個情境的目錄)。
+	a2, s2, dir2 := setup(t)
+	before2 := snapshot(t, dir2)
 	s2.replies = []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
 			Arguments: `{"path":"manuscript/第一章.md","original":"小明慢慢走入森林深處","replacement":"x","rationale":"r"}`}}},
 		{Role: "assistant", Content: "已提案。"},
 	}
 	reply2, err2 := a2.Ask(context.Background(), lc.Params, func(Event) {})
-	ok2, checks2 := judgeCase(lc, mustDoc(t, a2, lc.DocPath), snapshot(t, dir), snapshot(t, dir), nil, deref(a2.Proposals), reply2, err2)
+	ps2 := deref(a2.Proposals)
+	ok2, checks2, _ := judgeCase(lc, docTextsOf(t, a2, ps2), before2, snapshot(t, dir2), nil, ps2, reply2, err2)
 	if ok2 {
 		t.Errorf("不存在的原文應判不合格: %+v", checks2)
 	}
@@ -383,41 +503,20 @@ func deref(s *proposal.Store) []proposal.Proposal {
 	return out
 }
 
-// writeEvalReport 把報告寫到 PERKINS_EVAL_OUT 指定的路徑;未設定時只用 t.Log。
-func writeEvalReport(t *testing.T, rep reportData) {
-	t.Helper()
-	md := evalReportMarkdown(rep)
-	out := strings.TrimSpace(os.Getenv("PERKINS_EVAL_OUT"))
-	if out == "" {
-		t.Log("\n" + md)
-		return
-	}
-	if st, err := os.Stat(out); err == nil && st.IsDir() {
-		out = filepath.Join(out, "perkins-eval-report.md")
-	}
-	if dir := filepath.Dir(out); dir != "" {
-		_ = os.MkdirAll(dir, 0o755)
-	}
-	if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
-		t.Logf("評測報告寫入 %s 失敗: %v\n%s", out, err, md)
-		return
-	}
-	t.Logf("評測報告已寫入 %s", out)
-}
-
-// 報告至少要能呈現通過/不通過與提案內容,供不同版本比對。
+// 報告至少要能呈現通過/不通過、提案內容與字串提示,供不同版本比對。
 func TestEvalReportMarkdown(t *testing.T) {
 	lc := evalCase{Name: "角色口吻", Manual: "口吻是否貼合設定"}
 	rep := reportData{
 		Model: "test-model", Time: time.Date(2026, 10, 8, 12, 0, 0, 0, time.Local),
 		Cases: []evalCaseResult{
 			{Case: lc, Pass: true, Checks: []evalCheck{{Name: "檔案未被改動", Pass: true}},
+				Notes:     []string{"字串提示「女兒」:未出現在提案改寫中(未出現也不代表沒有洩漏或未改意圖)"},
 				Proposals: []proposal.Proposal{{ID: "p1", Target: "manuscript/第一章.md", Original: "A", Replacement: "B", Rationale: "r"}}, Reply: "已提案"},
-			{Case: evalCase{Name: "伏筆"}, Pass: false, Checks: []evalCheck{{Name: "提案改寫不含禁止字串", Pass: false, Detail: "女兒"}}},
+			{Case: evalCase{Name: "伏筆"}, Pass: false, Checks: []evalCheck{{Name: "指定文件有提案", Pass: false, Detail: "沒有對 manuscript/第一章.md 的提案"}}},
 		},
 	}
 	md := evalReportMarkdown(rep)
-	for _, want := range []string{"test-model", "✅ 通過 角色口吻", "❌ 不通過 伏筆", "女兒", "口吻是否貼合設定", "原文:A", "改寫:B"} {
+	for _, want := range []string{"test-model", "✅ 通過 角色口吻", "❌ 不通過 伏筆", "字串提示「女兒」", "口吻是否貼合設定", "原文:A", "改寫:B", "指定文件有提案"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("報告缺少 %q:\n%s", want, md)
 		}
