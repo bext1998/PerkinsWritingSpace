@@ -1000,12 +1000,17 @@ func (a *App) logAskPremature(p agent.AskParams, err error) {
 	if a.research == nil || !a.research.Enabled() {
 		return
 	}
-	_ = a.research.Log("ask", map[string]any{
+	d := map[string]any{
 		"model": "", "remote": false, "mode": p.Mode, "doc": p.Doc,
 		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
 		"sent": false, "requests": []any{}, "reply": "", "toolCalls": []any{}, "proposalIds": []string{},
 		"elapsedMs": 0, "result": "error", "error": err.Error(),
-	})
+	}
+	if p.QuickID != "" { // 快速指令來源(§16 第 21 項);非快速指令來源不寫這兩個欄位
+		d["quickId"] = p.QuickID
+		d["quickEdited"] = p.QuickEdited
+	}
+	_ = a.research.Log("ask", d)
 }
 
 // DraftSummary 請模型草擬章節摘要;只回傳文字,不寫檔(B6)。

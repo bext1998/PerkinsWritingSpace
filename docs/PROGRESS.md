@@ -1,5 +1,11 @@
 # PROGRESS.md
 
+## 2026-10-08 — 研究記錄指標(§16 第 21 項)
+
+- **(a) ask 補記快速指令來源**:`AskParams` 新增 `quickId` 與 `quickEdited`;前端 `ChatRequest` 加 `quickId`,快速指令的入口(編輯器右鍵選單、選取浮動列、檢查面板 AI 檢查)帶入指令 id,`ChatWindow` 記住原始問題文字,送出時比對是否被改過(只記布林,不記改前全文);非快速指令來源、送出後、重置對話都歸零,不會誤記。ask 事件兩個記錄點(`agent.rlogAsk` 與 `app.logAskPremature`)都只在 `quickId != ""` 時寫入這兩個欄位。wails 綁定已重產(`wails generate module`)。SPEC §12.8 已補欄位說明。
+- **(b) researchstats**:`app/cmd/researchstats`,開發用 cmd(非 App 功能、無 Wails 綁定):讀單一作品的 `.perkins/research.jsonl`,輸出提案接受率、修改後接受比例、拒絕率、各快速指令使用次數與改過問題比例、平均對話長度(每 session ask 數與每 ask 回合數)、壓縮前後上下文用量(字元數估計:前 = compact 逐字稿、後 = 下一筆 ask 的第一個請求),`--json` 可選;只讀指定路徑、不上傳、不寫檔。資料來源:接受/拒絕/修改後接受就在 research.jsonl 的 `proposal_accept`(`authorEdited`)/`proposal_reject` 事件,不需要 provenance.jsonl。用法與指標定義見 `docs/RESEARCHSTATS.md`。
+- **驗證**:`go vet ./internal/... . ./cmd/...`、`go test ./internal/... .` 全過;新 cmd 測試以虛構 fixture 涵蓋每個指標 + 空檔 + 壞行 + 缺欄位舊版記錄,每個指標都做過破壞驗證(改壞計算 → 測試 FAIL,共 11 項);`tsc --noEmit`、`npm run build` 通過。E2E 未跑(避開同時進行中的 e2e.js 改動),建議補的檢查見 PR 說明。
+
 ## 2026-10-08 — 編輯器手感返工二(PR #26 複審:全域鍵守衛與 Select 檢查情境)
 
 - **#1(Minor)popper wrapper 擋住 Tooltip**:Select 守衛用了所有 Radix 浮層共用的 `[data-radix-popper-content-wrapper]`,Tooltip 顯示時(滑鼠停在「設定」等按鈕上)Ctrl+F 也被擋。存在檢查收斂為 `[data-testid=settings-page], [role=dialog], [role=menu], [role=listbox]`;`closest` 的 popper wrapper 保留(Tooltip 焦點不會進 popper content,不影響;其他浮層焦點在內時仍擋)。**回歸檢查**:hover「設定」鈕等 Tooltip 出現 → Ctrl+F 面板開啟且聚焦搜尋欄。

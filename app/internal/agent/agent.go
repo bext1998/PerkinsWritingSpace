@@ -44,6 +44,8 @@ type AskParams struct {
 	Attachments    []string `json:"attachments"`    // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
 	Mode           string   `json:"mode"`           // "" = 一般;report = 檢查報告(不提供提案工具,B5)
 	PriorSummaries bool     `json:"priorSummaries"` // 附上本章之前已確認的章節摘要
+	QuickID        string   `json:"quickId,omitempty"` // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
+	QuickEdited    bool     `json:"quickEdited,omitempty"` // 作者送出前改過快速指令帶入的問題文字(只記布林,不記改前全文)
 }
 
 type Event struct {
@@ -567,14 +569,20 @@ func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText strin
 	if a.Research == nil || !a.Research.Enabled() {
 		return
 	}
-	a.Research.Log("ask", map[string]any{
+	d := map[string]any{
 		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
 		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
 		"sent": len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
 		"requests": requests, "reply": replyText, "toolCalls": tcs,
 		"proposalIds": pIDs, "elapsedMs": time.Since(start).Milliseconds(),
 		"result": result, "error": errMsg,
-	})
+	}
+	// 快速指令來源(§16 第 21 項):非快速指令來源不寫這兩個欄位。
+	if p.QuickID != "" {
+		d["quickId"] = p.QuickID
+		d["quickEdited"] = p.QuickEdited
+	}
+	a.Research.Log("ask", d)
 }
 
 // ResearchRemote 回傳目前模型端點是否在本機之外(研究記錄用;由 App 在 prepare 時設定)。

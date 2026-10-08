@@ -7,6 +7,8 @@ export namespace agent {
 	    attachments: string[];
 	    mode: string;
 	    priorSummaries: boolean;
+	    quickId?: string;
+	    quickEdited?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AskParams(source);
@@ -20,6 +22,8 @@ export namespace agent {
 	        this.attachments = source["attachments"];
 	        this.mode = source["mode"];
 	        this.priorSummaries = source["priorSummaries"];
+	        this.quickId = source["quickId"];
+	        this.quickEdited = source["quickEdited"];
 	    }
 	}
 	export class Preview {

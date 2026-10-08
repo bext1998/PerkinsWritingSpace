@@ -565,6 +565,37 @@ func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
 	}
 }
 
+// 意圖(§16 第 21 項):ask 帶快速指令來源時記 quickId 與 quickEdited;
+// 非快速指令來源不寫這兩個欄位(與 §12.8 欄位說明一致)。
+func TestResearchAskQuickFields(t *testing.T) {
+	a, s, dir := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-q")
+	s.replies = []llm.Message{{Role: "assistant", Content: "回答"}}
+	// 快速指令來源:記 id 與「是否改過問題」布林
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改過的問題", QuickID: "analyze", QuickEdited: true}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 非快速指令來源:不應出現 quickId/quickEdited 欄位
+	if _, err := a.Ask(context.Background(), AskParams{Question: "自己打的"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("應兩筆 ask, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], `"quickId":"analyze"`) || !strings.Contains(lines[0], `"quickEdited":true`) {
+		t.Errorf("快速指令來源應記 quickId/quickEdited: %s", lines[0])
+	}
+	if strings.Contains(lines[1], "quickId") || strings.Contains(lines[1], "quickEdited") {
+		t.Errorf("非快速指令來源不應記快速指令欄位: %s", lines[1])
+	}
+}
+
 // 意圖:AI 的回覆/研究記錄不得進入上下文,工具也讀不到 research.jsonl(G1–G4)。
 func TestResearchFileNotInContextAndNotReadableByTools(t *testing.T) {
 	a, s, dir := setup(t)

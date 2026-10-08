@@ -26,6 +26,7 @@ export interface ChatRequest {
     selection?: string;
     attach?: string[];
     priorSummaries?: boolean;
+    quickId?: string;  // 快速指令 id(§16 第 21 項);從快速指令帶入問題時才有
     nonce: number;
 }
 
@@ -109,6 +110,10 @@ export default function ChatWindow(props: Props) {
     const [preview, setPreview] = useState<agent.Preview | null>(null);
     const [models, setModels] = useState<string[]>([]);
     const [pickQ, setPickQ] = useState('');
+    // 快速指令來源(§16 第 21 項):記住本次問題來自哪個快速指令與原始問題文字,
+    // 送出時比對是否被改過(quickEdited 只記布林,不記改前全文)
+    const [quickId, setQuickId] = useState<string | undefined>();
+    const [quickQ, setQuickQ] = useState('');
     const [pos, setPos] = useState<{x: number; y: number} | null>(null);
     const bottom = useRef<HTMLDivElement>(null);
     const box = useRef<HTMLDivElement>(null);
@@ -128,6 +133,13 @@ export default function ChatWindow(props: Props) {
     useEffect(() => {
         if (!request) return;
         if (request.question !== undefined) setQuestion(request.question);
+        if (request.quickId) {
+            setQuickId(request.quickId);
+            setQuickQ(request.question ?? '');
+        } else {
+            setQuickId(undefined); // 非快速指令來源,不帶快速指令欄位
+            setQuickQ('');
+        }
         setMode(request.mode ?? '');
         if (request.selection !== undefined) {
             setSel(request.selection);
@@ -224,6 +236,8 @@ export default function ChatWindow(props: Props) {
         attachments: attach,
         mode,
         priorSummaries: prior && withDoc && isChapter,
+        quickId: quickId ?? '',
+        quickEdited: !!quickId && question !== quickQ,
     });
 
     const send = async () => {
@@ -239,6 +253,8 @@ export default function ChatWindow(props: Props) {
             ].filter(Boolean).join(' · ');
             setTurns(t => [...t, {role: 'user', text: question, meta}]);
             setQuestion('');
+            setQuickId(undefined); // 送出後歸零,下次非快速指令的提問不會被誤記來源
+            setQuickQ('');
             setBusy(true);
             setError('');
         } catch (e) { setError(errText(e)); }
@@ -276,6 +292,8 @@ export default function ChatWindow(props: Props) {
         setSel(null);
         setAttach([]);
         setPrior(false);
+        setQuickId(undefined);
+        setQuickQ('');
     };
 
     const loadModels = async (profileID: string) => {

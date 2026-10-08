@@ -50,7 +50,7 @@ export default function ChecksPanel({index, openFile, fail, ask, save, chapter}:
             const text = await ReadFile(chapter);
             const attach = await SuggestAttachments(text);
             const c = CHECKS[i];
-            ask({question: c.question, mode: c.mode, attach, priorSummaries: true, nonce: 0});
+            ask({question: c.question, mode: c.mode, quickId: c.id, attach, priorSummaries: true, nonce: 0});
         } catch (e) { fail(e); }
     };
 
