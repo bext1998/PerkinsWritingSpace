@@ -334,8 +334,12 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 磁碟上的檔案被系統改動(接受提案、還原)後,重新載入編輯器
     // flash:接受提案後要標示的提案,與重載內容同一次提交(#45 a)
     const reloadCurrent = useCallback(async (files?: string[], flash?: proposal.Proposal) => {
-        if (!current || (files && !files.includes(current))) return;
-        setText(await ReadFile(current));
+        const cur = current;
+        if (!cur || (files && !files.includes(cur))) return;
+        const content = await ReadFile(cur);
+        // 讀檔期間已切到別章:不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案)
+        if (latest.current.current !== cur) return;
+        setText(content);
         setFlashP(flash ?? null);
         setDirty(false);
         setReloadKey(k => k + 1);

@@ -1,5 +1,12 @@
 # PROGRESS.md
 
+## 2026-10-09 — reloadCurrent 讀檔期間切章競態修復(Issue #56)
+
+- `Workspace.reloadCurrent`(接受提案、版本還原後的重載)在 `await ReadFile` 後核對 `latest.current.current` 仍是發起時的檔案,已切到別章就不套用(不 setText、不 setFlashP、不清 dirty、不重掛);比照 `openFile` 的 stale 檢查與 `deleteCategory` 重讀的寫法。原本讀檔期間切章會把 A 章內容放進 B 章編輯器,之後存檔寫進 B 章檔案(資料遺失風險)。
+- **E2E(visual-1b,3 項)**:專用章節 A/B,寫入提案檔後覆寫 `ReadFile` 讓 A 章讀取卡在受控 Promise(比照 research R2),接受提案 → 卡住期間切到 B → 放行;斷言麵包屑仍是 B、編輯器仍顯示 B 內容、在 B 打字存檔後磁碟上的 B 未被寫成 A 章內容;`finally` 還原綁定與浮窗收合。
+- **破壞驗證**:拿掉核對 → 「編輯器仍顯示章節 B」與「磁碟上的 B 不變」兩項 FAIL(編輯器被寫入 A 章內容,存檔把 A 內容寫進 B 檔);放回後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)386/386 passed(基準 383 + 3),略過 8 項,148s;settings.json 逐位元組還原,書櫃無殘留,剪貼簿未覆寫。
+
 ## 2026-10-09 — Bot 浮窗用量返工(PR #54 審查)
 
 - `App.PreviewContext` 在請求進行中(`a.cancel != nil`)時不再呼叫 `prepare()`,沿用執行中 Agent 的端點設定估算(背景重算不得繞過送出確認換端點;App 層回歸測試 `TestPreviewContextDoesNotTouchRunningAgent`);前端 `busy` 期間停止背景重算,`chat:done` 後再算。

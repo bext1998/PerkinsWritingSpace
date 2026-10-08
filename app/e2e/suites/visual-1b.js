@@ -102,5 +102,69 @@ module.exports = {
         await page.waitForSelector('.cm-ai-flash', {state: 'detached', timeout: 6000});
         check('AI改動標示 數秒後移除', !(await page.$('.cm-ai-flash')));
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
+        // #56 reloadCurrent 競態:接受提案讀檔期間切章,不得把舊章內容放進新章編輯器
+        // (之後存檔會寫進新章檔案)。用專用章節,不動其他組依賴的章節原始內容;
+        // ReadFile 只對章節 A 卡住(受控 Promise,比照 research R2 覆寫綁定),其他路徑照常。
+        const raceA = 'manuscript/重載競態A.md';
+        const raceB = 'manuscript/重載競態B.md';
+        const raceBSrc = '# 重載競態B\n\n乙章原文。\n';
+        projWrite(raceA, '# 重載競態A\n\n甲章原文。\n');
+        projWrite(raceB, raceBSrc);
+        await ctx.ensureProject('第一章', 'manuscript');
+        // 弄髒目前章節存檔觸發 refreshTree,讓側欄出現兩個專用章節
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await settle(80, 900);
+        await page.locator('[data-testid=chapter-row]:has-text("重載競態A")').first().click({timeout: 15000});
+        await page.waitForFunction(c => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(c), '重載競態A', {timeout: 15000});
+        const raceSrc = read(raceA);
+        const raceAt = raceSrc.indexOf('甲章原文。');
+        const raceStart = Buffer.byteLength(raceSrc.slice(0, raceAt));
+        projWrite('.perkins/proposals/20261009-130000-race56.json', JSON.stringify({
+            id: '20261009-130000-race56', createdAt: '2026-10-09T13:00:00+08:00', model: 'E2E', target: raceA,
+            original: '甲章原文。', replacement: '甲章已接受。', rationale: 'E2E 競態測試', assumptions: [],
+            baseHash: require('crypto').createHash('sha256').update(raceSrc).digest('hex'),
+            start: raceStart, end: raceStart + Buffer.byteLength('甲章原文。'), status: 'pending',
+        }, null, 2));
+        await page.evaluate(() => window.__perkinsRefreshProposals());
+        // 覆寫 ReadFile:只對章節 A 回傳受控 Promise;放行時用原始綁定讀回真實內容
+        await page.evaluate(rel => {
+            window.__perkinsReadOrig = window.go.main.App.ReadFile;
+            window.go.main.App.ReadFile = (r, ...rest) => {
+                if (r === rel) return new Promise(resolve => { window.__perkinsReadGate = resolve; });
+                return window.__perkinsReadOrig(r, ...rest);
+            };
+        }, raceA);
+        await page.click('[data-testid=chat-fab]');
+        await page.click('[data-testid=proposal]:has-text("甲章原文") [data-testid=accept]');
+        // 接受已送出,重載卡在章節 A 的 ReadFile;等待期間切到章節 B
+        await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
+        await page.locator('[data-testid=chapter-row]:has-text("重載競態B")').first().click({timeout: 15000});
+        await page.waitForFunction(c => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(c), '重載競態B', {timeout: 15000});
+        await page.waitForSelector('.cm-content:has-text("乙章原文")', {timeout: 15000});
+        // 放行章節 A 的讀取
+        await page.evaluate(() => window.__perkinsReadGate(window.__perkinsReadOrig('manuscript/重載競態A.md')));
+        await settle(80, 900);
+        await page.evaluate(() => { window.go.main.App.ReadFile = window.__perkinsReadOrig; });
+        const raceCrumbs = await page.textContent('[data-testid=crumbs]');
+        const raceBody = await page.textContent('.cm-content');
+        check('#56 讀檔卡住期間切章:麵包屑仍是章節 B', raceCrumbs.includes('重載競態B') && !raceCrumbs.includes('重載競態A'), raceCrumbs);
+        check('#56 讀檔卡住期間切章:編輯器仍顯示章節 B 內容',
+            raceBody.includes('乙章原文') && !raceBody.includes('甲章'), JSON.stringify(raceBody.slice(0, 80)));
+        // 在 B 打字存檔:磁碟上的 B 不得被寫成 A 章內容
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('乙章標記');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=toast]');
+        const raceBDisk = read(raceB);
+        check('#56 讀檔卡住期間切章:存檔後磁碟上的章節 B 不變(未被寫成章節 A 內容)',
+            raceBDisk.includes('乙章原文') && raceBDisk.includes('乙章標記') && !raceBDisk.includes('甲章'), JSON.stringify(raceBDisk.slice(0, 80)));
+        // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },
 };
