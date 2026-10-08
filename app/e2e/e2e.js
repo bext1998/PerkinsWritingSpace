@@ -158,6 +158,69 @@ const maybe = async (name, fn, detail = '') => {
         check('標題欄 側欄開關可收合並展開回原面板', collapsed && (await page.textContent('[data-testid=sidebar-title]')).trim() === '設定集');
         await page.click('[data-testid=rail-manuscript]');
         await page.waitForSelector('[data-testid=sidebar-title] >> text=稿件');
+
+        // 禪模式(SPEC §16 第 6 項):只留編輯器;周邊只藏不卸載,退出後版面與 Perkins Bot 草稿原樣恢復
+        if (!(await page.$('[data-testid=inspector]'))) await page.click('[data-testid=toggle-inspector]');
+        await page.waitForSelector('[data-testid=inspector]');
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await page.fill('[data-testid=question]', '禪模式前的草稿');
+        const zenVisible = () => page.evaluate(() => {
+            const vis = sel => { const el = document.querySelector(sel); return !!el && el.getClientRects().length > 0; };
+            return {rail: vis('[data-testid=rail]'), sidebar: vis('[data-testid=sidebar-title]'), inspector: vis('[data-testid=inspector]'),
+                fab: vis('[data-testid=chat-fab]'), chat: vis('[data-testid=chat-window]'), toolbar: vis('[data-testid=editor-toolbar]'),
+                editor: vis('.cm-content'), exit: vis('[data-testid=zen-exit]'), tbSidebar: vis('[data-testid=titlebar-sidebar]')};
+        });
+        await page.click('[data-testid=app-menu]');
+        await page.waitForSelector('[data-testid=app-menu-content]');
+        await page.click('[data-testid=menu-zen]');
+        await page.waitForSelector('[data-testid=app-menu-content]', {state: 'detached'});
+        await page.waitForSelector('[data-testid=zen-exit]');
+        const zIn = await zenVisible();
+        check('禪模式 選單進入後只留編輯器(圖示列、側欄、資訊欄、Bot 圓鈕與視窗、工具列、標題欄側欄開關都藏起)',
+            !zIn.rail && !zIn.sidebar && !zIn.inspector && !zIn.fab && !zIn.chat && !zIn.toolbar && !zIn.tbSidebar && zIn.editor && zIn.exit,
+            JSON.stringify(zIn));
+        await shot('58-zen-mode');
+        // 禪模式中照常寫作:打字變未儲存,Ctrl+S 存檔
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('禪');
+        await page.waitForSelector('[data-testid=statusbar] >> text=未儲存');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=statusbar] >> text=已儲存', {timeout: 5000}).catch(() => {});
+        check('禪模式 中可打字並存檔', (await page.textContent('[data-testid=statusbar]')).includes('已儲存'));
+        await page.click('[data-testid=zen-exit]');
+        await page.waitForSelector('[data-testid=rail]:visible');
+        const zOut = await zenVisible();
+        check('禪模式 退出後版面原樣恢復(側欄仍是稿件、資訊欄與 Bot 視窗仍開著)',
+            zOut.rail && zOut.sidebar && zOut.inspector && zOut.chat && zOut.toolbar && zOut.tbSidebar && !zOut.exit
+            && (await page.textContent('[data-testid=sidebar-title]')).trim() === '稿件', JSON.stringify(zOut));
+        check('禪模式 退出後 Perkins Bot 草稿仍在(未卸載)', (await page.inputValue('[data-testid=question]')) === '禪模式前的草稿');
+        await page.fill('[data-testid=question]', '');
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        // 快捷鍵 Ctrl+Shift+F 進出
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Shift+F');
+        await page.waitForSelector('[data-testid=zen-exit]', {timeout: 3000}).catch(() => {});
+        const kIn = await zenVisible();
+        await page.keyboard.press('Control+Shift+F');
+        await page.waitForSelector('[data-testid=rail]:visible', {timeout: 3000}).catch(() => {});
+        const kOut = await zenVisible();
+        check('禪模式 Ctrl+Shift+F 可進入與離開', !kIn.rail && kIn.exit && kOut.rail && !kOut.exit, JSON.stringify({kIn, kOut}));
+        // 從編輯器叫出 Perkins Bot 時自動離開禪模式,對話窗不會被藏起來
+        await page.keyboard.press('Control+Shift+F');
+        await page.waitForSelector('[data-testid=zen-exit]');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await page.keyboard.press('Shift+End');
+        await page.waitForSelector('[data-testid=selection-ask]');
+        await page.click('[data-testid=selection-ask]');
+        await page.waitForSelector('[data-testid=chat-window]:visible', {timeout: 3000}).catch(() => {});
+        const aOut = await zenVisible();
+        check('禪模式 選取後詢問 Perkins Bot 會離開禪模式並顯示對話窗', aOut.chat && aOut.rail && !aOut.exit, JSON.stringify(aOut));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
         const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'title');
         check('品牌 開啟按鈕標題為 Perkins Bot', fabTitle === 'Perkins Bot', String(fabTitle));
         await shot('40-brand-rail-dark');

@@ -10,6 +10,7 @@ export interface ShellActions {
     bookshelf?: () => void;
     save?: () => void;
     sidebar?: {open: boolean; toggle: () => void};
+    zen?: {on: boolean; toggle: () => void};
 }
 
 let projectName: string | null = null;

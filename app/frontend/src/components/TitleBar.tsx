@@ -7,7 +7,7 @@
 // 否則標題欄按鈕會在對話框開著時點不到。
 import * as React from 'react';
 import {useEffect, useState} from 'react';
-import {Copy, Library, Minus, PanelLeftClose, PanelLeftOpen, Save, Settings, Square, X} from 'lucide-react';
+import {Copy, Library, Maximize2, Minimize2, Minus, PanelLeftClose, PanelLeftOpen, Save, Settings, Square, X} from 'lucide-react';
 import {Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise} from '../../wailsjs/runtime/runtime';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {getProjectName, getShellActions, isFrameVisible, subscribeShellState} from '@/lib/shellState';
@@ -46,11 +46,14 @@ export default function TitleBar() {
     // 作品相關項目只在作品外框看得到時提供(設定頁開著時不從選單直接跳回書櫃)
     const save = frame ? actions.save : undefined;
     const bookshelf = frame ? actions.bookshelf : undefined;
-    const sidebar = frame ? actions.sidebar : undefined;
+    const zen = frame ? actions.zen : undefined;
+    // 禪模式時圖示列藏起,標題欄不再與它連成 L 形外框,也不提供側欄開關
+    const sidebar = frame && !zen?.on ? actions.sidebar : undefined;
+    const lFrame = frame && !zen?.on;
 
     return (
         <header data-testid="titlebar" style={{...drag, height: TITLEBAR_HEIGHT}}
-                className={cn('pointer-events-auto relative z-[60] flex shrink-0 select-none items-center bg-rail text-xs', !frame && 'border-b')}
+                className={cn('pointer-events-auto relative z-[60] flex shrink-0 select-none items-center bg-rail text-xs', !lFrame && 'border-b')}
                 onDoubleClick={() => WindowToggleMaximise()}>
             <div className="flex h-full items-center" style={noDrag} onDoubleClick={e => e.stopPropagation()}>
                 <DropdownMenu>
@@ -62,10 +65,16 @@ export default function TitleBar() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="z-[70] min-w-[13rem]" data-testid="app-menu-content">
                         <div className="px-2 py-1.5 text-xs text-muted-foreground">Perkins WritingSpace</div>
-                        {(save || bookshelf || actions.settings) && <DropdownMenuSeparator/>}
+                        {(save || bookshelf || zen || actions.settings) && <DropdownMenuSeparator/>}
                         {save && (
                             <DropdownMenuItem data-testid="menu-save" onSelect={save}>
                                 <Save/>儲存<span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+S</span>
+                            </DropdownMenuItem>
+                        )}
+                        {zen && (
+                            <DropdownMenuItem data-testid="menu-zen" onSelect={zen.toggle}>
+                                {zen.on ? <Minimize2/> : <Maximize2/>}{zen.on ? '離開禪模式' : '禪模式'}
+                                <span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+Shift+F</span>
                             </DropdownMenuItem>
                         )}
                         {bookshelf && <DropdownMenuItem data-testid="menu-bookshelf" onSelect={bookshelf}><Library/>回到書櫃</DropdownMenuItem>}
