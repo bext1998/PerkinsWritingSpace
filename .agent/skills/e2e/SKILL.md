@@ -67,7 +67,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 - **原生對話框無法在無頭模式操作**(Notion 匯入、封面、整卷匯出、開啟資料夾):這些流程用 Go 測試覆蓋,回報時註明 GUI 未實測。
 - Claude in Chrome 擴充在這台電腦未連線,不要改用它。
 - 測試資料要包含「什麼都沒命中」的內容(例如沒有提到任何設定的章節),見 `docs/PITFALLS.md` #1。
-- **部分檢查假設全新 fixture**(B1 嚴格 3 章、R1 檔案不存在、E3 標記字未寫入等):`--all` 與這些組跑前要重建 fixture + 重啟 wails dev;重複執行同一 fixture 會因前輪汙染 FAIL,不是產品 bug。
+- **部分組假設全新 fixture**:`titlebar-zen`(B1 嚴格 3 章與 perkins.json 未改)、`research`(R1 檔案不存在)、`save-flow`(E3 標記字未寫入)、`bible`(別名未套用過、無自訂分類殘留)、`bot-chat`/`search-editor`(依賴第一章原始內容)。這些組跑前要重建 fixture + 重啟 wails dev;重複執行同一 fixture 會因前輪汙染 FAIL(例如 bible 的別名填入相同值時 EntityHeader 的「套用」鈕不渲染),不是產品 bug。`--all` 一律從全新 fixture 開始。
 - **共用狀態準備要冪等**:拆組後各組用 `lib.ensureProject/ensureChapter/ensureBookshelf` 對齊起始狀態;章節列點擊一律用 locator(自動重試,建立後的 tree 重渲染不打斷);冒煙組以專用「冒煙章」寫入(fs + 弄髒存檔觸發 refreshTree),不依賴也不汙染 fixture 原始內容。
 
 ## 驗證與回報

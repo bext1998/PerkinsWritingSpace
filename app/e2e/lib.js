@@ -87,7 +87,7 @@ async function ensureProject(page, chapter, panel) {
     if (title === 'Perkins WritingSpace') {
         // 同一次 wails session 裡 reload 頁面會回到書櫃(PERKINS_OPEN 只在後端啟動時生效):
         // 點 E2E測試 卡重新開啟專案,不要 goto(goto 之後仍是書櫃)
-        const cardSel = 'button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]';
+        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '", button[title="' + PROJ + '"]');
         await page.click(cardSel);
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
     } else if (title === 'E2E測試') {
@@ -108,10 +108,13 @@ async function ensureProject(page, chapter, panel) {
         return ensurePanel(page, panel);
     }
     await page.goto(BASE);
-    await page.waitForSelector('text=E2E測試', {timeout: 30000});
-    // 只等至少一個章節列:fixture 可能被前一輪測試新增過章節(重跑不重建 fixture),
-    // 嚴格列數的檢查屬於 titlebar-zen 組自己(B1),不在共用準備裡
-    await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+    // 等應用載入:書櫃(reload 情境,PERKINS_OPEN 只在後端啟動時生效)或已自動開作品
+    await page.waitForSelector('[data-testid=bookshelf-title], [data-testid=chapter-row]', {timeout: 30000});
+    if (await page.$('[data-testid=bookshelf-title]')) {
+        // 書櫃:點 E2E測試 卡開啟專案
+        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '", button[title="' + PROJ + '"]');
+        await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
+    }
     // 等自動開作品的 tree 載入完畢(字數統計等非同步請求落地,mutation 靜默),
     // 否則緊接著的新增章節會跟在途的 tree 更新競態,列會出現後又消失
     await settleDOM(page, 300, 5000);
@@ -182,7 +185,7 @@ async function ensureBookshelf(page) {
     if (!hasHouse) {
         // 應用尚未載入(新頁面 about:blank 或空白狀態):goto 後依畫面導到書櫃
         await page.goto(BASE);
-        await page.waitForSelector('text=E2E測試, [data-testid=bookshelf-title]', {timeout: 30000});
+        await page.waitForSelector('[data-testid=bookshelf-title], [data-testid=chapter-row]', {timeout: 30000});
         const atShelf2 = await page.$('[data-testid=bookshelf-title]');
         if (atShelf2) return;
     }

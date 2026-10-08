@@ -10,6 +10,7 @@
 - **A. 拆組**:e2e.js(3,230 行)拆成 `run.js`(執行器:`--all`/`--smoke`/組名)+ `lib.js`(共用:fixture、啟動、check/shot、settle、狀態準備)+ 15 個連續片段組(`suites/*.js`,檢查名稱與斷言未動)。各組以 `ensureProject/ensureChapter/ensureBookshelf` 冪等地自行對齊起始狀態(含回書櫃重開、面板切換、缺章建立),可單獨執行。
 - **C. 清固定等待與軟等待**:新增 `settleDOM`(等 DOM 靜默 80ms 或上限),145 處短固定等待轉換(上限保留原延遲);19 處「等不到也算對/收尾」的軟等待保留並逐一註明理由,63 處改為硬等待(等不到就 FAIL)。
 - **驗證**:`tsc --noEmit`、`npm run build` 通過;破壞驗證 3 項(選單儲存移除 → titlebar-zen FAIL;搜尋面板掛載移除 → search-editor FAIL;EntityHeader 套用移除 → bible 的 hardened 等待逾時中斷 FAIL),還原後全綠。
+- **單組獨立執行驗證(15 組全數通過)**:重建 fixture + 重啟後逐組單跑 — titlebar-zen 29/29、bot-chat 6/6(+8 略過)、bible 23/23、shelf 20/20、layout-visual 7/7、research 8/8、polish 42/42、visual-1b 4/4、save-flow 23/23、notion 23/23、settings-layout 28/28、error-guard 43/43、close-guard 50/50、layout-half 31/31、search-editor 44/44。其中 layout-visual 起的 11 組是在**已被前輪汙染的 fixture** 上通過(拆組的狀態準備有效);titlebar-zen/bot-chat/bible/shelf 需較乾淨的起始狀態,在重建後通過。bible 單跑在同一 fixture 的第二次執行會 FAIL — 別名填入相同值時 EntityHeader 的「套用」鈕不渲染(changed=false),屬 fixture 汙染前提,已寫入 SKILL.md。
 - **遇到的狀態陷阱**(拆組必修):章節列點擊一律改 locator(建立後 tree 重渲染不打斷);冒煙組不得用 UI 建章觸發(wails dev 檔案監看器會重啟後端),以 fs 寫「冒煙章」+ 第一章弄髒存檔觸發 refreshTree;goto 後要等自動開作品的 tree 載入穩定(settle)再操作,避免新增章節與在途 tree 更新競態。
 
 ## 2026-10-08 — 研究記錄指標返工(PR #27 審查:壓縮統計兩項)
