@@ -921,14 +921,21 @@ func (a *App) prepare() (*agent.Agent, error) {
 }
 
 // PreviewContext 回傳「實際會送往模型」的訊息與預算估算(與 AskAI 走同一個組裝函式,A6)。
+// 請求進行中(a.cancel != nil)時不改寫執行中 Agent 的端點設定(PR #54 返工):prepare 會換掉
+// LLM/Model/ContextTokens/Remote,背景重算若此時切到雲端端點,後續工具回合會繞過送出確認送往新端點;
+// 忙碌時沿用 begin() 時套上的端點值估算即可。
 func (a *App) PreviewContext(p agent.AskParams) (*agent.Preview, error) {
 	a.mu.Lock()
-	ag, err := a.prepare()
-	a.mu.Unlock()
-	if err != nil {
-		return nil, err
+	defer a.mu.Unlock()
+	if a.agent == nil {
+		return nil, errNoProject
 	}
-	return ag.Preview(p)
+	if a.cancel == nil {
+		if _, err := a.prepare(); err != nil {
+			return nil, err
+		}
+	}
+	return a.agent.Preview(p)
 }
 
 func (a *App) ResetChat() {

@@ -428,10 +428,115 @@ func TestOverBudgetRefusesToSend(t *testing.T) {
 	}
 }
 
+// 意圖:前端浮窗顯示的可用上下文(Preview.Limit)必須與 Ask 的超預算判斷同一個值;否則會出現
+// 「浮窗顯示未超量、送出卻被拒(或反過來)」。以 Preview 的 tokens/limit 重算 Over,應與 Preview.Over 一致,
+// 且超過 limit 的內容 Ask 會拒絕、未超過的會送出。
+func TestPreviewLimitMatchesOverBudgetCheck(t *testing.T) {
+	a, s, _ := setup(t)
+	a.ContextTokens = 2000
+	if want := 2000 - replyReserve(2000); replyReserve(2000) != 500 {
+		t.Fatalf("replyReserve(2000) = %d,預期 2000/4 = 500", replyReserve(2000))
+	} else if want != 1500 {
+		t.Fatalf("limit 應為 %d", want)
+	}
+
+	// 未超過 limit:Ask 送出,Preview 不標示超過
+	short := AskParams{Question: "q"}
+	pvShort, err := a.Preview(short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pvShort.Limit != 1500 {
+		t.Fatalf("limit = %d,預期 1500", pvShort.Limit)
+	}
+	if pvShort.Over || pvShort.Tokens > pvShort.Limit {
+		t.Fatalf("短問題不應超過: tokens=%d limit=%d over=%v", pvShort.Tokens, pvShort.Limit, pvShort.Over)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), short, func(Event) {}); err != nil {
+		t.Fatalf("未超 limit 時 Ask 不應拒絕: %v", err)
+	}
+	a.Reset()
+
+	// 超過 limit:Preview.Over 為真,且以 tokens/limit 重算也為真(同一個值);Ask 拒絕送出
+	long := AskParams{Question: strings.Repeat("q", 4000)}
+	pvLong, err := a.Preview(long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pvLong.Over {
+		t.Fatalf("長問題應標示超過: tokens=%d limit=%d", pvLong.Tokens, pvLong.Limit)
+	}
+	if (pvLong.Tokens > pvLong.Limit) != pvLong.Over {
+		t.Fatalf("Over 應等同 tokens>limit: tokens=%d limit=%d over=%v", pvLong.Tokens, pvLong.Limit, pvLong.Over)
+	}
+	if _, err := a.Ask(context.Background(), long, func(Event) {}); err == nil || !strings.Contains(err.Error(), "超過") {
+		t.Fatalf("超過 limit 時 Ask 應拒絕: %v", err)
+	}
+	if len(s.reqs) != 1 {
+		t.Fatalf("超預算的 ask 不應送給模型(短問題那次除外),實際 %d 次", len(s.reqs))
+	}
+
+	// budget=0(未設定上下文長度):limit 為 0,前端據此不顯示用量;Over 不啟動
+	a2, _, _ := setup(t)
+	pv0, err := a2.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pv0.Limit != 0 || pv0.Budget != 0 || pv0.Over {
+		t.Fatalf("budget=0 時 limit/budget 應為 0 且不標示超過: %+v", pv0)
+	}
+}
+
 func TestEstimateTokens(t *testing.T) {
 	n := EstimateTokens([]llm.Message{{Content: "中文十個字中文十個字"}, {Content: "abcdefghi"}})
 	if n != 4+10+4+3 {
 		t.Fatalf("got %d", n)
+	}
+}
+
+// 意圖(PR #54 返工):背景用量預覽要在作者還沒存檔時就反映編輯器草稿(DocDraft 取代磁碟內容);
+// Ask 路徑不使用草稿(送出前已存檔,磁碟內容與草稿相同),不會被草稿拖進超預算路徑。
+func TestPreviewUsesDocDraftButAskDoesNot(t *testing.T) {
+	a, s, _ := setup(t)
+	a.ContextTokens = 2000
+	long := strings.Repeat("草", 3000) // 草稿比磁碟內容長很多:足以讓預覽超過 limit=1500,但磁碟內容不會
+	// 預覽:用草稿估算,超過可用上下文
+	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &long})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pv.Over {
+		t.Fatalf("草稿超過 limit 時預覽應標示超過: tokens=%d limit=%d", pv.Tokens, pv.Limit)
+	}
+	if !strings.Contains(pv.Messages[len(pv.Messages)-1].Content, "【目前文件】manuscript/第一章.md") {
+		t.Fatal("預覽仍應包含目前文件段")
+	}
+	// Ask:同參數(含 DocDraft)走 Ask,應以磁碟內容送出且成功(不超預算、不使用草稿)
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &long}, func(Event) {}); err != nil {
+		t.Fatalf("Ask 不應使用草稿估算而拒絕送出: %v", err)
+	}
+	reqMsgs := s.reqs[len(s.reqs)-1].Messages
+	userMsg := reqMsgs[len(reqMsgs)-1].Content
+	if strings.Contains(userMsg, long) {
+		t.Fatal("Ask 送出的請求不得使用草稿內容")
+	}
+	if !strings.Contains(userMsg, "小明走進森林") {
+		t.Fatalf("Ask 送出的請求應用磁碟內容: %s", userMsg[:60])
+	}
+}
+
+// 空草稿不是「未提供」:作者清空全文但未存檔時,預覽要以空文件估算(送出前會先存成空檔),不得改讀磁碟舊稿。
+func TestPreviewEmptyDocDraftIsNotMissing(t *testing.T) {
+	a, _, _ := setup(t)
+	empty := ""
+	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(pv.Messages[len(pv.Messages)-1].Content, "小明走進森林") {
+		t.Fatal("空草稿時預覽不得讀回磁碟舊稿")
 	}
 }
 

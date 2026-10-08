@@ -1,5 +1,21 @@
 # PROGRESS.md
 
+## 2026-10-09 — Bot 浮窗用量返工(PR #54 審查)
+
+- `App.PreviewContext` 在請求進行中(`a.cancel != nil`)時不再呼叫 `prepare()`,沿用執行中 Agent 的端點設定估算(背景重算不得繞過送出確認換端點;App 層回歸測試 `TestPreviewContextDoesNotTouchRunningAgent`);前端 `busy` 期間停止背景重算,`chat:done` 後再算。
+- 背景預覽改用編輯器目前草稿:`AskParams` 新增僅供 Preview 的 `docDraft`,`BuildMessages` 以它取代目前文件的磁碟內容;`AskAI` 清除該欄位(送出前已存檔,兩者相同;回歸測試 `TestPreviewUsesDocDraftButAskDoesNot` + E2E「未存草稿的用量反映草稿內容」)。重算依賴補 `keepSel` 與目前端點的 `contextTokens`;用量重算加世代計數,過期回應不覆蓋。全新 fixture `--all`(E2E_SKIP_AI=1)381/381 passed(基準 380 + 1),略過 8 項。
+
+## 2026-10-09 — Bot 浮窗上下文用量 + 送出預覽來源標示(Issue #37 部分)
+
+範圍:用量百分比與來源標示先行;壓縮狀態指示與開關等 #32 定案,本輪不做。
+
+- **上下文用量**:`agent.Preview` 新增 `limit` 欄位(= `ContextTokens − replyReserve(ContextTokens)`,與 Ask 超預算判斷同一套;budget=0 時為 0),前端不自行重算公式。`ChatWindow` 標題列常駐顯示 `context-usage`(「上下文 N%」,tokens 用後端 `PreviewContext` 回傳值;limit=0 時不顯示,超過 100% 用警示色)。更新時機:開啟浮窗、問題/選取/附加/目前文件/模式等組成改變(debounce 400ms,同 SuggestAttachments)、`chat:done`(含壓縮後)、按「新對話」、切換端點/模型。
+- **送出預覽標示來源**(前端追蹤,不改 Go):「本次直接送出」的附加檔案標示「手動附加」(迥紋針/點選)或「採用建議附加」(點建議標籤、檢查面板帶入);「原始訊息」每則加來源標籤:系統指示、先前對話(使用者/AI)、較早對話的摘要(以「【較早對話的摘要】」開頭)、本次提問(最後一則 user)、role=tool 顯示「Agent 工具讀取或搜尋結果」(工具名稱從前一則 assistant 的 toolCalls 以 toolCallId 對回)。依訊息本身判斷,不改訊息內容。
+- **驗證**:Go 新增 `TestPreviewLimitMatchesOverBudgetCheck`(limit 與 Ask 超預算判斷同一個值:未超過時 Ask 送出、超過時 Ask 拒絕、以 tokens/limit 重算 Over 與 `Preview.Over` 一致、budget=0 時 limit=0 且不標示超過);`tsc --noEmit`、`npm run build` 通過。
+- **E2E(E2E_SKIP_AI=1)**:bot-chat 加 5 項(context-usage 百分比 = 以 `PreviewContext` 拿到的 tokens/limit 算出的值,並用綁定 `contextTokens:200` 的暫時端點在小 limit 下再做精確比對(255%)與警示色;手動附加(迥紋針)與建議附加(建議標籤)在預覽中標示不同;原始訊息有來源標籤);layout-half 加 3 項(640 寬下 context-usage 可見、在浮窗與視窗範圍內,標題未被擠壞,輸入區 ≥ 200)。注意:浮窗位置會被 close-guard 拖到寬視窗位置,layout-half 先暫放大到 1440 把浮窗拖回左上再縮回 640 量測。
+- **破壞驗證**:拿掉 `pv.Limit` 賦值 → Go 測試 FAIL;移除 `context-usage` 元素 → bot-chat/layout-half FAIL;前端改用錯誤公式(budget×2)→ 精確百分比 FAIL;附加一律標「手動附加」→ 區分檢查 FAIL;來源標籤改回只顯示 role → 標籤檢查 FAIL;還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)380/380 passed(基準 372 + 8),略過 8 項,143s;settings.json 已逐位元組還原,書櫃無殘留。「新對話」不清問題框屬既有行為(非本輪改動),bot-chat 的參數比對直接讀畫面當下的問題文字。
+
 ## 2026-10-09 — 接受提案後短暫標示 AI 改動範圍(Issue #45 第三層 a)
 
 - **做法**:接受提案後編輯器重載,把提案實際寫入的文字(作者修改過就用修改版)以 `cm-ai-flash` 標示,3 秒內淡掉並移除;只是裝飾,不改文件內容,查歷史仍到「版本」。只標目前開著的檔案,刪除(寫入空字串)不標。
@@ -275,7 +291,6 @@
 - 驗證:`go test ./...` 全過、`npm run build` 通過、E2E(E2E_SKIP_AI=1)**61/61 passed,略過 8 項**;md-lite 單元驗證 PASS;破壞驗證:移除粗體解析 → 粗體檢查 FAIL(還原後 PASS)。
 - 視覺截圖(深/淺各一,已目視):`31-1b-bookshelf-dark`、`33-1b-bookshelf-light`(小標題列+首屏書櫃)、`32-1b-cover-zoom`(單色書封+書脊線,書名水平兩行內)、`01-workspace`(深色工作區:卷名一行/統計次行、字級 12px+)、`12-light-theme`(淺色工作區)、`34-1b-chat-reply-dark`、`36-1b-chat-reply-light`(Markdown 回覆+提案卡,浮窗單層陰影)、`37-1b-inspector-light`(資訊欄:尚無摘要+摘要如何使用、本章提及的設定以類型文字)。
 - E2E 更新:書櫃等待改 `bookshelf-title`;資訊欄檢查名稱改「本章提及的設定」(斷言內容不變)。
-
 
 ## 2026-10-05 — 研究記錄(研究模式)
 

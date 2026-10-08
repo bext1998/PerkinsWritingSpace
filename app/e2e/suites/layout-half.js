@@ -44,6 +44,41 @@ module.exports = {
             document.documentElement.scrollWidth <= document.documentElement.clientWidth));
         await shot('55-halfscreen-640');
 
+        // ===== Perkins Bot 浮窗 640 寬可讀性(Issue #37 部分):context-usage 可見、不擠壞標題列與輸入區 =====
+        // close-guard 把浮窗拖到寬視窗的位置;640 下事件點會落在視窗外拖不回來,
+        // 所以暫時放大到 1440 把浮窗拖回左上,再縮回 640 量測(暫時避開 #55 的既有產品問題,
+        // #55 修好後移除這段變通)
+        await page.setViewportSize({width: 1440, height: 900});
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        const dragBar = await page.locator('[data-testid=chat-window] .cursor-move').first().boundingBox();
+        if (dragBar.x + 440 > 640 || dragBar.y + 200 > 672) {
+            await page.mouse.move(dragBar.x + 60, dragBar.y + 8);
+            await page.mouse.down();
+            await page.mouse.move(220, 40, {steps: 8}); // 拖到左上:640×672 內可完整容納 620 高的浮窗
+            await page.mouse.up();
+            await settle(80, 700);
+        }
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 800); // 等 UI 更新(原固定等 400ms)
+        await page.waitForSelector('[data-testid=context-usage]', {timeout: 5000});
+        const cu640 = await page.evaluate(() => {
+            const el = document.querySelector('[data-testid=context-usage]');
+            const r = el.getBoundingClientRect();
+            const box = document.querySelector('[data-testid=chat-window]').getBoundingClientRect();
+            const title = document.querySelector('[data-testid=chat-title]').getBoundingClientRect();
+            const q = document.querySelector('[data-testid=question]').getBoundingClientRect();
+            return {text: el.textContent.trim(), w: r.width, h: r.height,
+                inBox: r.right <= box.right + 1 && r.left >= box.left - 1,
+                inViewport: r.top >= 0 && r.left >= 0 && r.right <= window.innerWidth && r.bottom <= window.innerHeight,
+                titleW: title.width, qW: q.width};
+        });
+        check('半螢幕 640 context-usage 可見、在浮窗內且在視窗範圍內',
+            cu640.w > 0 && cu640.h > 0 && cu640.inBox && cu640.inViewport && /上下文/.test(cu640.text), JSON.stringify(cu640));
+        check('半螢幕 640 浮窗標題列的 Perkins Bot 標題未被擠壞', cu640.titleW >= 60, `titleW=${cu640.titleW}`);
+        check('半螢幕 640 浮窗輸入區仍可用(寬度 ≥ 200)', cu640.qW >= 200, `qW=${cu640.qW}`);
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+
         // ===== 窄寬度編輯區工具列(SPEC §17.1):640×672、側欄開(資訊欄已收)、長章名 =====
         // 量測重點:工具列「內容右緣」(所有可見後代的最大 right)不得超過 main 右緣——
         // 溢出的按鈕即使被 overflow-hidden 視覺裁掉,幾何上仍會超過,檢查才驗得到。

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"perkins/internal/agent"
+	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/research"
 	"perkins/internal/settings"
@@ -164,5 +165,71 @@ func TestBeforeCloseBlocksUntilConfirmed(t *testing.T) {
 	app.allowQuit() // ConfirmQuit 會再呼叫 runtime.Quit,需真實 frontend context,測試只驗旗標轉換
 	if app.beforeClose(ctx) {
 		t.Fatal("已確認後應放行關閉")
+	}
+}
+
+// previewLLMStub 是唯一指標的 llm.Client 替身:用它比對 Agent.LLM 是否被換掉。
+type previewLLMStub struct{ tag string }
+
+func (previewLLMStub) Chat(context.Context, llm.Request, func(string)) (llm.Message, error) {
+	return llm.Message{}, nil
+}
+
+// 意圖(PR #54 返工,G2 相關):請求進行中時,背景的 PreviewContext 不得改寫執行中 Agent 的
+// 端點設定(LLM/Model/ContextTokens/Remote);否則請求中切到雲端端點,背景重算會讓後續
+// 工具回合送往雲端,繞過送出確認。閒置時仍應把目前端點套上(既有行為)。
+func TestPreviewContextDoesNotTouchRunningAgent(t *testing.T) {
+	keyring.MockInit() // 隔離憑證庫:clientFor 會經 ProfileAPIKey 讀 keyring
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp()
+	a.proj = p
+	a.agent = &agent.Agent{Proj: p, LLM: previewLLMStub{tag: "running"}, Model: "m", Remote: false}
+	a.ctx = context.Background() // prepare 需要非 nil 的 parent context
+	tmpCfg := t.TempDir()
+	a.store = &settings.Store{Dir: tmpCfg} // 隔離設定:預設 profile(default/localhost:1234)
+	s := a.store.Load()
+	s.Profiles[0].Model = "m"
+	s.Profiles[0].ContextTokens = 999
+	s.Active = "default"
+	if err := a.store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// 情境 A:請求進行中 — PreviewContext 不得改寫 Agent 端點設定
+	a.mu.Lock()
+	a.cancel = func() {} // 模擬 begin() 已取得執行權
+	a.mu.Unlock()
+	if _, err := a.PreviewContext(agent.AskParams{Question: "q"}); err != nil {
+		t.Fatalf("忙碌時 PreviewContext 應沿用目前值估算: %v", err)
+	}
+	a.mu.Lock()
+	running := a.agent
+	a.mu.Unlock()
+	if _, ok := running.LLM.(previewLLMStub); !ok {
+		t.Fatalf("忙碌時 LLM 被換掉: %T", running.LLM)
+	}
+	if running.Model != "m" || running.ContextTokens != 0 || running.Remote {
+		t.Fatalf("忙碌時端點設定被改寫: model=%s tokens=%d remote=%v", running.Model, running.ContextTokens, running.Remote)
+	}
+
+	// 情境 B:閒置 — PreviewContext 會把目前端點套上(既有行為,確認沒被一起拿掉)
+	a.mu.Lock()
+	a.cancel = nil
+	a.mu.Unlock()
+	if _, err := a.PreviewContext(agent.AskParams{Question: "q"}); err != nil {
+		t.Fatalf("閒置時 PreviewContext 不應失敗: %v", err)
+	}
+	a.mu.Lock()
+	idle := a.agent
+	a.mu.Unlock()
+	if _, ok := idle.LLM.(previewLLMStub); ok {
+		t.Fatal("閒置時應套上目前端點(LLM 已換成真實 client)")
+	}
+	if idle.ContextTokens != 999 {
+		t.Fatalf("閒置時 ContextTokens 應為設定的 999, got %d", idle.ContextTokens)
 	}
 }
