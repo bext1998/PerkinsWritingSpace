@@ -82,7 +82,7 @@ export interface Toast {
 function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
     const written = p.authorEdited ? p.final ?? '' : p.replacement;
     if (!written) return null;
-    const from = new TextDecoder().decode(new TextEncoder().encode(text).slice(0, p.start)).length;
+    const from = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text).slice(0, p.start)).length; // 保留 BOM:編輯器內容也含它
     if (text.slice(from, from + written.length) !== written) return null; // 重載內容與寫入結果不符(期間檔案又變了):不標
     // 編輯器把 \r\n 當成一個換行:CRLF 檔案要扣掉前面的 \r 才是編輯器位置
     const cm = (i: number) => i - (text.slice(0, i).match(/\r\n/g)?.length ?? 0);
