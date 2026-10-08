@@ -1,5 +1,11 @@
 # PROGRESS.md
 
+## 2026-10-09 — 研究記錄指標 E2E(§16 第 21 項,PR #27 建議的 4 項)
+
+- **research 組新增 R3**(5 項檢查):選取浮動列「分析這段」原樣送出 → ask 記 `quickId=analyze`、`quickEdited=false`;「節奏」帶入後改寫 → `quickId=pace`、`quickEdited=true`,且事件不含原始問題全文(同時確認改寫後問題有被記錄,避免空泛通過);自行輸入 → 無 `quickId`/`quickEdited` 欄位;檢查面板「人物設定矛盾」→ `quickId=char`。
+- **不呼叫模型**:R3 期間以綁定暫時新增並啟用 `http://127.0.0.1:9/v1` 端點,送出後連線立即失敗、仍寫入恰好一筆 ask 事件,所以在 `E2E_SKIP_AI=1` 下照常執行;`finally` 還原原端點與模型、刪除暫時端點,再開關設定頁讓 Workspace 重讀設定(使用者若選雲端端點,沿用舊設定會被「送出前確認」擋住)。結束按「新對話」清掉帶入的選取/附加/報告模式——第一次 `--all` 因沒清,polish U2 沿用了 R3 的舊選取而 FAIL。
+- **驗證**:破壞驗證 2 次——`quickEdited` 固定 false 並拿掉送出後歸零 → 改寫、自行輸入兩項 FAIL;不送 `quickId` → 原樣、改寫、檢查面板三項 FAIL;還原後全綠。全新 fixture `--all`(E2E_SKIP_AI=1):372/372 passed(基準 367 + 5),略過 8 項,142s;settings.json 已逐位元組還原,書櫃無殘留。
+
 ## 2026-10-08 — E2E 測試加速 A+C(§16 第 25 項,Issue #48)
 
 - **基準 vs 拆組後**:
