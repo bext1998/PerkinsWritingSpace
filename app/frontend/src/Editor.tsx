@@ -1,6 +1,6 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
-import {EditorSelection, EditorState} from '@codemirror/state';
-import {Command, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
+import {EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
+import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
         getSearchQuery, findNext, findPrevious, replaceNext, replaceAll} from '@codemirror/search';
@@ -25,6 +25,22 @@ export interface EditorHandle {
     openSearch: (replace?: boolean) => void;
 }
 
+// AI 改動標示(#45 a):只是暫時的裝飾,不改文件內容;數秒後移除,查歷史到「版本」
+const AI_FLASH_MS = 3000;
+const setAiFlash = StateEffect.define<{from: number; to: number} | null>();
+const aiFlashMark = Decoration.mark({class: 'cm-ai-flash'});
+const aiFlashField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+        deco = deco.map(tr.changes);
+        for (const e of tr.effects) {
+            if (e.is(setAiFlash)) deco = e.value ? Decoration.set([aiFlashMark.range(e.value.from, e.value.to)]) : Decoration.none;
+        }
+        return deco;
+    },
+    provide: f => EditorView.decorations.from(f),
+});
+
 // 游標與捲動位置(§16 第 24 項第一層:切章後回到上次位置;只存記憶體,不寫檔)
 export interface EditorPos {
     anchor: number;
@@ -41,6 +57,8 @@ interface Props {
     // posStore 由父層持有,掛載時讀取還原、編輯/捲動時持續寫回
     posKey?: string | null;
     posStore?: Map<string, EditorPos>;
+    // 接受提案後重掛時短暫標示的範圍(#45 a);只在掛載時讀取
+    flash?: {from: number; to: number} | null;
 }
 
 const theme = EditorView.theme({
@@ -340,7 +358,7 @@ const openReplace: Command = view => {
 };
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
-const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore}, ref) {
+const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash}, ref) {
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
     const onChangeRef = useRef(onChange);
@@ -431,6 +449,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     searchTheme,
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
+                    aiFlashField,
                     EditorView.lineWrapping,
                     theme,
                     EditorView.updateListener.of(u => {
@@ -522,7 +541,16 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             };
         }
 
+        // 掛載時套用 AI 改動標示(#45 a);StrictMode 重建編輯器時會再套一次,所以不放在父層的一次性 effect
+        let flashTimer = 0;
+        if (flash) {
+            const len = v.state.doc.length;
+            v.dispatch({effects: setAiFlash.of({from: Math.min(flash.from, len), to: Math.min(flash.to, len)})});
+            flashTimer = window.setTimeout(() => v.dispatch({effects: setAiFlash.of(null)}), AI_FLASH_MS);
+        }
+
         return () => {
+            clearTimeout(flashTimer);
             cancelRestore(); // 卸載時終止還原 rAF
             ro.disconnect();
             cancelAnimationFrame(scrollRaf);

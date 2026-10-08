@@ -43,7 +43,7 @@ interface Props {
     remoteOk: Record<string, boolean>;
     setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
-    onAccepted: (target: string) => void;   // 提案套用後,編輯器需重新載入該檔
+    onAccepted: (p: proposal.Proposal) => void;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
     onPending: (n: number) => void;
     pending: number;
     notify: (t: Toast) => void;
@@ -272,7 +272,7 @@ export default function ChatWindow(props: Props) {
             await beforeAsk(); // 先存檔:後端以磁碟內容比對,未存的文字也不能在重新載入時遺失
             const mine = edited[p.id];
             const r = await AcceptProposal(p.id, mine !== undefined && mine !== p.replacement ? mine : null as any);
-            onAccepted(p.target);
+            onAccepted(r);
             notify({text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
             setError('');
         } catch (e) { setError(errText(e)); }

@@ -7,7 +7,7 @@ import {
     ApplyEntityHeader, BibleIndex, ChapterWordCounts, CloseProject, CopyChapter, DeleteCategory, GetSettings, GetTree, ParseEntity, ReadFile,
     ResearchOpenFile, SaveFile, SetChapterStatus, WordCount,
 } from '../wailsjs/go/main/App';
-import {bible, main, project} from '../wailsjs/go/models';
+import {bible, main, project, proposal} from '../wailsjs/go/models';
 import Editor, {EditorHandle, EditorPos, Selection} from './Editor';
 import ChatWindow, {ChatRequest} from './ChatWindow';
 import VersionDialog from './VersionDialog';
@@ -75,6 +75,23 @@ interface Props {
 export interface Toast {
     text: string;
     kind?: 'ok' | 'error' | 'info';
+}
+
+// 提案寫入的文字在重載後全文中的位置(#45 a)。後端偏移是位元組,且重新定位套用時 start 是舊位置,
+// 所以取離 start 最近的出現處;刪除(寫入空字串)沒有可標示的範圍。
+function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
+    const written = p.authorEdited ? p.final ?? '' : p.replacement;
+    if (!written) return null;
+    const enc = new TextEncoder();
+    let best: {from: number; d: number} | null = null;
+    for (let i = text.indexOf(written); i !== -1; i = text.indexOf(written, i + 1)) {
+        const d = Math.abs(enc.encode(text.slice(0, i)).length - p.start);
+        if (!best || d < best.d) best = {from: i, d};
+    }
+    if (!best) return null;
+    // 編輯器把 \r\n 當成一個換行:CRLF 檔案要扣掉前面的 \r 才是編輯器位置
+    const cm = (i: number) => i - (text.slice(0, i).match(/\r\n/g)?.length ?? 0);
+    return {from: cm(best.from), to: cm(best.from + written.length)};
 }
 
 export default function Workspace({tree, setTree, onClose, onSettings, settingsVersion}: Props) {
@@ -325,6 +342,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         refreshCounts();
         refreshIndex();
     }, [current, refreshCounts, refreshIndex]);
+
+    // 接受提案後短暫標示 AI 改動範圍(#45 a):重載後重掛的編輯器在掛載時標示,只標目前開著的檔案;
+    // 只給接受後那一次重掛,之後的重掛(切章、重讀)不再標示
+    const [flashP, setFlashP] = useState<proposal.Proposal | null>(null);
+    const onAccepted = useCallback((p: proposal.Proposal) => {
+        setFlashP(p.target === current ? p : null);
+        reloadCurrent([p.target]);
+    }, [current, reloadCurrent]);
+    useEffect(() => { setFlashP(null); }, [reloadKey]);
 
     // Ctrl+S 與存檔按鈕共用;saving 由 save 層的 in-flight ref 推導,這裡只轉發結果通知
     const saveNow = useCallback(() => {
@@ -642,7 +668,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} flash={flashP ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -694,7 +720,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={t => reloadCurrent([t])} onPending={setPending}
+                            beforeAsk={save} onAccepted={onAccepted} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
