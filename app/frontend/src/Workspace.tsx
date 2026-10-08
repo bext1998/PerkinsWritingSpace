@@ -77,21 +77,16 @@ export interface Toast {
     kind?: 'ok' | 'error' | 'info';
 }
 
-// 提案寫入的文字在重載後全文中的位置(#45 a)。後端偏移是位元組,且重新定位套用時 start 是舊位置,
-// 所以取離 start 最近的出現處;刪除(寫入空字串)沒有可標示的範圍。
+// 提案寫入的文字在重載後全文中的位置(#45 a):後端回傳的 start 是實際寫入處的位元組偏移
+// (重新定位套用時也已更新),換成字元位置;刪除(寫入空字串)沒有可標示的範圍。
 function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
     const written = p.authorEdited ? p.final ?? '' : p.replacement;
     if (!written) return null;
-    const enc = new TextEncoder();
-    let best: {from: number; d: number} | null = null;
-    for (let i = text.indexOf(written); i !== -1; i = text.indexOf(written, i + 1)) {
-        const d = Math.abs(enc.encode(text.slice(0, i)).length - p.start);
-        if (!best || d < best.d) best = {from: i, d};
-    }
-    if (!best) return null;
+    const from = new TextDecoder().decode(new TextEncoder().encode(text).slice(0, p.start)).length;
+    if (text.slice(from, from + written.length) !== written) return null; // 重載內容與寫入結果不符(期間檔案又變了):不標
     // 編輯器把 \r\n 當成一個換行:CRLF 檔案要扣掉前面的 \r 才是編輯器位置
     const cm = (i: number) => i - (text.slice(0, i).match(/\r\n/g)?.length ?? 0);
-    return {from: cm(best.from), to: cm(best.from + written.length)};
+    return {from: cm(from), to: cm(from + written.length)};
 }
 
 export default function Workspace({tree, setTree, onClose, onSettings, settingsVersion}: Props) {
@@ -99,6 +94,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [text, setText] = useState('');
     const [dirty, setDirty] = useState(false);
     const [reloadKey, setReloadKey] = useState(0);
+    // 接受提案後短暫標示 AI 改動範圍(#45 a):重載後重掛的編輯器在掛載時標示;
+    // 渲染時再核對目標仍是目前檔案(讀檔期間切章時不標到別章)
+    const [flashP, setFlashP] = useState<proposal.Proposal | null>(null);
     const [panel, setPanel] = useState<Panel | null>('manuscript');
     const [inspector, setInspector] = useState(true);
     // 禪模式(SPEC §16 第 6 項):只用 CSS 隱藏周邊(display:none),不卸載——
@@ -334,22 +332,18 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     }, [save, fail]);
 
     // 磁碟上的檔案被系統改動(接受提案、還原)後,重新載入編輯器
-    const reloadCurrent = useCallback(async (files?: string[]) => {
+    // flash:接受提案後要標示的提案,與重載內容同一次提交(#45 a)
+    const reloadCurrent = useCallback(async (files?: string[], flash?: proposal.Proposal) => {
         if (!current || (files && !files.includes(current))) return;
         setText(await ReadFile(current));
+        setFlashP(flash ?? null);
         setDirty(false);
         setReloadKey(k => k + 1);
         refreshCounts();
         refreshIndex();
     }, [current, refreshCounts, refreshIndex]);
 
-    // 接受提案後短暫標示 AI 改動範圍(#45 a):重載後重掛的編輯器在掛載時標示,只標目前開著的檔案;
     // 只給接受後那一次重掛,之後的重掛(切章、重讀)不再標示
-    const [flashP, setFlashP] = useState<proposal.Proposal | null>(null);
-    const onAccepted = useCallback((p: proposal.Proposal) => {
-        setFlashP(p.target === current ? p : null);
-        reloadCurrent([p.target]);
-    }, [current, reloadCurrent]);
     useEffect(() => { setFlashP(null); }, [reloadKey]);
 
     // Ctrl+S 與存檔按鈕共用;saving 由 save 層的 in-flight ref 推導,這裡只轉發結果通知
@@ -668,7 +662,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} flash={flashP ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -720,7 +714,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={onAccepted} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
