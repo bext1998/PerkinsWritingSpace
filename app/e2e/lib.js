@@ -79,6 +79,18 @@ async function currentTitle(page) {
     return page.evaluate(() => (document.querySelector('[data-testid=titlebar-title]')?.textContent || '').trim()).catch(() => '');
 }
 
+// 點書櫃上 E2E 測試專案的封面(title 是路徑)。逐一比對正規化後的路徑,
+// 不把 Windows 路徑塞進 CSS 屬性選擇器(反斜線會變成非法跳脫)
+async function clickProjectCard(page) {
+    const norm = s => s.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    const cards = page.locator('button[title]');
+    await cards.first().waitFor({timeout: 15000});
+    const titles = await cards.evaluateAll(els => els.map(e => e.title));
+    const i = titles.findIndex(t => norm(t) === norm(PROJ));
+    if (i < 0) throw new Error(`書櫃找不到測試專案封面:${PROJ}`);
+    await cards.nth(i).click();
+}
+
 // 開啟 E2E 測試專案;chapter 指定時確認該章在編輯器中(crumbs 含章名);
 // panel 指定側欄面板(manuscript/bible/docs/checks):各組第一步可能是「切換面板」的
 // rail 點擊(已在該面板時會變成收合),起始面板要對齊原始流程
@@ -87,8 +99,7 @@ async function ensureProject(page, chapter, panel) {
     if (title === 'Perkins WritingSpace') {
         // 同一次 wails session 裡 reload 頁面會回到書櫃(PERKINS_OPEN 只在後端啟動時生效):
         // 點 E2E測試 卡重新開啟專案,不要 goto(goto 之後仍是書櫃)
-        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '", button[title="' + PROJ + '"]');
-        await page.click(cardSel);
+        await clickProjectCard(page);
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
     } else if (title === 'E2E測試') {
         // 開章節需要稿件面板(章節列只在稿件/設定集/大綱面板可見)
@@ -112,7 +123,7 @@ async function ensureProject(page, chapter, panel) {
     await page.waitForSelector('[data-testid=bookshelf-title], [data-testid=chapter-row]', {timeout: 30000});
     if (await page.$('[data-testid=bookshelf-title]')) {
         // 書櫃:點 E2E測試 卡開啟專案
-        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '", button[title="' + PROJ + '"]');
+        await clickProjectCard(page);
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
     }
     // 等自動開作品的 tree 載入完畢(字數統計等非同步請求落地,mutation 靜默),
