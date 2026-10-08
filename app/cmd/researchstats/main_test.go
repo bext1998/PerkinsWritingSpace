@@ -32,7 +32,15 @@ func askReq(n int) fields {
 	return fields{"purpose": "ask", "messages": []fields{{"role": "user", "content": strings.Repeat("字", n)}}}
 }
 
-func compactReq(transcriptChars int) fields {
+func compactReq(transcriptChars int, ok bool) fields {
+	return fields{"purpose": "compact", "ok": ok, "messages": []fields{
+		{"role": "system", "content": "壓縮"},
+		{"role": "user", "content": strings.Repeat("字", transcriptChars)},
+	}}
+}
+
+// compactReqLegacy 組一個舊版(無 ok 欄位)的 compact 請求。
+func compactReqLegacy(transcriptChars int) fields {
 	return fields{"purpose": "compact", "messages": []fields{
 		{"role": "system", "content": "壓縮"},
 		{"role": "user", "content": strings.Repeat("字", transcriptChars)},
@@ -43,8 +51,9 @@ func compactReq(transcriptChars int) fields {
 // session s1:
 //   ask#1 無快速指令,1 個 ask 請求(100 字)
 //   ask#2 quickId=analyze,未改問題,2 個 ask 請求(回合 2)
-//   ask#3 quickId=canon,改過問題,內含 compact(逐字稿 500 字)+ 1 個 ask 請求
-//   ask#4 quickId=analyze,改過問題,1 個 ask 請求(60 字)→ 與 ask#3 的 compact 配對
+//   ask#3 quickId=canon,改過問題,requests = [compact(逐字稿 500 字, ok=true), ask(30 字)]
+//     → 送出前壓縮:依 requests 順序,同事件內配對(500, 30)
+//   ask#4 quickId=analyze,改過問題,1 個 ask 請求(60 字)→ 不再配對(壓縮已在 #3 內配完)
 //   proposal_accept p1(authorEdited=false)、p2(authorEdited=true)、proposal_reject p3
 // session s2:
 //   ask#5 前置失敗(requests 空、無 quickId)
@@ -54,7 +63,7 @@ func fixture(t *testing.T) []string {
 		line(t, "ask", "s1", fields{"quickId": "analyze", "quickEdited": false, "sent": true,
 			"requests": []fields{askReq(10), askReq(10)}}),
 		line(t, "ask", "s1", fields{"quickId": "canon", "quickEdited": true, "sent": true,
-			"requests": []fields{compactReq(500), askReq(30)}}),
+			"requests": []fields{compactReq(500, true), askReq(30)}}),
 		line(t, "ask", "s1", fields{"quickId": "analyze", "quickEdited": true, "sent": true,
 			"requests": []fields{askReq(60)}}),
 		line(t, "proposal_accept", "s1", fields{"id": "p1", "target": "manuscript/c1.md", "authorEdited": false}),
@@ -94,15 +103,76 @@ func TestComputeFixture(t *testing.T) {
 	if s.AvgRoundsPerAsk != 1 {
 		t.Fatalf("AvgRoundsPerAsk=%v, 應為 1", s.AvgRoundsPerAsk)
 	}
-	// 壓縮配對 1 次:前 = 500(逐字稿)、後 = 60(ask#4 的第一個 ask 請求)
+	// 壓縮配對 1 次:依 requests 順序,ask#3 內 compact(500, ok=true)之後的第一個 ask 請求(30 字)
 	if s.Compactions != 1 {
 		t.Fatalf("Compactions=%d, 應為 1", s.Compactions)
+	}
+	if s.CompactionsUnknown != 0 {
+		t.Fatalf("CompactionsUnknown=%d, 應為 0", s.CompactionsUnknown)
 	}
 	if s.ContextBeforeAvg == nil || *s.ContextBeforeAvg != 500 {
 		t.Fatalf("ContextBeforeAvg=%v, 應為 500", s.ContextBeforeAvg)
 	}
-	if s.ContextAfterAvg == nil || *s.ContextAfterAvg != 60 {
-		t.Fatalf("ContextAfterAvg=%v, 應為 60", s.ContextAfterAvg)
+	if s.ContextAfterAvg == nil || *s.ContextAfterAvg != 30 {
+		t.Fatalf("ContextAfterAvg=%v, 應為 30", s.ContextAfterAvg)
+	}
+}
+
+// 送出後壓縮(compact 在事件尾)仍跨事件配對:下一筆 ask 事件的第一個 ask 請求是壓縮後上下文。
+func TestComputeCompactCrossEvent(t *testing.T) {
+	lines := []string{
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(100), compactReq(400, true)}}),
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(150)}}),
+	}
+	s := compute(lines)
+	if s.Compactions != 1 || s.CompactionsUnknown != 0 {
+		t.Fatalf("Compactions=%d Unknown=%d, 應為 1/0", s.Compactions, s.CompactionsUnknown)
+	}
+	if s.ContextBeforeAvg == nil || *s.ContextBeforeAvg != 400 || s.ContextAfterAvg == nil || *s.ContextAfterAvg != 150 {
+		t.Fatalf("前後=%v/%v, 應為 400/150", s.ContextBeforeAvg, s.ContextAfterAvg)
+	}
+}
+
+// 最後一筆事件即可完成配對:送出前壓縮(compact → ask 同事件)不需要下一筆事件。
+func TestComputeCompactPairsWithinLastEvent(t *testing.T) {
+	lines := []string{
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{compactReq(400, true), askReq(120)}}),
+	}
+	s := compute(lines)
+	if s.Compactions != 1 || s.CompactionsUnknown != 0 {
+		t.Fatalf("Compactions=%d Unknown=%d, 應為 1/0", s.Compactions, s.CompactionsUnknown)
+	}
+	if s.ContextBeforeAvg == nil || *s.ContextBeforeAvg != 400 || s.ContextAfterAvg == nil || *s.ContextAfterAvg != 120 {
+		t.Fatalf("前後=%v/%v, 應為 400/120", s.ContextBeforeAvg, s.ContextAfterAvg)
+	}
+}
+
+// 失敗的壓縮(ok=false)未套用,不得配對。
+func TestComputeFailedCompactNotPaired(t *testing.T) {
+	lines := []string{
+		line(t, "ask", "s1", fields{"sent": true, "result": "error", "requests": []fields{compactReq(500, false), askReq(30)}}),
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(70)}}),
+	}
+	s := compute(lines)
+	if s.Compactions != 0 || s.CompactionsUnknown != 0 {
+		t.Fatalf("失敗壓縮不應配對: Compactions=%d Unknown=%d", s.Compactions, s.CompactionsUnknown)
+	}
+	if s.ContextBeforeAvg != nil || s.ContextAfterAvg != nil {
+		t.Fatalf("失敗壓縮不應產生統計值: %v/%v", s.ContextBeforeAvg, s.ContextAfterAvg)
+	}
+}
+
+// 舊版記錄(compact 無 ok 欄位)無法確認是否套用 → 記 unknown,不配對。
+func TestComputeLegacyCompactUnknown(t *testing.T) {
+	lines := []string{
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{compactReqLegacy(500), askReq(30)}}),
+	}
+	s := compute(lines)
+	if s.Compactions != 0 || s.CompactionsUnknown != 1 {
+		t.Fatalf("Compactions=%d Unknown=%d, 應為 0/1", s.Compactions, s.CompactionsUnknown)
+	}
+	if s.ContextBeforeAvg != nil || s.ContextAfterAvg != nil {
+		t.Fatalf("無法確認時不應產生統計值: %v/%v", s.ContextBeforeAvg, s.ContextAfterAvg)
 	}
 }
 
@@ -185,10 +255,10 @@ func TestComputeLegacyRecords(t *testing.T) {
 	}
 }
 
-// 壓縮無法配對的情境:壓縮後同 session 再無帶 ask 請求的事件(例如直接關閉)。
+// 壓縮無法配對的情境:送出後壓縮(compact 在事件尾),之後同 session 再無帶 ask 請求的事件。
 func TestComputeCompactUnpaired(t *testing.T) {
 	lines := []string{
-		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(100), compactReq(400)}}),
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(100), compactReq(400, true)}}),
 	}
 	s := compute(lines)
 	if s.Compactions != 0 || s.ContextBeforeAvg != nil || s.ContextAfterAvg != nil {

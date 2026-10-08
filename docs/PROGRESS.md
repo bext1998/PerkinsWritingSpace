@@ -1,5 +1,11 @@
 # PROGRESS.md
 
+## 2026-10-08 — 研究記錄指標返工(PR #27 審查:壓縮統計兩項)
+
+- **#1(Major)壓縮後上下文依 requests 順序配對**:原本一律取「同 session 下一筆 ask 事件」當壓縮後上下文,送出前壓縮(compact → ask 在同一事件)後直接關閉 App 會漏算,繼續提問則配到另一個問題的上下文。改為依 requests 順序:成功壓縮後的第一個 ask 請求(通常同事件內)即配對;送出後壓縮(compact 在事件尾)仍跨事件配對;跨事件 pending 已在事件開頭帶入。fixture 預期值同步修正(compact(500)→ask(30) 配 (500,30),不再配到下一筆的 60),補「最後一筆事件即可完成配對」與跨事件配對檢查。**破壞驗證**:同事件配對拿掉 → fixture + 跨事件 + 最後一筆 3 項 FAIL;還原後全綠。
+- **#2(Minor)失敗的壓縮不得當成完成**:`compactCollect` 在模型錯誤前就記錄 compact 請求,統計上分不清是否套用。`researchRequest` 補 `ok *bool`(omitempty,ask 請求不設,不會被誤認為成功);`compactCollect` 的 collect 回呼改帶 `ok`,失敗也記錄但標 `ok:false`;`researchstats` 只配對 `ok=true` 的壓縮,舊記錄無 `ok` 欄位記入 `compactionsUnknown` 不配對,全是這種時輸出「資料不足」。SPEC §12.8 補 `ok` 欄位說明。**回歸測試**:走完整 Ask 路徑(超預算 + History 足以壓縮)斷言 `ok=true`/`ok=false` 各一次;**破壞驗證**:agent 端把失敗也固定回 true → 2 項 FAIL;researchstats 端拿掉 ok=false 跳過 → 失敗壓縮測試 FAIL、拿掉 unknown 記數 → 舊記錄測試 FAIL;還原後全綠。
+- **驗證**:`go vet ./internal/... . ./cmd/...`、`go test ./internal/... . ./cmd/...` 全過。本輪只動 Go 與文件,前端未改(tsc/build 於上一輪已驗)。
+
 ## 2026-10-08 — 研究記錄指標(§16 第 21 項)
 
 - **(a) ask 補記快速指令來源**:`AskParams` 新增 `quickId` 與 `quickEdited`;前端 `ChatRequest` 加 `quickId`,快速指令的入口(編輯器右鍵選單、選取浮動列、檢查面板 AI 檢查)帶入指令 id,`ChatWindow` 記住原始問題文字,送出時比對是否被改過(只記布林,不記改前全文);非快速指令來源、送出後、重置對話都歸零,不會誤記。ask 事件兩個記錄點(`agent.rlogAsk` 與 `app.logAskPremature`)都只在 `quickId != ""` 時寫入這兩個欄位。wails 綁定已重產(`wails generate module`)。SPEC §12.8 已補欄位說明。

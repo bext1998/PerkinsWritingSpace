@@ -44,6 +44,7 @@ type detail struct {
 type requestDetail struct {
 	Purpose  string    `json:"purpose"` // ask | compact
 	Messages []message `json:"messages"`
+	Ok       *bool     `json:"ok"` // compact 請求:壓縮是否成功套用;nil = 舊版記錄無此欄,無法確認
 }
 
 type message struct {
@@ -72,11 +73,13 @@ type stats struct {
 	AvgRoundsPerAsk   float64 `json:"avgRoundsPerAsk"` // 回合 = 一個 ask 事件中 purpose=ask 的請求數(工具迭代算多回合)
 
 	// 壓縮前後上下文用量(字元數;記錄沒有 token 欄位,詳見 README 與輸出說明)。
-	// 「前」= compact 請求中被濃縮的對話逐字稿字元數;「後」= 同 session 下一筆有 ask 請求的事件,
-	// 其第一個 purpose=ask 請求的訊息字元數(壓縮後重建的上下文)。
-	Compactions      int      `json:"compactions"`
-	ContextBeforeAvg *float64 `json:"contextBeforeAvg,omitempty"`
-	ContextAfterAvg  *float64 `json:"contextAfterAvg,omitempty"`
+	// 依 requests 順序配對:成功的壓縮(ok=true)之後的第一個 ask 請求就是壓縮後的上下文
+	//(通常在同一事件內;送出後壓縮則在下一筆事件)。失敗的壓縮(ok=false)未套用,不配對。
+	// 「前」= compact 請求中被濃縮的對話逐字稿字元數;「後」= 該壓縮後第一個 ask 請求的訊息字元數。
+	Compactions        int      `json:"compactions"`
+	CompactionsUnknown int      `json:"compactionsUnknown"` // 舊版記錄無 ok 欄位,無法確認是否套用
+	ContextBeforeAvg   *float64 `json:"contextBeforeAvg,omitempty"`
+	ContextAfterAvg    *float64 `json:"contextAfterAvg,omitempty"`
 }
 
 type quickStat struct {
@@ -134,8 +137,7 @@ func resolve(arg string) (string, error) {
 type sessionState struct {
 	asks    int
 	rounds  int
-	compact bool
-	pending *float64 // 剛壓縮完、還沒有配對到壓縮後上下文的「前」值
+	pending *float64 // 剛成功套用的壓縮(ok=true)、還沒配對到壓縮後上下文的「前」值
 }
 
 func compute(lines []string) *stats {
@@ -165,36 +167,51 @@ func compute(lines []string) *stats {
 				bySession[ev.Session] = st
 				order = append(order, ev.Session)
 			}
-			// 這筆事件的第一個 ask 請求(壓縮後上下文的觀察點)與 compact 請求
-			firstAskChars := 0
-			compactTranscript := 0
+			// 依 requests 順序掃描:成功的壓縮之後的第一個 ask 請求,就是壓縮後的上下文。
+			// 多在同一事件內完成配對(送出前壓縮);送出後壓縮則由下一筆事件的 ask 配對。
+			var pendingChars float64
+			hadPending := st.pending != nil
+			if st.pending != nil { // 上一筆事件留下的成功壓縮(送出後壓縮),同事件內的 ask 可直接配對
+				pendingChars = *st.pending
+			}
 			for _, r := range ev.Detail.Requests {
-				if r.Purpose == "compact" {
-					st.compact = true
-					for _, m := range r.Messages {
-						if m.Role == "user" {
-							compactTranscript += len([]rune(m.Content))
-						}
+				switch r.Purpose {
+				case "compact":
+					if r.Ok == nil { // 舊版記錄無法確認是否套用
+						s.CompactionsUnknown++
+						continue
 					}
-				} else if r.Purpose == "ask" && firstAskChars == 0 {
+					if !*r.Ok { // 失敗的壓縮未套用,不改變 History,不配對
+						continue
+					}
 					n := 0
 					for _, m := range r.Messages {
-						n += len([]rune(m.Content))
+						if m.Role == "user" {
+							n += len([]rune(m.Content))
+						}
 					}
-					firstAskChars = n
+					if n > 0 {
+						pendingChars = float64(n)
+						hadPending = true
+					}
+				case "ask":
+					if hadPending && pendingChars > 0 {
+						n := 0
+						for _, m := range r.Messages {
+							n += len([]rune(m.Content))
+						}
+						pairs = append(pairs, [2]float64{pendingChars, float64(n)})
+						pendingChars = 0
+						hadPending = false
+						st.pending = nil
+					}
 				}
 			}
 			st.asks++
 			st.rounds += countAsks(ev.Detail.Requests)
-
-			// 配對壓縮前後:前一筆(或更早)有 compact 且尚未配對 → 這筆的第一個 ask 請求就是「後」
-			if st.pending != nil && firstAskChars > 0 {
-				pairs = append(pairs, [2]float64{*st.pending, float64(firstAskChars)})
-				st.pending = nil
-			}
-			// 本筆事件內有 compact:記下「前」,等下一筆 ask 配對
-			if st.compact && compactTranscript > 0 {
-				v := float64(compactTranscript)
+			// 事件內沒配對完的成功壓縮:留到同 session 下一筆 ask 事件
+			if hadPending && pendingChars > 0 {
+				v := pendingChars
 				st.pending = &v
 			}
 			if ev.Detail.QuickID != "" {
@@ -286,10 +303,16 @@ func printHuman(path string, s *stats) {
 	}
 
 	fmt.Println("\n== 壓縮前後上下文用量(字元數估計;記錄沒有 token 欄位) ==")
-	fmt.Println("「前」= compact 請求中被濃縮的對話逐字稿字元數;「後」= 同 session 下一筆有 ask 請求的事件之第一個 ask 請求訊息字元數。")
+	fmt.Println("「前」= compact 請求中被濃縮的對話逐字稿字元數;「後」= 依 requests 順序、成功壓縮(ok=true)之後的第一個 ask 請求訊息字元數。")
+	if s.CompactionsUnknown > 0 {
+		fmt.Printf("另外有 %d 次壓縮無法確認是否套用(舊版記錄的 compact 請求沒有 ok 欄位),不計入統計。\n", s.CompactionsUnknown)
+	}
 	if s.Compactions == 0 {
-		fmt.Println("資料不足:記錄中沒有可配對的壓縮(有 compact 請求的 ask 事件,且同 session 之後再有帶 ask 請求的事件)。")
-		fmt.Println("缺什麼:壓縮後的上下文大小沒有獨立欄位,只能靠下一筆 ask 事件推算;壓縮後就關閉或送出失敗時無法配對。")
+		if s.CompactionsUnknown > 0 {
+			fmt.Println("資料不足:記錄中的壓縮都是舊版格式(無 ok 欄位),無法確認是否成功套用,無法統計。")
+		} else {
+			fmt.Println("資料不足:記錄中沒有可配對的壓縮(成功的 compact 請求之後,同 session 內再沒有帶 ask 請求的事件)。")
+		}
 	} else {
 		if s.ContextBeforeAvg != nil {
 			fmt.Printf("壓縮前平均 %.0f 字元\n", *s.ContextBeforeAvg)
