@@ -23,6 +23,12 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/e2e.j
 4. 第一次使用時在 `app/e2e/` 執行 `npm install`(只有 playwright-core,使用本機 Edge:`C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`)。
 5. 執行:`PROJ=<測試專案> node app/e2e/e2e.js`。截圖在 `app/e2e/shots/`(已被 .gitignore 排除)。
 6. 清理:`taskkill //F //IM perkins-dev.exe`、`taskkill //F //IM wails.exe`,並結束監聽 `[::1]:5173` 的 vite node 程序;還原 settings.json。
+7. 清書櫃垃圾:`node .agent/skills/e2e/clean-recent.js`(先加 `--dry-run` 看清單)。移除「最近作品」中位於系統暫存資料夾的項目與殘留的 `perkins-e2e-b-*` 測試專案;暫存資料夾以外的作品一律保留。**只在沒有其他 E2E 在跑時執行**(會刪掉正在使用的乙作品目錄)。
+
+## 多個 Agent 同時跑 E2E
+
+- E2E 共用 34115/5173 埠與 settings.json,一次只能跑一個。開始前建立鎖檔(Orchestrator 指定路徑,例如 scratchpad 的 `e2e.lock`,以 noclobber 建立),已存在就等;跑完、清理、還原、清書櫃垃圾後刪除。
+- 備份 settings.json 必須在拿到鎖之後才做:在別人跑到一半時備份,會把對方留下的測試作品一起「還原」回去,書櫃因此累積垃圾(2026-10-08 實際發生,一次多出 11 筆)。
 
 ## 已知陷阱
 

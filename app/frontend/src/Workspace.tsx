@@ -84,6 +84,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [reloadKey, setReloadKey] = useState(0);
     const [panel, setPanel] = useState<Panel | null>('manuscript');
     const [inspector, setInspector] = useState(true);
+    // 禪模式(SPEC §16 第 6 項):只用 CSS 隱藏周邊(display:none),不卸載——
+    // 側欄、資訊欄、Perkins Bot 的狀態(含對話內容)都保留,退出後版面原樣恢復。
+    const [zen, setZen] = useState(false);
     const [toast, setToast] = useState<Toast | null>(null);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [liveCount, setLiveCount] = useState(0);
@@ -334,6 +337,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 e.preventDefault();
                 saveNow();
             }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                setZen(z => !z);
+            }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
@@ -371,6 +378,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         setShellActions({save: saveNow, bookshelf: goBookshelf});
         return () => setShellActions({save: undefined, bookshelf: undefined});
     }, [saveNow, goBookshelf]);
+    useEffect(() => {
+        setShellActions({zen: {on: zen, toggle: () => setZen(z => !z)}});
+    }, [zen]);
+    useEffect(() => () => setShellActions({zen: undefined}), []);
     // 展開時回到上次收合前的面板
     const lastPanel = useRef<Panel>('manuscript');
     if (panel) lastPanel.current = panel;
@@ -403,6 +414,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const activeProfile = cfg?.profiles.find(p => p.id === cfg.active);
 
     const ask = (req: ChatRequest) => {
+        setZen(false); // 叫出 Perkins Bot 時離開禪模式,否則對話窗被藏起來
         setChatReq({...req, nonce: Date.now()});
         setChatOpen(true);
     };
@@ -467,7 +479,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     return (
         <div className="flex h-full">
             {/* 圖示列:與標題欄同色連成 L 形外框(SPEC §17.1);齒輪固定在左下角 */}
-            <nav data-testid="rail" className="flex w-[60px] shrink-0 flex-col items-center gap-1 bg-rail py-2">
+            <nav data-testid="rail" className={cn('flex w-[60px] shrink-0 flex-col items-center gap-1 bg-rail py-2', zen && 'hidden')}>
                 {railBtn('manuscript', '稿件', BookOpen)}
                 {railBtn('bible', '設定集', Users)}
                 {railBtn('docs', '大綱與筆記', NotebookPen)}
@@ -489,8 +501,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             </nav>
 
             {/* 內容區嵌在外框內:左上圓角;邊緣用不佔版面的陰影線畫,半螢幕 640 寬的主編輯區寬度不受影響 */}
-            <div data-testid="workspace-content" className="flex min-w-0 flex-1 overflow-hidden rounded-tl-lg shadow-[-1px_-1px_0_hsl(var(--border))]">
+            <div data-testid="workspace-content" className={cn('flex min-w-0 flex-1 overflow-hidden', !zen && 'rounded-tl-lg shadow-[-1px_-1px_0_hsl(var(--border))]')}>
             {/* 可收合的側欄(開關在標題欄) */}
+            <div className={zen ? 'hidden' : 'contents'}>
             {panel && (
                 <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
                 <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
@@ -513,10 +526,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <CrashPoint area="sidebar"/>
                 </AreaBoundary>
             )}
+            </div>
 
             {/* 主編輯區 */}
             <main className="flex min-w-0 flex-1 flex-col bg-paper">
-                <div ref={tbRef} data-testid="editor-toolbar" className="flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b px-4">
+                <div ref={tbRef} data-testid="editor-toolbar" className={cn('flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b px-4', zen && 'hidden')}>
                     {current ? (
                         <>
                             <div data-testid="crumbs" className="flex min-w-0 items-center gap-1.5 overflow-hidden text-sm">
@@ -621,7 +635,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     ) : null}
                 </div>
                 {current && current.startsWith('canon/') && entity && (
-                    <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
+                    <div className={zen ? 'hidden' : 'contents'}>
+                        <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
+                    </div>
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} posKey={current} posStore={posMemo.current}
@@ -647,20 +663,30 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     {current && !chapter && <span className="shrink-0 whitespace-nowrap">{liveCount.toLocaleString()} 字</span>}
                     <div className="flex-1"/>
                     {current && <span className="shrink-0 whitespace-nowrap">{dirty ? '未儲存' : '已儲存'}</span>}
-                    {activeProfile && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
+                    {activeProfile && !zen && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
+                    {zen && (
+                        <button data-testid="zen-exit" title="離開禪模式(Ctrl+Shift+F)"
+                                className="shrink-0 whitespace-nowrap rounded px-1.5 hover:bg-accent hover:text-foreground"
+                                onClick={() => setZen(false)}>
+                            離開禪模式
+                        </button>
+                    )}
                 </footer>
             </main>
 
             {inspector && current && (
+                <div className={zen ? 'hidden' : 'contents'}>
                 <AreaBoundary area="inspector" fallbackClassName="w-[280px] shrink-0 justify-center overflow-y-auto border-l bg-sidebar">
                     <Inspector {...panelProps} chapter={chapter ?? null} onSummary={setSummaryFor}
                                scrollToLine={l => editor.current?.scrollToLine(l)} summaryTick={summaryTick}/>
                     <CrashPoint area="inspector"/>
                 </AreaBoundary>
+                </div>
             )}
             </div>
 
-            {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流 */}
+            {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流;禪模式時藏起但不卸載(保留對話) */}
+            <div className={zen ? 'hidden' : 'contents'}>
             <AreaBoundary area="chat"
                           fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
@@ -672,6 +698,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             onClearLastSel={() => setLastSel(null)}/>
                 <CrashPoint area="chat"/>
             </AreaBoundary>
+            </div>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
                            onRestored={files => { reloadCurrent(files); refreshTree(); }}/>
