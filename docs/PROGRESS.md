@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-08 — 編輯器搜尋/取代 + 右鍵選單改名(SPEC §16 第 13 項、第 24 項第一層)
+
+- **右鍵選單改名**:「詢問 AI…」→「詢問 Perkins Bot…」(`Editor.tsx`);ChatWindow 空白狀態提示引用的文字一併更新。E2E 沒有比對舊字串的檢查,不需改。
+- **搜尋/取代**(`Editor.tsx`):加入 `@codemirror/search@^6.7.2`,`search({top: true})` 面板在編輯器頂端;`searchKeymap` 提供 Mod-F/F3/Mod-G/Escape,另自訂 `Mod-h` 開面板並聚焦「取代為」欄(searchKeymap 沒有取代快捷鍵)。介面中文化用 `EditorState.phrases`(搜尋/取代為/下一個/上一個/全選/區分大小寫/正規/整詞/取代/全部取代/關閉等)。樣式用主題 token(`--popover`/`--input`/`--secondary`/`--selection` 等):面板 flex-wrap、輸入框 `min-width: 4rem`、按鈕 `white-space: nowrap`,640 寬(主編輯區 308px)自動換行不出水平捲軸。**陷阱**:CM baseTheme 的 `.cm-button` 帶 background-image 漸層(`&light` 變體是淺色),會蓋掉 background-color——主題沒標 `{dark: true}` 時會套到淺色按鈕樣式,需在按鈕上加 `backgroundImage: 'none'`。比對高亮(`.cm-searchMatch*`)改用 `--selection` token,兩種主題都可讀。
+- **取代走正常編輯流程**:replaceAll 經 CodeMirror dispatch → updateListener → onChange → dirty 徽章 → Ctrl+S 落盤,E2E 驗證未儲存狀態與磁碟內容。
+- **E2E 新增 10 項檢查**(e2e.js「搜尋/取代」段):Ctrl+F 開面板且搜尋欄聚焦(中文 placeholder)、Enter 選取比對並高亮、Escape 關面板(先確認面板開著,避免「沒開也沒關」假通過)、Ctrl+H 聚焦取代欄、全部取代後內容改變、dirty 徽章、磁碟落盤、640×672 無水平捲軸/按鈕不被裁掉/×可按、IME 組字中 Enter 不觸發捲動(CDP `Input.imeSetComposition` + keydown/keyup 229 模擬)、提交後收到完整字串。**破壞驗證**:拿掉 `search()`、`searchKeymap` 與 Mod-h 綁定 → 9 項記錄到的檢查全 FAIL(第 10 項是 IME 區塊內子檢查,同區塊中斷未執行);只拿掉 `search()` 不夠——`openSearchPanel` 會用 `StateEffect.appendConfig` 自裝 search 擴充,面板仍開得動。還原 → 全綠。**測試陷阱**:Playwright 對 CJK 用 `Input.insertText`(無 keydown/keyup),預設面板靠 keyup/onchange 提交 query,輸入後需按一次無害鍵(End)觸發提交;面板會保留上次 query,輸入前要三連擊全選。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**319/319 passed,略過 8 項**;截圖兩主題+640:`shots/65-search-panel-dark.png`、`66-search-640-dark.png`、`67-search-dark-1280.png`、`68-search-light.png`。
+- **未驗證**:真實 IME(注音/倉頡)組字只能在無頭環境用 CDP 模擬;組字中途的 keyup 會刷新高亮但不移動選取/捲動(面板只在 keydown keyCode 13 時 findNext,組字中是 229),建議作者實機確認。Ctrl+F 僅在編輯器聚焦時作用(CodeMirror 慣例;焦點在工具列/其他面板時不會轉發)。
+
 ## 2026-10-07 — PR #19 返工:設定頁 640 寬三欄並排壓爆表單
 
 - **#1(Major)設定頁「AI 模型」「平台輸出」640 寬不可用**:上一輪只消了水平捲軸,但導覽(200)+清單(220)+表單三欄並排把表單壓到約 148px——模型輸入框 clientWidth 只剩 24px(看不到模型名)、下拉文字被截、開關標籤擠成兩行;無水平捲軸 ≠ 可用,違反驗收 (c)。修法(`SettingsPage.tsx`):兩個分頁的清單欄/表單容器改 `grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]`——lg(1024px)以下(含 640/768/960 驗收尺寸)清單與表單上下堆疊、表單滿寬;1280 維持並排。左導覽 200px 不動(640 寬內容區約 392px,堆疊後不需收成圖示)。

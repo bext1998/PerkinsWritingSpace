@@ -2393,6 +2393,168 @@ const maybe = async (name, fn, detail = '') => {
             JSON.stringify({contentRight: m1280.contentRight, tbRight: m1280.tbRight}));
         check('半螢幕 變寬到 1280 後不自動重開資訊欄', !(await page.$('[data-testid=inspector]')));
         await shot('61-toolbar-1280x800');
+
+        // ===== 搜尋/取代(SPEC §16 第 24 項第一層)=====
+        const editorTxt = () => page.$$eval('.cm-content .cm-line', els => els.map(e => e.textContent).join('\n'));
+        const openPanel = async key => { await page.keyboard.press(key); await page.waitForSelector('.cm-panel.cm-search', {timeout: 5000}); };
+        await page.setViewportSize({width: 1440, height: 900});
+        await page.waitForTimeout(300);
+        const searchRow = (await page.$$('[data-testid=chapter-row]'))[0];
+        await searchRow.click();
+        await page.waitForSelector('.cm-content');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(300);
+
+        // Ctrl+F 開面板,焦點在搜尋欄(中文 placeholder)。註:Ctrl+F 只在編輯器聚焦時作用(CodeMirror 慣例),先點回編輯器
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            const okFocus = await page.evaluate(() =>
+                document.activeElement?.matches('.cm-panel.cm-search input[name=search]') &&
+                document.activeElement.placeholder === '搜尋');
+            check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', okFocus,
+                await page.evaluate(() => document.activeElement?.placeholder || '(焦點不在面板)'));
+            await shot('65-search-panel-dark');
+        } catch (e) { check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', false, e.message); }
+
+        // 輸入關鍵字 → Enter:第一個比對被選取並高亮
+        try {
+            await page.click('.cm-panel.cm-search input[name=search]');
+            await page.keyboard.type('森林', {delay: 20});
+            // 面板在 keyup/change 時才更新 query;CJK 輸入沒有 keyup,先按 End 觸發一次
+            await page.keyboard.press('End');
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.cm-searchMatch-selected', {timeout: 5000});
+            const sel = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
+            check('搜尋 Enter 後選取比對並以主題色高亮', sel.includes('森林'), sel);
+        } catch (e) { check('搜尋 Enter 後選取比對並以主題色高亮', false, e.message); }
+
+        // Escape 關面板(先確認面板開著,避免「沒開也沒關」的假通過)
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.cm-panel.cm-search', {state: 'detached', timeout: 5000});
+            check('搜尋 Escape 關閉面板', true);
+        } catch (e) { check('搜尋 Escape 關閉面板', false, e.message); }
+
+        // Ctrl+H:開啟面板並聚焦「取代為」欄
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+h');
+            const okRepl = await page.evaluate(() => document.activeElement?.matches('.cm-panel.cm-search input[name=replace]'));
+            check('取代 Ctrl+H 開啟面板且焦點在「取代為」欄', okRepl);
+            await page.keyboard.press('Escape');
+        } catch (e) { check('取代 Ctrl+H 開啟面板且焦點在「取代為」欄', false, e.message); }
+
+        // 取代:先加入固定字樣,全部取代,驗證走 onChange → dirty → 存檔流程
+        try {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.press('Enter');
+            await page.keyboard.type('搜尋取代目標字,又是搜尋取代目標字。');
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            await openPanel('Control+h');
+            // 三連擊全選再輸入:面板會保留上次的 query,不能直接附加;切欄位的 blur 會觸發 change → commit
+            await page.click('.cm-panel.cm-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('搜尋取代目標字', {delay: 20});
+            await page.click('.cm-panel.cm-search input[name=replace]', {clickCount: 3});
+            await page.keyboard.type('改寫後的字', {delay: 20});
+            await page.keyboard.press('End');
+            await page.click('.cm-panel.cm-search button[name=replaceAll]');
+            await page.waitForTimeout(300);
+            const t1 = await editorTxt();
+            check('全部取代後內容已改變', !t1.includes('搜尋取代目標字') && (t1.match(/改寫後的字/g) || []).length === 2, t1.slice(-60));
+            check('取代走正常編輯流程(狀態為未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            check('取代結果以正常存檔流程落盤', read(ch1).includes('改寫後的字'));
+            await page.keyboard.press('Escape');
+        } catch (e) {
+            check('全部取代後內容已改變', false, e.message);
+            check('取代走正常編輯流程(狀態為未儲存)', false, e.message);
+            check('取代結果以正常存檔流程落盤', false, e.message);
+        }
+
+        // 640×672:面板不得出水平捲軸或按鈕被裁掉
+        try {
+            await page.setViewportSize({width: 640, height: 672});
+            await page.waitForTimeout(300);
+            await openPanel('Control+f');
+            const p640 = await page.evaluate(() => {
+                const p = document.querySelector('.cm-panel.cm-search');
+                if (!p) return null;
+                const de = document.documentElement;
+                const pr = p.getBoundingClientRect();
+                const clipped = [];
+                for (const el of p.querySelectorAll('button,input,label')) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && (r.right > pr.right + 1 || r.left < pr.left - 1)) clipped.push(el.name || (el.textContent || '').slice(0, 6));
+                }
+                const c = p.querySelector('[name=close]');
+                return {
+                    docH: de.scrollWidth > de.clientWidth,
+                    panelOverflow: p.scrollWidth > p.clientWidth + 1,
+                    clipped,
+                    close: !!c && c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().right <= pr.right + 1,
+                };
+            });
+            check('搜尋面板 640×672 無水平捲軸、按鈕不被裁掉、×可按',
+                !!p640 && !p640.docH && !p640.panelOverflow && p640.clipped.length === 0 && p640.close, JSON.stringify(p640));
+            await shot('66-search-640-dark');
+        } catch (e) { check('搜尋面板 640×672 無水平捲軸、按鈕不被裁掉、×可按', false, e.message); }
+
+        // 兩種主題的面板外觀
+        await page.setViewportSize({width: 1280, height: 800});
+        await page.waitForTimeout(300);
+        await shot('67-search-dark-1280');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            await shot('68-search-light');
+            await page.keyboard.press('Escape');
+        } catch (e) { await shot('68-search-light-error'); }
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+
+        // IME 組字:以 CDP 模擬組字,確認組字中途按 Enter 不觸發搜尋跳動
+        try {
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            await page.click('.cm-panel.cm-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('End');
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(200);
+            const cdp = await page.context().newCDPSession(page);
+            const scrollOf = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
+            const s0 = await scrollOf();
+            await cdp.send('Input.imeSetComposition', {text: 'ㄙㄣ', selectionStart: 1, selectionEnd: 1});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Process', code: 'Enter', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Process', code: 'Enter', windowsVirtualKeyCode: 229});
+            await page.waitForTimeout(200);
+            const s1 = await scrollOf();
+            const stillOpen = !!(await page.$('.cm-panel.cm-search'));
+            check('IME 組字中 Enter 不觸發搜尋跳動(捲動位置不變、面板未關)', s1 === s0 && stillOpen, `scrollTop ${s0}→${s1}, open=${stillOpen}`);
+            try {
+                await cdp.send('Input.insertText', {text: '森林'});
+                await page.waitForTimeout(200);
+                const q = await page.$eval('.cm-panel.cm-search input[name=search]', el => el.value);
+                check('IME 提交後搜尋欄收到完整字串並更新比對', q.includes('森林'), q);
+            } catch (e) { check('IME 提交後搜尋欄收到完整字串並更新比對', false, e.message); }
+            await page.keyboard.press('Escape');
+        } catch (e) { check('IME 組字中 Enter 不觸發搜尋跳動(捲動位置不變、面板未關)', false, e.message); }
+
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

@@ -1,7 +1,8 @@
 import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {EditorSelection, EditorState} from '@codemirror/state';
-import {EditorView, keymap, drawSelection} from '@codemirror/view';
+import {Command, EditorView, keymap, drawSelection} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
+import {search, searchKeymap, openSearchPanel} from '@codemirror/search';
 import {markdown} from '@codemirror/lang-markdown';
 import {yamlFrontmatter} from '@codemirror/lang-yaml';
 import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
@@ -36,6 +37,94 @@ const theme = EditorView.theme({
     '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {backgroundColor: 'hsl(var(--selection) / .42)'},
 });
 
+// 搜尋面板介面中文化(§16 第 24 項第一層)。placeholder 的單一 $ 代表第一個參數。
+const phrases = EditorState.phrases.of({
+    'Find': '搜尋',
+    'Replace': '取代為',
+    'next': '下一個',
+    'previous': '上一個',
+    'all': '全選',
+    'match case': '區分大小寫',
+    'regexp': '正規',
+    'by word': '整詞',
+    'replace': '取代',
+    'replace all': '全部取代',
+    'close': '關閉',
+    'current match': '目前比對',
+    'replaced $ matches': '已取代 $ 處',
+    'replaced match on line $': '已取代第 $ 行的比對',
+    'on line': '於第',
+    'Go to line': '跳到行',
+    'go': '前往',
+});
+
+// 搜尋/取代面板樣式:安靜、小巧,用既有主題 token;窄寬度靠 flex-wrap 換行,不出水平捲軸
+const searchTheme = EditorView.theme({
+    '.cm-panels.cm-panels-top': {
+        borderBottom: '1px solid hsl(var(--border))',
+        backgroundColor: 'hsl(var(--popover))',
+        color: 'hsl(var(--popover-foreground))',
+        zIndex: '15',
+    },
+    '.cm-panel.cm-search': {
+        padding: '0.3rem 1.75rem 0.35rem 0.5rem', // 右側留 × 按鈕空間
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: '0.25rem 0.5rem',
+        fontFamily: 'inherit',
+        '& > *': {margin: '0'}, // 覆蓋 baseTheme 的 .2em .6em 外距,間距統一用 gap
+        '& input.cm-textfield': {
+            width: '10.5rem',
+            maxWidth: '100%',
+            minWidth: '4rem',
+            boxSizing: 'border-box',
+            padding: '0.15rem 0.4rem',
+            fontSize: '13px',
+            border: '1px solid hsl(var(--input))',
+            borderRadius: '0.35rem',
+            backgroundColor: 'hsl(var(--background))',
+            color: 'inherit',
+            outline: 'none',
+            '&:focus': {borderColor: 'hsl(var(--ring))'},
+        },
+        '& button.cm-button': {
+            padding: '0.15rem 0.5rem',
+            fontSize: '12px',
+            lineHeight: '1.4',
+            border: 'none',
+            backgroundImage: 'none', // 覆蓋 CM baseTheme 的按鈕漸層,否則蓋掉 background-color
+            borderRadius: '0.35rem',
+            backgroundColor: 'hsl(var(--secondary))',
+            color: 'hsl(var(--secondary-foreground))',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+            '&:hover': {backgroundColor: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'},
+        },
+        '& label': {
+            fontSize: '12px',
+            whiteSpace: 'nowrap',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.2rem',
+            cursor: 'pointer',
+            color: 'hsl(var(--muted-foreground))',
+        },
+        '& [name=close]': {
+            top: '0.25rem',
+            right: '0.35rem',
+            fontSize: '15px',
+            lineHeight: 1,
+            color: 'hsl(var(--muted-foreground))',
+            cursor: 'pointer',
+            '&:hover': {color: 'hsl(var(--foreground))'},
+        },
+    },
+    // 比對標示:沿用主題 selection token,替代 CodeMirror 內建的黃/藍底
+    '.cm-searchMatch': {backgroundColor: 'hsl(var(--selection) / .30)'},
+    '.cm-searchMatch-selected': {backgroundColor: 'hsl(var(--selection) / .55)'},
+});
+
 const highlight = HighlightStyle.define([
     {tag: tags.heading1, fontWeight: '700', fontSize: '1.5em'},
     {tag: tags.heading2, fontWeight: '700', fontSize: '1.2em', color: 'hsl(var(--primary))'},
@@ -50,6 +139,13 @@ const highlight = HighlightStyle.define([
     {tag: [tags.string, tags.content, tags.separator, tags.squareBracket, tags.brace], fontFamily: 'inherit'},
 ]);
 
+
+// searchKeymap 沒有取代的快捷鍵:Ctrl+H 開啟面板並把焦點移到「取代為」欄位(Windows 慣例)
+const openReplace: Command = view => {
+    openSearchPanel(view);
+    (view.dom.querySelector('.cm-panel.cm-search input[name=replace]') as HTMLInputElement | null)?.focus();
+    return true;
+};
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
 const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect}, ref) {
@@ -98,9 +194,12 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             state: EditorState.create({
                 doc: initialText,
                 extensions: [
+                    phrases,
+                    search({top: true}), // Ctrl+F 搜尋、Ctrl+H 切換取代(§16 第 24 項第一層)
                     history(),
                     drawSelection(),
-                    keymap.of([...defaultKeymap, ...historyKeymap]),
+                    keymap.of([...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap]),
+                    searchTheme,
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
                     EditorView.lineWrapping,
@@ -195,7 +294,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                      onClick={e => e.stopPropagation()}>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} data-testid="ask-ai"
                          onClick={() => { if (menu.sel) { onAskAI(menu.sel); setMenu(null); } }}>
-                        <Bot className="h-4 w-4 text-primary"/>詢問 AI…
+                        <Bot className="h-4 w-4 text-primary"/>詢問 Perkins Bot…
                     </div>
                     <div className={`relative ${item} ${menu.sel ? '' : disabled}`}
                          onMouseEnter={() => setSub(true)} onMouseLeave={() => setSub(false)}>
