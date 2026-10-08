@@ -121,6 +121,26 @@ func TestAcceptRelocatesWhenAuthorEditedElsewhere(t *testing.T) {
 	}
 }
 
+// 重新定位套用後,回傳的 Start 必須是實際寫入處:編輯器依它標示 AI 改動(#45 a);
+// 若沿用建立時的舊位置,作者在前面補寫且替換文字在別處也出現時,會標到錯的段落。
+func TestAcceptRelocatedReportsAppliedStart(t *testing.T) {
+	s, rel, _ := setup(t)
+	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
+	content := "夜濃得化不開。【作者在前面補寫】\n小明走進森林。天很黑。他很害怕。\n"
+	s.Proj.WriteFile(rel, content)
+
+	got, err := s.Accept(p.ID, nil)
+	if err != nil || !got.Relocated {
+		t.Fatalf("應重新定位並套用, err=%v got=%+v", err, got)
+	}
+	if want := strings.Index(content, "天很黑。"); got.Start != want {
+		t.Fatalf("Start=%d,應為實際套用處 %d", got.Start, want)
+	}
+	if after := read(t, s, rel); after[got.Start:got.Start+len("夜濃得化不開。")] != "夜濃得化不開。" {
+		t.Fatalf("Start 處不是寫入的文字: %q", after)
+	}
+}
+
 // 作者編輯後原文出現兩次:位置無法唯一決定,不可猜。
 func TestAcceptConflictWhenOriginalBecomesAmbiguous(t *testing.T) {
 	s, rel, _ := setup(t)

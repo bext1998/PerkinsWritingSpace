@@ -91,6 +91,9 @@
 .cm-host .cm-header-1 { font-size: 1.5em; font-weight: 700; }
 .cm-host .cm-header-2 { font-size: 1.2em; font-weight: 700; color: hsl(var(--primary)); }
 .cm-flash { animation: cm-flash 1.2s ease-out; }
+/* 接受提案後的 AI 改動範圍(#45 a):與 AI_FLASH_MS 同步淡掉 */
+.cm-ai-flash { animation: cm-ai-flash 3s ease-out forwards; }
+@keyframes cm-ai-flash { from { background: hsl(var(--primary) / .25); } to { background: transparent; } }
 @keyframes cm-flash { from { background: hsl(var(--selection) / .35); } to { background: transparent; } }
 
 /* 生成的書封:單色底 + 書脊線,不再疊漸層/陰影(設計審查 17;書架層板改低對比分隔線) */
