@@ -42,7 +42,7 @@ type Proposal struct {
 	Rationale   string   `json:"rationale"`
 	Assumptions []string `json:"assumptions"`
 	BaseHash    string   `json:"baseHash"`
-	Start       int      `json:"start"` // Original 在檔案中的位元組偏移
+	Start       int      `json:"start"` // Original 在檔案中的位元組偏移;重新定位套用後改為實際套用處(編輯器據此標示改動)
 	End         int      `json:"end"`
 	Status      Status   `json:"status"`
 	SnapshotID  string   `json:"snapshotId,omitempty"` // 接受時產生
@@ -182,6 +182,7 @@ func (s *Store) Accept(id string, edited *string) (*Proposal, error) {
 		start = strings.Index(content, p.Original)
 		end = start + len(p.Original)
 		p.Relocated = true
+		p.Start, p.End = start, end
 	}
 	final := p.Replacement
 	if edited != nil && *edited != p.Replacement {

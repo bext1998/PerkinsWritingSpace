@@ -63,5 +63,44 @@ module.exports = {
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
+
+        // AI改動標示(#45 a):接受提案後短暫標示 AI 改動範圍,數秒後淡掉。用專用章節,不動其他組依賴的第一章;
+        // 改寫後的文字故意在前面已出現一次,標示必須落在實際改動處(離提案位置最近的那次),不是第一次出現
+        // 專用章節以 fs 建立,靠第一章「弄髒→存檔→refreshTree」讓側欄出現(同冒煙組;第一章內容不變)
+        const flashRel = 'manuscript/提案標示.md';
+        projWrite(flashRel, '# 提案標示\n\n星光落下。\n\n雨停了。\n');
+        await ctx.ensureProject('第一章', 'manuscript');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.locator('[data-testid=chapter-row]:has-text("提案標示")').first().click({timeout: 15000});
+        await page.waitForSelector('.cm-content:has-text("雨停了")', {timeout: 15000});
+        const flashSrc = read(flashRel);
+        const at = flashSrc.indexOf('雨停了。');
+        const start = Buffer.byteLength(flashSrc.slice(0, at));
+        projWrite('.perkins/proposals/20261009-120000-flash1.json', JSON.stringify({
+            id: '20261009-120000-flash1', createdAt: '2026-10-09T12:00:00+08:00', model: 'E2E', target: flashRel,
+            original: '雨停了。', replacement: '星光落下。', rationale: 'E2E 標示測試', assumptions: [],
+            baseHash: require('crypto').createHash('sha256').update(flashSrc).digest('hex'),
+            start, end: start + Buffer.byteLength('雨停了。'), status: 'pending',
+        }));
+        await page.evaluate(() => window.__perkinsRefreshProposals());
+        await page.click('[data-testid=chat-fab]');
+        await page.click('[data-testid=proposal]:has-text("雨停了") [data-testid=accept]');
+        await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
+        const flash = await page.evaluate(() => {
+            const els = [...document.querySelectorAll('.cm-ai-flash')];
+            const lines = [...document.querySelectorAll('.cm-line')];
+            return {text: els.map(e => e.textContent).join(''), line: lines.indexOf(els[0]?.closest('.cm-line')),
+                last: lines.map(l => l.textContent).lastIndexOf('星光落下。')};
+        });
+        check('AI改動標示 接受提案後標示改動範圍(文字等於寫入內容,落在實際改動處而非第一次出現)',
+            read(flashRel).includes('星光落下。\n\n星光落下。') && flash.text === '星光落下。' && flash.line === flash.last && flash.last > 0,
+            JSON.stringify(flash));
+        await page.waitForSelector('.cm-ai-flash', {state: 'detached', timeout: 6000});
+        check('AI改動標示 數秒後移除', !(await page.$('.cm-ai-flash')));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },
 };

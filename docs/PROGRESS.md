@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-09 — 接受提案後短暫標示 AI 改動範圍(Issue #45 第三層 a)
+
+- **做法**:接受提案後編輯器重載,把提案實際寫入的文字(作者修改過就用修改版)以 `cm-ai-flash` 標示,3 秒內淡掉並移除;只是裝飾,不改文件內容,查歷史仍到「版本」。只標目前開著的檔案,刪除(寫入空字串)不標。
+- **定位**:後端 `Accept` 在重新定位套用時把 `Start/End` 更新為實際套用處(原本沿用建立時的舊位置),前端把位元組偏移換成字元位置(CRLF 檔案扣掉 `\r`);重載內容與寫入結果不符時不標。標示與重載內容同一次提交,渲染時核對目標仍是目前檔案(讀檔期間切章不標到別章)。以上為 codex 審查返工;Go 回歸測試 `TestAcceptRelocatedReportsAppliedStart`(破壞驗證:拿掉更新 → FAIL),前端改回「取第一次出現」→ E2E 位置檢查 FAIL。返工後全新 fixture `--all`:374/374。
+`)。不改 Go。
+- **實作**:`Editor` 新增 `flash` prop,在掛載時用 StateField 裝飾套用(StrictMode 會建兩次編輯器,父層一次性 effect 會畫在被丟棄的那個上,見 `.agent/memory/editor-strictmode-remount.md`);`Workspace` 在接受後設定、下一次重掛後清掉;`ChatWindow` 的 `onAccepted` 改傳整個提案。
+- **不做**:#45 的 (b) 編輯器內差異、(c) 選取一級互動(與 #35 一起設計)。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過。`visual-1b` 新增 2 項:專用章節中改寫後文字故意先出現一次,標示必須落在實際改動處;數秒後移除。破壞驗證 3 次:改取第一次出現 → 位置檢查 FAIL;不套用標示 → FAIL;不移除標示 → 移除檢查 FAIL;還原後全綠。全新 fixture `--all`(E2E_SKIP_AI=1):374/374,略過 8 項,146s;settings.json 逐位元組還原,書櫃無殘留。
+
 ## 2026-10-09 — 研究記錄指標 E2E(§16 第 21 項,PR #27 建議的 4 項)
 
 - **research 組新增 R3**(5 項檢查):選取浮動列「分析這段」原樣送出 → ask 記 `quickId=analyze`、`quickEdited=false`;「節奏」帶入後改寫 → `quickId=pace`、`quickEdited=true`,且事件不含原始問題全文(同時確認改寫後問題有被記錄,避免空泛通過);自行輸入 → 無 `quickId`/`quickEdited` 欄位;檢查面板「人物設定矛盾」→ `quickId=char`。
