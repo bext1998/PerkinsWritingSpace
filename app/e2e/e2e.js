@@ -3006,6 +3006,10 @@ const maybe = async (name, fn, detail = '') => {
             });
             await page.waitForTimeout(200);
             check('Ctrl+Shift+F / Ctrl+Alt+F / defaultPrevented 不開搜尋面板', !(await page.$('.perkins-search')));
+            // 合併禪模式後 Ctrl+Shift+F(含 CapsLock 小寫 f)應切進禪模式;確認後離開,後續步驟需要側欄
+            check('CapsLock 下 Ctrl+Shift+F 進入禪模式(未被搜尋搶走)', await page.isVisible('[data-testid=zen-exit]'));
+            if (await page.isVisible('[data-testid=zen-exit]')) await page.click('[data-testid=zen-exit]');
+            await page.waitForSelector('[data-testid=rail]:visible');
             // IME 組字中(keyCode 229)的 Ctrl+F 不開面板(CDP 模擬真實 keydown)
             const cdpG = await page.context().newCDPSession(page);
             await cdpG.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
