@@ -2,6 +2,6 @@
   "name": "perkins-e2e",
   "private": true,
   "description": "以 wails dev 的瀏覽器端 + 本機 Edge 跑的前端冒煙測試",
-  "scripts": { "test": "node e2e.js" },
+  "scripts": { "test": "node run.js --all" },
   "dependencies": { "playwright-core": "^1" }
 }

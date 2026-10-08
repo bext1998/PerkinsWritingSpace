@@ -1,5 +1,18 @@
 # PROGRESS.md
 
+## 2026-10-08 — E2E 測試加速 A+C(§16 第 25 項,Issue #48)
+
+- **基準 vs 拆組後**:
+  - 基準(單一 e2e.js,E2E_SKIP_AI=1,不含 wails 啟動):176s,367/367 passed,略過 8 項。
+  - 拆組後 `--all`(同一環境):143–144s,367/367 passed,略過 8 項 — 檢查名稱集合與基準**完全相同**(逐一 diff 驗證,無增減)。
+  - `--smoke`:全新 fixture 約 4s(9/9);重複執行約 15–20s。
+  - 常見情境「只改搜尋」:`node run.js search-editor --smoke` 約 21s(52/52)。
+- **A. 拆組**:e2e.js(3,230 行)拆成 `run.js`(執行器:`--all`/`--smoke`/組名)+ `lib.js`(共用:fixture、啟動、check/shot、settle、狀態準備)+ 15 個連續片段組(`suites/*.js`,檢查名稱與斷言未動)。各組以 `ensureProject/ensureChapter/ensureBookshelf` 冪等地自行對齊起始狀態(含回書櫃重開、面板切換、缺章建立),可單獨執行。
+- **C. 清固定等待與軟等待**:新增 `settleDOM`(等 DOM 靜默 80ms 或上限),145 處短固定等待轉換(上限保留原延遲);19 處「等不到也算對/收尾」的軟等待保留並逐一註明理由,63 處改為硬等待(等不到就 FAIL)。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;破壞驗證 3 項(選單儲存移除 → titlebar-zen FAIL;搜尋面板掛載移除 → search-editor FAIL;EntityHeader 套用移除 → bible 的 hardened 等待逾時中斷 FAIL),還原後全綠。
+- **單組獨立執行驗證(15 組全數通過)**:重建 fixture + 重啟後逐組單跑 — titlebar-zen 29/29、bot-chat 6/6(+8 略過)、bible 23/23、shelf 20/20、layout-visual 7/7、research 8/8、polish 42/42、visual-1b 4/4、save-flow 23/23、notion 23/23、settings-layout 28/28、error-guard 43/43、close-guard 50/50、layout-half 31/31、search-editor 44/44。其中 layout-visual 起的 11 組是在**已被前輪汙染的 fixture** 上通過(拆組的狀態準備有效);titlebar-zen/bot-chat/bible/shelf 需較乾淨的起始狀態,在重建後通過。bible 單跑在同一 fixture 的第二次執行會 FAIL — 別名填入相同值時 EntityHeader 的「套用」鈕不渲染(changed=false),屬 fixture 汙染前提,已寫入 SKILL.md。
+- **遇到的狀態陷阱**(拆組必修):章節列點擊一律改 locator(建立後 tree 重渲染不打斷);冒煙組不得用 UI 建章觸發(wails dev 檔案監看器會重啟後端),以 fs 寫「冒煙章」+ 第一章弄髒存檔觸發 refreshTree;goto 後要等自動開作品的 tree 載入穩定(settle)再操作,避免新增章節與在途 tree 更新競態。
+
 ## 2026-10-08 — 研究記錄指標返工(PR #27 審查:壓縮統計兩項)
 
 - **#1(Major)壓縮後上下文依 requests 順序配對**:原本一律取「同 session 下一筆 ask 事件」當壓縮後上下文,送出前壓縮(compact → ask 在同一事件)後直接關閉 App 會漏算,繼續提問則配到另一個問題的上下文。改為依 requests 順序:成功壓縮後的第一個 ask 請求(通常同事件內)即配對;送出後壓縮(compact 在事件尾)仍跨事件配對;跨事件 pending 已在事件開頭帶入。fixture 預期值同步修正(compact(500)→ask(30) 配 (500,30),不再配到下一筆的 60),補「最後一筆事件即可完成配對」與跨事件配對檢查。**破壞驗證**:同事件配對拿掉 → fixture + 跨事件 + 最後一筆 3 項 FAIL;還原後全綠。
