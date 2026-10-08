@@ -1,8 +1,9 @@
 import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {EditorSelection, EditorState} from '@codemirror/state';
-import {Command, EditorView, keymap, drawSelection} from '@codemirror/view';
+import {Command, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
-import {search, searchKeymap, openSearchPanel} from '@codemirror/search';
+import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
+        getSearchQuery, findNext, findPrevious, replaceNext, replaceAll} from '@codemirror/search';
 import {markdown} from '@codemirror/lang-markdown';
 import {yamlFrontmatter} from '@codemirror/lang-yaml';
 import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
@@ -58,7 +59,161 @@ const phrases = EditorState.phrases.of({
     'go': '前往',
 });
 
-// 搜尋/取代面板樣式:安靜、小巧,用既有主題 token;窄寬度靠 flex-wrap 換行,不出水平捲軸
+// 自訂搜尋/取代面板(§16 第 24 項第一層,返工版):安靜精簡的兩列介面。
+// 搜尋列:輸入框、上一個/下一個(圖示鈕)、比對數(目前第幾個/共幾個)、取代開關、關閉。
+// 取代列只在按 Ctrl+H 或點「取代」時展開:取代輸入框、取代、全部取代。
+// 不做區分大小寫/正規/整詞(整詞對中文無意義,其餘非小說作者常用);取代走一般編輯流程(onChange → dirty → 存檔)。
+
+let activeSearchPanel: PerkinsSearchPanel | null = null;
+
+const MAX_MATCHES = 10000;
+const CHEVRON_UP = '<path d="m18 15-6-6-6 6"/>';
+const CHEVRON_DOWN = '<path d="m6 9 6 6 6-6"/>';
+const X_ICON = '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>';
+
+const h = (tag: string, attrs: Record<string, unknown>, ...children: (Node | string)[]): HTMLElement => {
+    const el = document.createElement(tag);
+    for (const k in attrs) {
+        const v = attrs[k];
+        if (v == null) continue;
+        if (k === 'class' || k.includes('-')) el.setAttribute(k, String(v));
+        else (el as unknown as Record<string, unknown>)[k] = v;
+    }
+    for (const c of children) el.append(c);
+    return el;
+};
+
+const searchBtn = (name: string, label: string, onClick: () => void, svg?: string): HTMLButtonElement => {
+    const b = h('button', {
+        type: 'button', name, title: label, 'aria-label': label, class: 'perkins-search-btn',
+        onclick: onClick,
+        onmousedown: (e: Event) => e.preventDefault(), // 不攝走輸入框焦點
+    }) as HTMLButtonElement;
+    if (svg) b.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${svg}</svg>`;
+    else b.textContent = label;
+    return b;
+};
+
+class PerkinsSearchPanel implements Panel {
+    dom: HTMLElement;
+    searchInput: HTMLInputElement;
+    replaceInput: HTMLInputElement;
+    countEl: HTMLElement;
+    replaceRow: HTMLElement;
+    toggleBtn: HTMLButtonElement;
+    query: SearchQuery;
+    replaceOpen = false;
+    composing = false;
+
+    constructor(private view: EditorView) {
+        this.query = getSearchQuery(view.state);
+        const mkInput = (name: string, label: string) => h('input', {
+            class: 'perkins-search-input', name, placeholder: label, 'aria-label': label,
+            value: name === 'search' ? this.query.search : this.query.replace,
+            spellcheck: false, 'main-field': name === 'search' ? 'true' : null,
+            oninput: (e: Event) => {
+                // 組字中途不提交:composing 旗標 + 事件的 isComposing(雙重防護,防 composition 事件漏發)
+                if (this.composing || (e as InputEvent).isComposing) return;
+                this.commit();
+            },
+            oncompositionstart: () => { this.composing = true; },
+            oncompositionend: () => { this.composing = false; this.commit(); },
+        }) as HTMLInputElement;
+        this.searchInput = mkInput('search', '搜尋');
+        this.replaceInput = mkInput('replace', '取代為');
+        this.countEl = h('span', {class: 'perkins-search-count', 'aria-live': 'polite'});
+        this.toggleBtn = searchBtn('toggle-replace', '取代', () => this.toggleReplace(!this.replaceOpen));
+        this.toggleBtn.setAttribute('aria-expanded', 'false');
+        const row1 = h('div', {class: 'perkins-search-row'},
+            this.searchInput,
+            searchBtn('prev', '上一個', () => findPrevious(this.view), CHEVRON_UP),
+            searchBtn('next', '下一個', () => findNext(this.view), CHEVRON_DOWN),
+            this.countEl,
+            this.toggleBtn,
+            searchBtn('close', '關閉搜尋', () => closeSearchPanel(this.view), X_ICON),
+        );
+        this.replaceRow = h('div', {class: 'perkins-search-row perkins-replace-row'},
+            this.replaceInput,
+            searchBtn('replace', '取代', () => replaceNext(this.view)),
+            searchBtn('replaceAll', '全部取代', () => replaceAll(this.view)),
+        );
+        this.replaceRow.style.display = 'none';
+        this.dom = h('div', {
+            class: 'perkins-search', role: 'search',
+            onkeydown: (e: KeyboardEvent) => this.keydown(e),
+        }, row1, this.replaceRow);
+        this.updateCount();
+    }
+
+    toggleReplace(open: boolean, focus = true) {
+        this.replaceOpen = open;
+        this.replaceRow.style.display = open ? 'flex' : 'none';
+        this.toggleBtn.setAttribute('aria-expanded', String(open));
+        if (focus) (open ? this.replaceInput : this.searchInput).focus();
+    }
+
+    commit() {
+        const q = new SearchQuery({search: this.searchInput.value, replace: this.replaceInput.value});
+        if (!q.eq(this.query)) {
+            this.query = q;
+            this.view.dispatch({effects: setSearchQuery.of(q)});
+        }
+        this.updateCount();
+    }
+
+    // 目前第幾個/比對總數:用公開的 SearchQuery.getCursor 掃全文(章節長度下夠快)
+    updateCount() {
+        const selFrom = this.view.state.selection.main.from;
+        let total = 0, current = 0;
+        if (this.query.valid) {
+            const cursor = this.query.getCursor(this.view.state);
+            for (;;) {
+                const step = cursor.next();
+                if (step.done) break;
+                total++;
+                if (total > MAX_MATCHES) { total = MAX_MATCHES; break; }
+                if (!current && step.value.from >= selFrom) current = total;
+            }
+        }
+        const cur = current || total;
+        this.countEl.textContent = total ? `${cur}/${total}` : '0';
+        this.countEl.title = total ? `比對:第 ${cur} 個,共 ${total} 個` : '沒有比對';
+    }
+
+    keydown(e: KeyboardEvent) {
+        if (e.isComposing) return; // 組字中的按鍵(Enter/Esc)不觸發搜尋動作
+        const target = e.target as HTMLElement;
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeSearchPanel(this.view);
+        } else if (e.key === 'Enter' && target === this.searchInput) {
+            e.preventDefault();
+            (e.shiftKey ? findPrevious : findNext)(this.view);
+        } else if (e.key === 'Enter' && target === this.replaceInput) {
+            e.preventDefault();
+            replaceNext(this.view);
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'h') {
+            e.preventDefault();
+            this.toggleReplace(!this.replaceOpen);
+        }
+    }
+
+    update(u: ViewUpdate) {
+        if (u.docChanged || u.selectionSet) this.updateCount();
+    }
+
+    mount() {
+        this.searchInput.select();
+    }
+
+    destroy() {
+        if (activeSearchPanel === this) activeSearchPanel = null;
+    }
+
+    get top() { return true; }
+}
+
+// 搜尋/取代面板樣式:安靜、小巧,用既有主題 token;640 寬時搜尋列一排、展開取代最多兩排,不出水平捲軸
 const searchTheme = EditorView.theme({
     '.cm-panels.cm-panels-top': {
         borderBottom: '1px solid hsl(var(--border))',
@@ -66,59 +221,65 @@ const searchTheme = EditorView.theme({
         color: 'hsl(var(--popover-foreground))',
         zIndex: '15',
     },
-    '.cm-panel.cm-search': {
-        padding: '0.3rem 1.75rem 0.35rem 0.5rem', // 右側留 × 按鈕空間
+    '.perkins-search': {
+        padding: '0.25rem 0.4rem',
         display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        gap: '0.25rem 0.5rem',
+        flexDirection: 'column',
+        gap: '0.2rem',
         fontFamily: 'inherit',
-        '& > *': {margin: '0'}, // 覆蓋 baseTheme 的 .2em .6em 外距,間距統一用 gap
-        '& input.cm-textfield': {
-            width: '10.5rem',
-            maxWidth: '100%',
-            minWidth: '4rem',
-            boxSizing: 'border-box',
-            padding: '0.15rem 0.4rem',
-            fontSize: '13px',
-            border: '1px solid hsl(var(--input))',
-            borderRadius: '0.35rem',
-            backgroundColor: 'hsl(var(--background))',
-            color: 'inherit',
-            outline: 'none',
-            '&:focus': {borderColor: 'hsl(var(--ring))'},
-        },
-        '& button.cm-button': {
-            padding: '0.15rem 0.5rem',
-            fontSize: '12px',
-            lineHeight: '1.4',
-            border: 'none',
-            backgroundImage: 'none', // 覆蓋 CM baseTheme 的按鈕漸層,否則蓋掉 background-color
-            borderRadius: '0.35rem',
-            backgroundColor: 'hsl(var(--secondary))',
-            color: 'hsl(var(--secondary-foreground))',
-            cursor: 'pointer',
-            whiteSpace: 'nowrap',
-            '&:hover': {backgroundColor: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'},
-        },
-        '& label': {
-            fontSize: '12px',
-            whiteSpace: 'nowrap',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.2rem',
-            cursor: 'pointer',
-            color: 'hsl(var(--muted-foreground))',
-        },
-        '& [name=close]': {
-            top: '0.25rem',
-            right: '0.35rem',
-            fontSize: '15px',
-            lineHeight: 1,
-            color: 'hsl(var(--muted-foreground))',
-            cursor: 'pointer',
-            '&:hover': {color: 'hsl(var(--foreground))'},
-        },
+    },
+    '.perkins-search .perkins-search-row': {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.25rem',
+        minWidth: 0,
+        whiteSpace: 'nowrap',
+    },
+    '.perkins-search input.perkins-search-input': {
+        flex: '1 1 3.5rem',
+        minWidth: '3.5rem',
+        maxWidth: '15rem',
+        boxSizing: 'border-box',
+        padding: '0.1rem 0.35rem',
+        fontSize: '13px',
+        border: '1px solid hsl(var(--input))',
+        borderRadius: '0.3rem',
+        backgroundColor: 'hsl(var(--background))',
+        color: 'inherit',
+        outline: 'none',
+        '&:focus': {borderColor: 'hsl(var(--ring))'},
+    },
+    '.perkins-search button.perkins-search-btn': {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.15rem',
+        flexShrink: 0,
+        padding: '0.1rem 0.35rem',
+        fontSize: '12px',
+        lineHeight: '1.3',
+        border: 'none',
+        borderRadius: '0.3rem',
+        backgroundImage: 'none',
+        backgroundColor: 'transparent',
+        color: 'hsl(var(--muted-foreground))',
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        '&:hover': {backgroundColor: 'hsl(var(--accent))', color: 'hsl(var(--accent-foreground))'},
+    },
+    '.perkins-search button[name=toggle-replace]': {
+        backgroundColor: 'hsl(var(--secondary))',
+        color: 'hsl(var(--secondary-foreground))',
+    },
+    '.perkins-search .perkins-search-count': {
+        flexShrink: 0,
+        minWidth: '1.5rem',
+        padding: '0 0.1rem',
+        fontSize: '11.5px',
+        textAlign: 'center',
+        color: 'hsl(var(--muted-foreground))',
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
     },
     // 比對標示:沿用主題 selection token,替代 CodeMirror 內建的黃/藍底
     '.cm-searchMatch': {backgroundColor: 'hsl(var(--selection) / .30)'},
@@ -140,10 +301,10 @@ const highlight = HighlightStyle.define([
 ]);
 
 
-// searchKeymap 沒有取代的快捷鍵:Ctrl+H 開啟面板並把焦點移到「取代為」欄位(Windows 慣例)
+// searchKeymap 沒有取代的快捷鍵:Ctrl+H 開啟面板、展開取代列並聚焦「取代為」欄(Windows 慣例)
 const openReplace: Command = view => {
     openSearchPanel(view);
-    (view.dom.querySelector('.cm-panel.cm-search input[name=replace]') as HTMLInputElement | null)?.focus();
+    activeSearchPanel?.toggleReplace(true, true);
     return true;
 };
 
@@ -195,7 +356,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                 doc: initialText,
                 extensions: [
                     phrases,
-                    search({top: true}), // Ctrl+F 搜尋、Ctrl+H 切換取代(§16 第 24 項第一層)
+                    // Ctrl+F 搜尋、Ctrl+H 切換取代(§16 第 24 項第一層);自訂面板見 PerkinsSearchPanel
+                    search({top: true, createPanel: view => (activeSearchPanel = new PerkinsSearchPanel(view))}),
                     history(),
                     drawSelection(),
                     keymap.of([...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap]),

@@ -3,11 +3,17 @@
 ## 2026-10-08 — 編輯器搜尋/取代 + 右鍵選單改名(SPEC §16 第 13 項、第 24 項第一層)
 
 - **右鍵選單改名**:「詢問 AI…」→「詢問 Perkins Bot…」(`Editor.tsx`);ChatWindow 空白狀態提示引用的文字一併更新。E2E 沒有比對舊字串的檢查,不需改。
-- **搜尋/取代**(`Editor.tsx`):加入 `@codemirror/search@^6.7.2`,`search({top: true})` 面板在編輯器頂端;`searchKeymap` 提供 Mod-F/F3/Mod-G/Escape,另自訂 `Mod-h` 開面板並聚焦「取代為」欄(searchKeymap 沒有取代快捷鍵)。介面中文化用 `EditorState.phrases`(搜尋/取代為/下一個/上一個/全選/區分大小寫/正規/整詞/取代/全部取代/關閉等)。樣式用主題 token(`--popover`/`--input`/`--secondary`/`--selection` 等):面板 flex-wrap、輸入框 `min-width: 4rem`、按鈕 `white-space: nowrap`,640 寬(主編輯區 308px)自動換行不出水平捲軸。**陷阱**:CM baseTheme 的 `.cm-button` 帶 background-image 漸層(`&light` 變體是淺色),會蓋掉 background-color——主題沒標 `{dark: true}` 時會套到淺色按鈕樣式,需在按鈕上加 `backgroundImage: 'none'`。比對高亮(`.cm-searchMatch*`)改用 `--selection` token,兩種主題都可讀。
-- **取代走正常編輯流程**:replaceAll 經 CodeMirror dispatch → updateListener → onChange → dirty 徽章 → Ctrl+S 落盤,E2E 驗證未儲存狀態與磁碟內容。
-- **E2E 新增 10 項檢查**(e2e.js「搜尋/取代」段):Ctrl+F 開面板且搜尋欄聚焦(中文 placeholder)、Enter 選取比對並高亮、Escape 關面板(先確認面板開著,避免「沒開也沒關」假通過)、Ctrl+H 聚焦取代欄、全部取代後內容改變、dirty 徽章、磁碟落盤、640×672 無水平捲軸/按鈕不被裁掉/×可按、IME 組字中 Enter 不觸發捲動(CDP `Input.imeSetComposition` + keydown/keyup 229 模擬)、提交後收到完整字串。**破壞驗證**:拿掉 `search()`、`searchKeymap` 與 Mod-h 綁定 → 9 項記錄到的檢查全 FAIL(第 10 項是 IME 區塊內子檢查,同區塊中斷未執行);只拿掉 `search()` 不夠——`openSearchPanel` 會用 `StateEffect.appendConfig` 自裝 search 擴充,面板仍開得動。還原 → 全綠。**測試陷阱**:Playwright 對 CJK 用 `Input.insertText`(無 keydown/keyup),預設面板靠 keyup/onchange 提交 query,輸入後需按一次無害鍵(End)觸發提交;面板會保留上次 query,輸入前要三連擊全選。
-- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**319/319 passed,略過 8 項**;截圖兩主題+640:`shots/65-search-panel-dark.png`、`66-search-640-dark.png`、`67-search-dark-1280.png`、`68-search-light.png`。
-- **未驗證**:真實 IME(注音/倉頡)組字只能在無頭環境用 CDP 模擬;組字中途的 keyup 會刷新高亮但不移動選取/捲動(面板只在 keydown keyCode 13 時 findNext,組字中是 229),建議作者實機確認。Ctrl+F 僅在編輯器聚焦時作用(CodeMirror 慣例;焦點在工具列/其他面板時不會轉發)。
+- **搜尋/取代 v2(PR #23 返工,自訂面板)**:初版直接用 CodeMirror 預設面板,像 IDE 且 640 寬折成四排壓掉編輯區。改為自訂 `PerkinsSearchPanel`(`search({top: true, createPanel: view => (activeSearchPanel = new PerkinsSearchPanel(view))})`),兩列設計:
+  - **搜尋列(單排,永遠顯示)**:搜尋輸入框、上一個/下一個(ChevronUp/Down 圖示鈕,含 title/aria-label)、比對數「目前第幾個/共幾個」(用公開的 `SearchQuery.getCursor` 掃全文計算,`update()` 在 docChanged/selectionSet 時即時更新,上限 10000)、「取代」切換鈕(aria-expanded)、「×」關閉。
+  - **取代列(預設隱藏)**:Ctrl+H 開面板並展開聚焦「取代為」欄(searchKeymap 沒有取代快捷鍵,自訂 Mod-h),或點「取代」切換鈕;含取代輸入框、取代、全部取代。取代走一般編輯流程:dispatch → onChange → dirty → Ctrl+S 落盤。
+  - **移除預設面板的核取方塊**:區分大小寫/正規/整詞不做(整詞對中文無意義,正規與大小寫非小說作者常用)。仍保留 query 的預設能力(未用到的 caseSensitive/regexp 欄位保持預設值)。
+  - **IME 防護**:輸入框 `oninput` 同時檢查 `compositionstart/end` 旗標與事件的 `isComposing`(雙重防護);組字中途不提交 query,`compositionend` 才提交;面板 keydown 對 `isComposing` 的按鍵(含 keyCode 229 的 Enter)不觸發 findNext/close。
+  - **樣式陷阱(沿用)**:CM baseTheme 的 `.cm-button` 帶 background-image 漸層,會蓋掉 background-color,按鈕需 `backgroundImage: 'none'`。比對高亮(`.cm-searchMatch*`)用 `--selection` token。
+  - **實作細節**:面板用小 `h()`/`searchBtn()` helper 建立原生 DOM(crelt 未安裝);`main-field` 屬性維持在搜尋欄(讓 CM 的 openSearchPanel 自動聚焦邏輯運作);`onmousedown preventDefault` 讓圖示鈕不攝走輸入框焦點。
+- **E2E 17 項檢查**(e2e.js「搜尋/取代」段,依新介面改寫):Ctrl+F 開面板聚焦(中文 placeholder)、面板精簡(0 個核取方塊)、Enter 選取比對並高亮、比對數「1/2」、Escape 關面板(先確認面板開著)、預設收起取代列、切換鈕展開/收起取代列、Ctrl+H 聚焦「取代為」並展開、全部取代後內容改變、dirty 徽章、磁碟落盤、640×672 收起單排(panelH≤40)、展開取代兩排(panelH≤61≤76,兩次量測都無水平捲軸、無裁切、×可按)、IME 組字中不更新比對數(isComposing 略過)、組字中 Enter 不捲動(CDP 229)、提交後收到完整字串。**破壞驗證**:拿掉 `search()`+`searchKeymap`+Mod-h → 17 項全 FAIL;還原 → 全綠(只拿掉 `search()` 不夠,`openSearchPanel` 會用 appendConfig 自裝擴充)。
+- **E2E 陷阱(沿用+新增)**:Playwright 對 CJK 用 insertText(無 keyup),自訂面板已改 oninput 不受影響;面板會保留上次 query,輸入前三連擊全選;640 段前要先 Escape 關掉上一段遺留的開著面板(取樣基準才乾淨);CDP `imeSetComposition` 在無頭環境不發 composition 事件(值直接改)+「組字中不提交」無法用 CDP 驗,改用合成事件(`InputEvent` isComposing/`CompositionEvent`)直接驗防護邏輯。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**326/326 passed,略過 8 項**。截圖(`shots/`,兩主題+640 都看過):`65-search-panel-dark.png`、`66-search-640-dark.png`(收起單排)、`66-search-640-dark-replace.png`(展開兩排)、`67-search-dark-1280.png`、`68-search-light.png`。
+- **未驗證**:真實 IME(注音/倉頡)組字:無頭環境 CDP 不發 composition 事件,「組字中不提交」以合成事件驗證防護邏輯,建議作者實機確認一次。Ctrl+F 僅在編輯器聚焦時作用(CodeMirror 慣例;焦點在其他面板時不會轉發,轉發需改 Workspace.tsx,依指示未碰)。
 
 ## 2026-10-07 — PR #19 返工:設定頁 640 寬三欄並排壓爆表單
 

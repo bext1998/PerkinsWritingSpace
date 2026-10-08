@@ -2394,9 +2394,9 @@ const maybe = async (name, fn, detail = '') => {
         check('半螢幕 變寬到 1280 後不自動重開資訊欄', !(await page.$('[data-testid=inspector]')));
         await shot('61-toolbar-1280x800');
 
-        // ===== 搜尋/取代(SPEC §16 第 24 項第一層)=====
+        // ===== 搜尋/取代(SPEC §16 第 24 項第一層;返工:安靜精簡兩列面板)=====
         const editorTxt = () => page.$$eval('.cm-content .cm-line', els => els.map(e => e.textContent).join('\n'));
-        const openPanel = async key => { await page.keyboard.press(key); await page.waitForSelector('.cm-panel.cm-search', {timeout: 5000}); };
+        const openPanel = async key => { await page.keyboard.press(key); await page.waitForSelector('.perkins-search', {timeout: 5000}); };
         await page.setViewportSize({width: 1440, height: 900});
         await page.waitForTimeout(300);
         const searchRow = (await page.$$('[data-testid=chapter-row]'))[0];
@@ -2405,47 +2405,78 @@ const maybe = async (name, fn, detail = '') => {
         await page.keyboard.press('Control+s');
         await page.waitForTimeout(300);
 
-        // Ctrl+F 開面板,焦點在搜尋欄(中文 placeholder)。註:Ctrl+F 只在編輯器聚焦時作用(CodeMirror 慣例),先點回編輯器
+        // Ctrl+F 開面板,焦點在搜尋欄(中文 placeholder)。Ctrl+F 只在編輯器聚焦時作用(CodeMirror 慣例),先點回編輯器
         try {
             await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
             await openPanel('Control+f');
             const okFocus = await page.evaluate(() =>
-                document.activeElement?.matches('.cm-panel.cm-search input[name=search]') &&
+                document.activeElement?.matches('.perkins-search input[name=search]') &&
                 document.activeElement.placeholder === '搜尋');
             check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', okFocus,
                 await page.evaluate(() => document.activeElement?.placeholder || '(焦點不在面板)'));
             await shot('65-search-panel-dark');
         } catch (e) { check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', false, e.message); }
 
-        // 輸入關鍵字 → Enter:第一個比對被選取並高亮
+        // 面板精簡:沒有任何核取方塊(區分大小寫/正規/整詞不做)
         try {
-            await page.click('.cm-panel.cm-search input[name=search]');
+            const boxes = await page.$$eval('.perkins-search input[type=checkbox]', els => els.length);
+            const labels = await page.textContent('.perkins-search');
+            check('搜尋 面板精簡(無區分大小寫/正規/整詞核取方塊)',
+                boxes === 0 && !/區分大小寫|正規|整詞/.test(labels), `checkbox=${boxes}`);
+        } catch (e) { check('搜尋 面板精簡(無區分大小寫/正規/整詞核取方塊)', false, e.message); }
+
+        // 輸入關鍵字 → Enter:選取比對、高亮、顯示目前第幾個/比對數
+        try {
+            await page.click('.perkins-search input[name=search]');
             await page.keyboard.type('森林', {delay: 20});
-            // 面板在 keyup/change 時才更新 query;CJK 輸入沒有 keyup,先按 End 觸發一次
-            await page.keyboard.press('End');
             await page.keyboard.press('Enter');
             await page.waitForSelector('.cm-searchMatch-selected', {timeout: 5000});
             const sel = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
             check('搜尋 Enter 後選取比對並以主題色高亮', sel.includes('森林'), sel);
-        } catch (e) { check('搜尋 Enter 後選取比對並以主題色高亮', false, e.message); }
+            const count = (await page.textContent('.perkins-search .perkins-search-count')).trim();
+            check('搜尋 顯示目前第幾個/比對數', /1\s*\/\s*2/.test(count), count);
+        } catch (e) {
+            check('搜尋 Enter 後選取比對並以主題色高亮', false, e.message);
+            check('搜尋 顯示目前第幾個/比對數', false, e.message);
+        }
 
         // Escape 關面板(先確認面板開著,避免「沒開也沒關」的假通過)
         try {
             await page.click('.cm-content');
             await openPanel('Control+f');
             await page.keyboard.press('Escape');
-            await page.waitForSelector('.cm-panel.cm-search', {state: 'detached', timeout: 5000});
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
             check('搜尋 Escape 關閉面板', true);
         } catch (e) { check('搜尋 Escape 關閉面板', false, e.message); }
 
-        // Ctrl+H:開啟面板並聚焦「取代為」欄
+        // 面板預設收起取代列;「取代」切換鈕可展開/收起
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            const hidden0 = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display === 'none');
+            check('搜尋 面板預設收起取代列', hidden0);
+            await page.click('button[name=toggle-replace]');
+            const shown = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display !== 'none');
+            check('取代 切換鈕展開取代列', shown);
+            await page.click('button[name=toggle-replace]');
+            const hidden2 = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display === 'none');
+            check('取代 切換鈕再點收起取代列', hidden2);
+        } catch (e) {
+            check('搜尋 面板預設收起取代列', false, e.message);
+            check('取代 切換鈕展開取代列', false, e.message);
+            check('取代 切換鈕再點收起取代列', false, e.message);
+        }
+
+        // Ctrl+H:開啟面板並展開取代列,焦點在「取代為」欄
         try {
             await page.click('.cm-content');
             await openPanel('Control+h');
-            const okRepl = await page.evaluate(() => document.activeElement?.matches('.cm-panel.cm-search input[name=replace]'));
-            check('取代 Ctrl+H 開啟面板且焦點在「取代為」欄', okRepl);
-            await page.keyboard.press('Escape');
-        } catch (e) { check('取代 Ctrl+H 開啟面板且焦點在「取代為」欄', false, e.message); }
+            const okRepl = await page.evaluate(() =>
+                document.activeElement?.matches('.perkins-search input[name=replace]') &&
+                getComputedStyle(document.querySelector('.perkins-replace-row')).display !== 'none');
+            check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', okRepl);
+        } catch (e) { check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', false, e.message); }
 
         // 取代:先加入固定字樣,全部取代,驗證走 onChange → dirty → 存檔流程
         try {
@@ -2456,13 +2487,11 @@ const maybe = async (name, fn, detail = '') => {
             await page.keyboard.press('Control+s');
             await page.waitForTimeout(300);
             await openPanel('Control+h');
-            // 三連擊全選再輸入:面板會保留上次的 query,不能直接附加;切欄位的 blur 會觸發 change → commit
-            await page.click('.cm-panel.cm-search input[name=search]', {clickCount: 3});
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
             await page.keyboard.type('搜尋取代目標字', {delay: 20});
-            await page.click('.cm-panel.cm-search input[name=replace]', {clickCount: 3});
+            await page.click('.perkins-search input[name=replace]', {clickCount: 3});
             await page.keyboard.type('改寫後的字', {delay: 20});
-            await page.keyboard.press('End');
-            await page.click('.cm-panel.cm-search button[name=replaceAll]');
+            await page.click('.perkins-search button[name=replaceAll]');
             await page.waitForTimeout(300);
             const t1 = await editorTxt();
             check('全部取代後內容已改變', !t1.includes('搜尋取代目標字') && (t1.match(/改寫後的字/g) || []).length === 2, t1.slice(-60));
@@ -2470,40 +2499,55 @@ const maybe = async (name, fn, detail = '') => {
             await page.keyboard.press('Control+s');
             await page.waitForTimeout(300);
             check('取代結果以正常存檔流程落盤', read(ch1).includes('改寫後的字'));
-            await page.keyboard.press('Escape');
         } catch (e) {
             check('全部取代後內容已改變', false, e.message);
             check('取代走正常編輯流程(狀態為未儲存)', false, e.message);
             check('取代結果以正常存檔流程落盤', false, e.message);
         }
 
-        // 640×672:面板不得出水平捲軸或按鈕被裁掉
+        // 640×672:收起時單排;展開取代時最多兩排;不得出水平捲軸或按鈕被裁掉
         try {
+            // 先關掉上一段遺留的面板(取代列展開中),重開才是全新狀態
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
             await page.setViewportSize({width: 640, height: 672});
             await page.waitForTimeout(300);
             await openPanel('Control+f');
-            const p640 = await page.evaluate(() => {
-                const p = document.querySelector('.cm-panel.cm-search');
+            const measure = () => page.evaluate(() => {
+                const p = document.querySelector('.perkins-search');
                 if (!p) return null;
                 const de = document.documentElement;
                 const pr = p.getBoundingClientRect();
+                const row1 = p.querySelector('.perkins-search-row');
                 const clipped = [];
-                for (const el of p.querySelectorAll('button,input,label')) {
+                for (const el of p.querySelectorAll('button,input')) {
                     const r = el.getBoundingClientRect();
-                    if (r.width > 0 && (r.right > pr.right + 1 || r.left < pr.left - 1)) clipped.push(el.name || (el.textContent || '').slice(0, 6));
+                    if (r.width > 0 && (r.right > pr.right + 1 || r.left < pr.left - 1)) clipped.push(el.name || (el.getAttribute('aria-label') || '').slice(0, 6));
                 }
-                const c = p.querySelector('[name=close]');
+                const c = p.querySelector('button[name=close]');
                 return {
+                    panelH: Math.round(pr.height),
+                    row1H: Math.round(row1.getBoundingClientRect().height),
+                    replaceVisible: getComputedStyle(p.querySelector('.perkins-replace-row')).display !== 'none',
                     docH: de.scrollWidth > de.clientWidth,
-                    panelOverflow: p.scrollWidth > p.clientWidth + 1,
                     clipped,
                     close: !!c && c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().right <= pr.right + 1,
                 };
             });
-            check('搜尋面板 640×672 無水平捲軸、按鈕不被裁掉、×可按',
-                !!p640 && !p640.docH && !p640.panelOverflow && p640.clipped.length === 0 && p640.close, JSON.stringify(p640));
+            const m1 = await measure();
+            check('搜尋 640×672 收起時單排、無水平捲軸、按鈕不被裁掉',
+                !!m1 && !m1.docH && m1.clipped.length === 0 && m1.close && !m1.replaceVisible && m1.panelH <= 40 && m1.row1H <= 32, JSON.stringify(m1));
+            await page.click('button[name=toggle-replace]');
+            const m2 = await measure();
+            check('搜尋 640×672 展開取代時最多兩排、無水平捲軸、按鈕不被裁掉',
+                !!m2 && !m2.docH && m2.clipped.length === 0 && m2.close && m2.replaceVisible && m2.panelH <= 76, JSON.stringify(m2));
+            await shot('66-search-640-dark-replace');
+            await page.click('button[name=toggle-replace]');
             await shot('66-search-640-dark');
-        } catch (e) { check('搜尋面板 640×672 無水平捲軸、按鈕不被裁掉、×可按', false, e.message); }
+        } catch (e) {
+            check('搜尋 640×672 收起時單排、無水平捲軸、按鈕不被裁掉', false, e.message);
+            check('搜尋 640×672 展開取代時最多兩排、無水平捲軸、按鈕不被裁掉', false, e.message);
+        }
 
         // 兩種主題的面板外觀
         await page.setViewportSize({width: 1280, height: 800});
@@ -2526,16 +2570,31 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
 
-        // IME 組字:以 CDP 模擬組字,確認組字中途按 Enter 不觸發搜尋跳動
+        // IME 組字:(a) 合成事件驗證 isComposing 防護(組字中不更新比對數,提交後才更新);
+        // (b) CDP 模擬組字中按 Enter(keyCode 229)不得觸發 findNext 捲動。
+        // 註:CDP imeSetComposition 在無頭環境不會發 composition 事件,「組字中不提交」只能用合成事件驗;真實 IME 建議作者實機確認。
         try {
             await page.setViewportSize({width: 1440, height: 900});
             await page.click('.cm-content');
             await openPanel('Control+f');
-            await page.click('.cm-panel.cm-search input[name=search]', {clickCount: 3});
+            await page.click('.perkins-search input[name=search]', {clickCount: 3}); // 全選,不接在上次的 query 後面
             await page.keyboard.type('森林', {delay: 20});
-            await page.keyboard.press('End');
             await page.keyboard.press('Enter');
             await page.waitForTimeout(200);
+            const ime = await page.evaluate(() => {
+                const input = document.querySelector('.perkins-search input[name=search]');
+                const count = document.querySelector('.perkins-search .perkins-search-count');
+                const before = count.textContent;
+                input.value = 'ㄙㄣ'; // 模擬組字中途的暫存字串
+                input.dispatchEvent(new InputEvent('input', {bubbles: true, isComposing: true}));
+                const during = count.textContent;
+                input.value = '森林'; // 提交組字
+                input.dispatchEvent(new CompositionEvent('compositionend', {bubbles: true}));
+                const after = count.textContent;
+                return {before, during, after};
+            });
+            check('IME 組字中不更新比對數(isComposing 略過),提交後才更新',
+                ime.during === ime.before && /2/.test(ime.after), JSON.stringify(ime));
             const cdp = await page.context().newCDPSession(page);
             const scrollOf = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
             const s0 = await scrollOf();
@@ -2544,16 +2603,20 @@ const maybe = async (name, fn, detail = '') => {
             await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Process', code: 'Enter', windowsVirtualKeyCode: 229});
             await page.waitForTimeout(200);
             const s1 = await scrollOf();
-            const stillOpen = !!(await page.$('.cm-panel.cm-search'));
-            check('IME 組字中 Enter 不觸發搜尋跳動(捲動位置不變、面板未關)', s1 === s0 && stillOpen, `scrollTop ${s0}→${s1}, open=${stillOpen}`);
+            const stillOpen = !!(await page.$('.perkins-search'));
+            check('IME 組字中按 Enter 不觸發搜尋跳動(捲動不變、面板未關)', s1 === s0 && stillOpen, `scrollTop ${s0}→${s1}, open=${stillOpen}`);
             try {
                 await cdp.send('Input.insertText', {text: '森林'});
                 await page.waitForTimeout(200);
-                const q = await page.$eval('.cm-panel.cm-search input[name=search]', el => el.value);
-                check('IME 提交後搜尋欄收到完整字串並更新比對', q.includes('森林'), q);
+                const q = await page.$eval('.perkins-search input[name=search]', el => el.value);
+                check('IME 提交後搜尋欄收到完整字串並更新比對', q.includes('森林') && !q.includes('ㄙㄣ'), q);
             } catch (e) { check('IME 提交後搜尋欄收到完整字串並更新比對', false, e.message); }
             await page.keyboard.press('Escape');
-        } catch (e) { check('IME 組字中 Enter 不觸發搜尋跳動(捲動位置不變、面板未關)', false, e.message); }
+        } catch (e) {
+            check('IME 組字中不更新比對數(isComposing 略過),提交後才更新', false, e.message);
+            check('IME 組字中按 Enter 不觸發搜尋跳動(捲動不變、面板未關)', false, e.message);
+            check('IME 提交後搜尋欄收到完整字串並更新比對', false, e.message);
+        }
 
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
         check('執行中斷', false, e.message);
