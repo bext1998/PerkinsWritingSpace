@@ -1,4 +1,4 @@
-import {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {EditorSelection, EditorState} from '@codemirror/state';
 import {Command, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
@@ -364,6 +364,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         openSearch: (replace = false) => {
             const v = view.current;
             if (!v) return;
+            cancelRestore(); // 明確定位:取消進行中的位置還原
             openSearchPanel(v);
             if (replace) activeSearchPanel?.toggleReplace(true, true);
             else activeSearchPanel?.mount(); // 聚焦搜尋欄(全域 Ctrl+F)
@@ -371,6 +372,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         scrollToLine: (line: number) => {
             const v = view.current;
             if (!v) return;
+            cancelRestore(); // 明確定位:取消進行中的位置還原,否則稍後被拉回舊位置
             const l = v.state.doc.line(Math.min(Math.max(1, line), v.state.doc.lines));
             v.dispatch({
                 selection: EditorSelection.cursor(l.from),
@@ -389,12 +391,29 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
 
     // 位置記憶與還原(§16 第 24 項第一層):選取/捲動變動時寫入 posStore(只存記憶體),
     // 掛載時讀回並還原;外部重載後內容可能變短,錨點超出文件長度要夾住(不報錯)。
-    let restoring = false; // 還原期間不寫回(掛載還原自己的 selection/scroll 會觸發 savePos,不覆蓋記住的值)
+    // 還原是 rAF 重試(等 CM 排版),作者操作或明確定位(scrollToLine、搜尋)時要取消,
+    // 否則還原視窗內的定位會被拉回舊位置。
+    const restoringRef = useRef(false); // 還原期間不寫回(掛載還原自己的 selection/scroll 會觸發 savePos,不覆蓋記住的值)
+    const restoreRafRef = useRef(0);
+    const cancelRestore = useCallback(() => {
+        if (restoreRafRef.current) { cancelAnimationFrame(restoreRafRef.current); restoreRafRef.current = 0; }
+        restoringRef.current = false;
+    }, []);
     const savePos = () => {
         const v = view.current;
-        if (!v || restoring || !posKey || !posStore) return;
+        if (!v || restoringRef.current || !posKey || !posStore) return;
         const {anchor, head} = v.state.selection.main;
         posStore.set(posKey, {anchor, head, scrollTop: v.scrollDOM.scrollTop});
+    };
+    // 縮放保護只針對縮放「前」可見的游標:作者把游標捲出畫面(閱讀中)時,縮放不得把畫面拉回游標
+    const cursorVisibleRef = useRef(true);
+    const noteCursorVisible = () => {
+        const v = view.current;
+        if (!v) return;
+        const c = v.coordsAtPos(v.state.selection.main.head);
+        if (!c) return;
+        const r = v.scrollDOM.getBoundingClientRect();
+        cursorVisibleRef.current = c.top >= r.top - 1 && c.bottom <= r.bottom + 1;
     };
 
     useEffect(() => {
@@ -418,6 +437,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                         if (u.docChanged) onChangeRef.current(u.state.doc.toString());
                         if (u.selectionSet) {
                             savePos(); // 位置記憶:選取變動時持續寫回
+                            noteCursorVisible(); // 記錄縮放前游標可見性(縮放保護用)
                             const {from, to} = u.state.selection.main;
                             const s = from === to ? null : {text: u.state.sliceDoc(from, to), from, to};
                             setCurrent(s); // 浮動列顯示/隱藏
@@ -435,31 +455,38 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             const len = v.state.doc.length;
             const anchor = Math.min(saved.anchor, len);
             const head = Math.min(saved.head, len);
-            restoring = true;
+            restoringRef.current = true;
             v.dispatch({selection: EditorSelection.range(anchor, head)});
             // 捲動還原要等 CM 把視埠排出來(首次排版捲動高度會逐步長大),
             // 等不到目標高度就重試幾個 frame,最多約 40 frame 後以當下最大值夾住;
-            // 以捲動位置為準,不額外 scrollIntoView(游標在可視範圍外時會把捲動位置拉走)
+            // 以捲動位置為準,不額外 scrollIntoView(游標在可視範圍外時會把捲動位置拉走);
+            // 作者操作/明確定位/卸載時取消(見 cancelRestore)
             let tries = 0;
             const restoreScroll = () => {
+                restoreRafRef.current = 0;
                 const max = Math.max(0, v.scrollDOM.scrollHeight - v.scrollDOM.clientHeight);
                 if (saved.scrollTop > 0 && max < saved.scrollTop && tries++ < 40) {
-                    requestAnimationFrame(restoreScroll);
+                    restoreRafRef.current = requestAnimationFrame(restoreScroll);
                     return;
                 }
                 v.scrollDOM.scrollTop = Math.min(saved.scrollTop, max);
-                restoring = false;
+                restoringRef.current = false;
             };
-            requestAnimationFrame(restoreScroll);
+            restoreRafRef.current = requestAnimationFrame(restoreScroll);
         }
 
         // 捲動位置持續寫回(rAF 節流)
         let scrollRaf = 0;
         const onScroll = () => {
             if (scrollRaf) return;
-            scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; savePos(); });
+            scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; savePos(); noteCursorVisible(); });
         };
         v.scrollDOM.addEventListener('scroll', onScroll);
+        // 作者操作(點擊/滾動/打字)時取消位置還原:還原只負責「回到上次位置」,作者一動手就以作者為準
+        const onUserAction = () => cancelRestore();
+        v.dom.addEventListener('pointerdown', onUserAction);
+        v.dom.addEventListener('wheel', onUserAction, {passive: true});
+        v.dom.addEventListener('keydown', onUserAction);
 
         // 視窗縮放(含 ≤960 側欄/資訊欄互斥自動收合)後游標穩定:游標行落在可視範圍外
         // 才以最小捲動帶回(不跳到頂端,也不干擾本來就看得到的情況)
@@ -468,6 +495,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             if (resizeRaf) return;
             resizeRaf = requestAnimationFrame(() => {
                 resizeRaf = 0;
+                // 只保護縮放「前」可見的游標:作者把游標捲出畫面閱讀時,縮放保留閱讀位置不拉回
+                if (!cursorVisibleRef.current) return;
                 const head = v.state.selection.main.head;
                 const c = v.coordsAtPos(head);
                 if (!c) return;
@@ -494,10 +523,14 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         }
 
         return () => {
+            cancelRestore(); // 卸載時終止還原 rAF
             ro.disconnect();
             cancelAnimationFrame(scrollRaf);
             cancelAnimationFrame(resizeRaf);
             v.scrollDOM.removeEventListener('scroll', onScroll);
+            v.dom.removeEventListener('pointerdown', onUserAction);
+            v.dom.removeEventListener('wheel', onUserAction);
+            v.dom.removeEventListener('keydown', onUserAction);
             v.destroy();
             view.current = null;
             if (import.meta.env.DEV) delete (window as any).__perkinsEditor;

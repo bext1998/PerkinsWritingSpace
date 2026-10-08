@@ -1,5 +1,17 @@
 # PROGRESS.md
 
+## 2026-10-08 — 編輯器手感返工(PR #26 審查修復)
+
+- **#1 還原重試拉走明確定位**:位置還原是 rAF 重試(等 CM 排版,最多約 40 frame),作者在這個視窗內點場景/搜尋結果跳行(`scrollToLine`),稍後仍被拉回舊位置(實測 scrollTop 741→10708)。修法:追蹤還原 rAF(`restoreRafRef`)與旗標(`restoringRef`),`cancelRestore()` 在三個時機呼叫 — 作者操作(編輯器內 `pointerdown`/`wheel`/`keydown`)、明確定位(`scrollToLine`、`openSearch`)、卸載。
+- **#2 縮放保護拉走閱讀位置**:縮放保護原本只看「縮放後」游標是否可見,作者游標在開頭、捲到中段閱讀時縮放會被拉回開頭(scrollTop 2610→4)。修法:`cursorVisibleRef` 在選取/捲動時記錄「縮放前」游標可見性,原本就在畫面外就不拉回。
+- **#3 全域鍵守衛漏設定頁與 Radix Select 浮層**:設定頁是 fixed 覆蓋層(無 `role=dialog`),Radix Select 開啟時焦點還在觸發鈕上。除了 `closest` 檢查,補「覆蓋層存在即不攔截」的整體檢查(`[data-testid=settings-page]`、`[data-radix-popper-content-wrapper]`、`[role=dialog]`、`[role=menu]`)——焦點可能在 body 或不在覆蓋層元素內,以覆蓋層開著為準。
+- **#4 全域鍵不攔 Shift/Alt/defaultPrevented/IME**:CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f會被當成搜尋(PR #24 禪模式用 Ctrl+Shift+F,合併後兩個 handler 都會跑);補 `e.shiftKey||e.altKey`、`e.defaultPrevented`、`e.isComposing||e.keyCode===229` 守衛。
+- **#5 刪檔後位置記憶殘留**:同名新檔案會套用已刪文件的位置。修法:tree 更新時清掉不存在的路徑;E2E 驗證「刪除後建立同名文件從預設位置開始」。
+- **#6 貼上檢查拿掉雙軌備援**:原「剪貼簿內容不符時只驗文件變長」允許貼入錯誤內容(只看長度)。改為暫時替換 `clipboard.readText()` 固定回傳測試字串,斷言實際插入內容(含 `\r\n` 正規化),再還原替身。
+- **E2E**:新增/改寫 9 項檢查(貼上改替身斷言、設定頁/Select 浮層/Shift+Alt/defaultPrevented/IME 229 五項守衛、還原中點場景、閱讀中縮放、刪除清記憶、同名重建);長章 fixture 加場景標題(場景清單只在章節為作用中時渲染)。**破壞驗證(六項修正同時移除)**:9 項全 FAIL,各自重現原問題 — C1(anchor 已跳到 8 但捲動被拉回 48212)、C2(閱讀中縮放被拉回 scrollTop 50)、F5(記憶未清、同名重建套用舊位置 anchor 7)、全域鍵四項開了面板、貼上 FAIL。還原後全綠。
+- **E2E 陷阱**:側欄場景清單用 `li` 的 `startsWith` 匹配(外層章節 li 的 textContent 含場景名,`includes` 會點錯);Radix Dialog Escape 後要 `waitForSelector('[role=dialog]', {state: 'hidden'})`;設定頁預設在 AI 模型分頁,先切 `[data-testid=tab-project]` 才找得到 research-row。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**358/358 passed,略過 8 項**。截圖:`74-resize-reading-preserved.png`(閱讀中縮放保留位置)已親自檢視。
+
 ## 2026-10-08 — 編輯器手感(§16 第 24 項第一層剩餘)
 
 - **切章位置記憶**:`Workspace` 持有 `posMemo` Map(檔案路徑 → {anchor, head, scrollTop},只存記憶體不寫檔);`Editor` 掛載時讀取還原、選取/捲動變動時持續寫回(updateListener + scroll 事件 rAF 節流),因此外部重載(`reloadCurrent`、接受提案、`applyHeader`)重掛後也回到原位置。相容性靠既有機制:過期導覽由 `navSeq` 擋、重掛由 `key={current}:{reloadKey}`。陷阱:

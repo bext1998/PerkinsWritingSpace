@@ -45,6 +45,7 @@ if (import.meta.env.DEV) {
     (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
 }
 
+
 // (DEV)SaveFile 包一層並行計數;正式建置時直接呼叫 SaveFile
 async function trackedSaveFile(path: string, text: string) {
     if (!import.meta.env.DEV) return SaveFile(path, text);
@@ -105,6 +106,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 只存在記憶體(本次執行期間),不寫檔。Editor 掛載時讀取還原、編輯/捲動時寫回,
     // 因此外部重載(reloadCurrent、接受提案)重掛後也回到原位置,超出文件長度由 Editor 夾住。
     const posMemo = useRef(new Map<string, EditorPos>());
+    if (import.meta.env.DEV) (window as any).__perkinsPosMemo = posMemo; // (DEV)E2E 讀取位置記憶
     // 工具列寬度退化(SPEC §17.1):用 ResizeObserver 量工具列自身寬度(contentRect 不含 px-4 內距),
     // 依寬度把按鈕從「完整文字」→「只剩圖示(保留 title/aria-label)」→「隱藏次要按鈕」三段退化。
     // 588/408 是實測門檻:900×600、側欄+資訊欄都開時主編輯區約 288px(content 256)落最窄段;
@@ -166,10 +168,12 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         if (settingsVersion > 0) { refreshTree(); refreshIndex(); }
     }, [settingsVersion]);
 
-    // 目前開啟的檔案被移到回收區(或被撤銷匯入)後關閉編輯器,避免存檔時又把它寫回來
+    // 目前開啟的檔案被移到回收區(或被撤銷匯入)後關閉編輯器,避免存檔時又把它寫回來;
+    // 位置記憶只留還存在的檔案:刪除後建立同名檔案要從預設位置開始,不能套用已刪文件的位置
     useEffect(() => {
-        if (!current) return;
         const all = [...tree.manuscript, ...tree.canon, ...tree.outline, ...tree.notes];
+        for (const k of [...posMemo.current.keys()]) if (!all.some(e => e.path === k)) posMemo.current.delete(k);
+        if (!current) return;
         if (!all.some(e => e.path === current)) {
             loaded.current = null;
             setCurrent(null);
@@ -337,13 +341,19 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     // 全域 Ctrl+F / Ctrl+H(§16 第 24 項第一層):編輯器未聚焦時(作品畫面任何地方)按也開啟
     // 搜尋/取代面板並聚焦輸入框。編輯器聚焦時不會走到這裡(cm-content 是 contenteditable,
-    // 由 Editor 的 searchKeymap 處理);輸入框、對話框、Perkins Bot 浮窗、選單內不攔截;
-    // 沒有開檔時不做任何事。
+    // 由 Editor 的 searchKeymap 處理);輸入框、對話框、選單、Radix Select 浮層、Perkins Bot
+    // 浮窗、設定頁內不攔截;沒有開檔時不做任何事。
+    // 不攔 Shift/Alt 組合(CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f,禪模式的快捷鍵不能被搜尋搶走);
+    // 已被處理(defaultPrevented)與 IME 組字中(isComposing/keyCode 229)的按鍵也不攔。
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (!(e.ctrlKey || e.metaKey) || (e.key !== 'f' && e.key !== 'h')) return;
+            if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+            if (e.shiftKey || e.altKey) return;
+            if (!(e.ctrlKey || e.metaKey) || (e.key.toLowerCase() !== 'f' && e.key.toLowerCase() !== 'h')) return;
             const t = e.target as HTMLElement | null;
-            if (t?.closest?.('input, textarea, select, [contenteditable="true"], [role=dialog], [role=menu], [data-testid=chat-window]')) return;
+            if (t?.closest?.('input, textarea, select, [contenteditable="true"], [role=dialog], [role=menu], [role=listbox], [data-radix-popper-content-wrapper], [data-testid=chat-window], [data-testid=settings-page]')) return;
+            // 焦點可能在 body 或 Select 觸發鈕上(不在覆蓋層元素內):以覆蓋層「開著」為準,開著就不攔截
+            if (document.querySelector('[data-testid=settings-page], [data-radix-popper-content-wrapper], [role=dialog], [role=menu]')) return;
             if (!latest.current.current) return; // 沒有開檔:不做任何事
             e.preventDefault();
             editor.current?.openSearch(e.key.toLowerCase() === 'h');

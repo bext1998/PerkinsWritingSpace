@@ -2825,33 +2825,23 @@ const maybe = async (name, fn, detail = '') => {
             const rich = await docText();
             check('貼上含 HTML 格式時只取純文字圖層',
                 rich.includes('純文字版') && !rich.includes('HTML標記不應出現'));
-            // 右鍵選單「貼上」走前端的 clipboard.readText():\\r\\n 也要正規化(點擊座標固定在可見編輯區內)
-            // 先還原 E4a 段留下的 writeText 替身(它不寫真剪貼簿),否則這裡的 writeText 不生效
+            // 右鍵選單「貼上」走前端的 clipboard.readText():\r\n 也要正規化(點擊座標固定在可見編輯區內)
+            // 暫時替換 clipboard.readText() 固定回傳含 \r\n 的測試字串(不依賴真剪貼簿,拿掉無頭環境
+            // writeText 不生效時的雙軌備援),斷言實際插入內容,再還原替身
             await page.evaluate(() => { if (window.__clipStubs?.orig) navigator.clipboard.writeText = window.__clipStubs.orig; });
-            let cbFull = '';
-            for (let i = 0; i < 4; i++) {
-                await page.evaluate(async () => { try { await navigator.clipboard.writeText('戊己\r\n庚辛'); } catch (e) {} });
-                await page.waitForTimeout(250);
-                cbFull = await page.evaluate(async () => { try { return await navigator.clipboard.readText(); } catch (e) { return 'ERR:' + e.name; } });
-                if (cbFull === '戊己\r\n庚辛') break;
-            }
-            const hasCRLF = cbFull.includes('\r');
-            const beforeLen = (await docText()).length;
+            await page.evaluate(() => {
+                window.__readOrig = navigator.clipboard.readText.bind(navigator.clipboard);
+                navigator.clipboard.readText = async () => '戊己\r\n庚辛';
+            });
             const sc = await page.evaluate(() => { const r = document.querySelector('.cm-scroller').getBoundingClientRect(); return {x: r.left + 150, y: r.top + r.height / 2}; });
             await page.mouse.click(sc.x, sc.y, {button: 'right'});
             await page.waitForSelector('.ctxmenu', {timeout: 5000});
             await page.click('.ctxmenu div:text-is("貼上")');
             await page.waitForTimeout(300);
+            await page.evaluate(() => { navigator.clipboard.readText = window.__readOrig; delete window.__readOrig; });
             const menuPaste = await docText();
-            const grew = menuPaste.length >= beforeLen + cbFull.replace(/\r/g, '').length - 2;
-            // 雙軌:剪貼簿是預期測試文字時驗內容;writeText 不生效(用殘留的救援複本,仍含 \\r\\n)時
-            // 以「文件精確變長 + 無 \\r」驗正規化;兩軌都能抓到「沒貼入/貼入含 \\r」的破壞
-            const contentOk = cbFull === '戊己\r\n庚辛'
-                ? menuPaste.includes('戊己\n庚辛')
-                : grew;
-            check('右鍵選單貼上同樣把 \\r\\n 統一成 \\n',
-                hasCRLF && contentOk && !menuPaste.includes('\r'),
-                `cb=${JSON.stringify(cbFull.slice(0, 8))} grew=${grew} len ${beforeLen}→${menuPaste.length}`);
+            check('右鍵選單貼上同樣把 \r\n 統一成 \n(替身固定內容,驗實際插入)',
+                menuPaste.includes('戊己\n庚辛') && !menuPaste.includes('\r'), `tail=${JSON.stringify(menuPaste.slice(-20))}`);
 
             // --- 全域 Ctrl+F / Ctrl+H:編輯器未聚焦時也開面板;輸入框/對話框/浮窗內不攔;沒開檔不做任何事 ---
             await page.keyboard.press('Escape');
@@ -2898,12 +2888,52 @@ const maybe = async (name, fn, detail = '') => {
             check('對話框內 Ctrl+F 不被攔截(面板不開)',
                 !(await page.$('.perkins-search')));
             await page.keyboard.press('Escape');
+            await page.waitForSelector('[role=dialog]', {state: 'hidden', timeout: 5000});
+            // 設定頁(非輸入框焦點)內 Ctrl+F 不被攔截(設定頁是 fixed 覆蓋層,無 role=dialog)
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=tab-project]');
+            await page.waitForSelector('[data-testid=research-row]');
+            await page.click('[data-testid=research-row]'); // 焦點落在設定頁非輸入框區域
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            check('設定頁內 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
+            // Radix Select 浮層(role=listbox)開啟時不被攔截
+            await page.click('[data-testid=tab-platforms]');
+            await page.waitForTimeout(400);
+            const selField = page.locator('div:has(> label:has-text("章節標題")) button[role=combobox]');
+            await selField.click();
+            await page.waitForSelector('[data-radix-popper-content-wrapper] [role=listbox]', {timeout: 5000});
+            await page.keyboard.press('Control+f');
+            await page.waitForTimeout(200);
+            check('Radix Select 浮層開啟時 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
+            await page.keyboard.press('Escape'); // 收起 Select 浮層
+            await page.waitForTimeout(200);
+            await page.click('[data-testid=close-settings]');
+            await page.waitForTimeout(400);
+            // Shift/Alt 組合(CapsLock 下 Ctrl+Shift+F 的 key 是小寫 f)與 defaultPrevented 不攔截
+            await page.evaluate(() => {
+                const fire = init => document.body.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, cancelable: true, ...init}));
+                const pe = new KeyboardEvent('keydown', {bubbles: true, cancelable: true, key: 'f', ctrlKey: true});
+                pe.preventDefault();
+                fire({key: 'f', ctrlKey: true, shiftKey: true});   // CapsLock 下 Ctrl+Shift+F(禪模式快捷鍵)
+                fire({key: 'f', ctrlKey: true, altKey: true});     // Ctrl+Alt+F
+                document.body.dispatchEvent(pe);                   // 已被處理(defaultPrevented)
+            });
+            await page.waitForTimeout(200);
+            check('Ctrl+Shift+F / Ctrl+Alt+F / defaultPrevented 不開搜尋面板', !(await page.$('.perkins-search')));
+            // IME 組字中(keyCode 229)的 Ctrl+F 不開面板(CDP 模擬真實 keydown)
+            const cdpG = await page.context().newCDPSession(page);
+            await cdpG.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
+            await cdpG.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'f', code: 'KeyF', windowsVirtualKeyCode: 229, modifiers: 2});
+            await page.waitForTimeout(200);
+            check('IME 組字中(229)的 Ctrl+F 不開搜尋面板', !(await page.$('.perkins-search')));
             await page.waitForTimeout(300);
 
             // --- 長章節:建約 5 萬字章節,量測捲動與輸入延遲(只在有明顯問題時才改程式) ---
             const LONG = 'manuscript/長章測試.md';
             fs.mkdirSync(path.join(PROJ, 'manuscript'), {recursive: true});
-            fs.writeFileSync(P(LONG), '# 長章測試\n\n' + '這是一段測試用的長篇文字,描述森林裡的冒險故事與角色之間的對話。'.repeat(2400) + '\n');
+            fs.writeFileSync(P(LONG), '# 長章測試\n\n## 場景一\n\n' + '這是一段測試用的長篇文字,描述森林裡的冒險故事與角色之間的對話。'.repeat(2400) + '\n');
             await page.click('.cm-content');
             await page.keyboard.press('Control+s'); // 存檔後 refreshTree,新章節才會出現在側欄
             await page.waitForSelector('aside li:has-text("長章測試")', {timeout: 15000});
@@ -2944,29 +2974,51 @@ const maybe = async (name, fn, detail = '') => {
             check('長章節輸入延遲在可用範圍(中位數 < 500ms)', lat[Math.floor(lat.length/2)] < 500, `median=${lat[Math.floor(lat.length/2)]}ms max=${lat[lat.length-1]}ms scroll=${scrollMs.toFixed(0)}ms`);
             await shot('72-long-chapter');
 
-            // --- 視窗縮放後游標穩定:游標行仍在可視範圍,不跳到頂端 ---
-            // 在長章中段放游標,捲到游標行在中間,縮到 640(資訊欄自動收合),游標行應仍在可視範圍
-            await page.evaluate(() => {
-                const s = document.querySelector('.cm-scroller');
-                s.scrollTop = s.scrollTop > 0 ? s.scrollTop * 0.5 : s.scrollHeight * 0.5;
-            });
-            await page.waitForTimeout(300);
-            // 游標在文件末端,先點中間某行讓游標落在可視範圍
-            await page.evaluate(() => {
-                const lines = document.querySelectorAll('.cm-content .cm-line');
-                const el = lines[Math.floor(lines.length / 2)];
-                const r = el.getBoundingClientRect();
-                window.__midClick = {x: r.left + 10, y: r.top + 4};
-            });
-            await page.mouse.click((await page.evaluate(() => window.__midClick.x)), (await page.evaluate(() => window.__midClick.y)));
+            // --- 視窗縮放後游標穩定(縮放前可見的游標):游標在末端且可視,縮到 640(資訊欄自動收合)後仍可視、不跳到頂端 ---
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
             await page.waitForTimeout(200);
-            const before = await page.evaluate(() => window.__perkinsEditor?.pos());
+            await page.evaluate(() => { document.querySelector('.cm-scroller').scrollTop = document.querySelector('.cm-scroller').scrollHeight; });
+            await page.waitForTimeout(300);
+            const before = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
             await page.setViewportSize({width: 640, height: 672}); // 觸發 ≤960 互斥收合
             await page.waitForTimeout(500);
             const after = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
             check('縮放到 640(互斥收合)後游標行仍在可視範圍、未跳到頂端',
                 after.vis === true && after.pos.scrollTop > 0, `before=${JSON.stringify(before)} after=${JSON.stringify(after)}`);
             await shot('71-resize-640-stable');
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.waitForTimeout(400);
+
+            // --- C1:還原(rAF 重試)進行中,點場景跳行(scrollToLine)不得被拉回舊位置 ---
+            await page.click('aside li:has-text("第三章")');
+            await page.waitForTimeout(400);
+            await page.click('aside li:has-text("長章測試")'); // 切回,還原開始
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(300);
+            const c1memo = await page.evaluate(() => window.__perkinsPosMemo?.current?.get('manuscript/長章測試.md') ?? null);
+            await page.evaluate(() => { [...document.querySelectorAll('aside li')].find(e => e.textContent.trim().startsWith('場景一'))?.click(); }); // 還原視窗內立刻點場景項目(scrollToLine);startsWith 避免match到外層章節 li
+            await page.waitForTimeout(1200);
+            const c1after = await page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
+            check('還原進行中點場景跳行,不被拉回舊位置',
+                !!c1memo && !!c1after && c1after.scrollTop < c1memo.scrollTop * 0.5,
+                `memo=${JSON.stringify(c1memo)} after=${JSON.stringify(c1after)}`);
+
+            // --- C2:游標在開頭、捲到中段閱讀時縮放,保留閱讀位置不被拉回游標 ---
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await page.waitForTimeout(200);
+            await page.evaluate(() => { const s = document.querySelector('.cm-scroller'); s.scrollTop = (s.scrollHeight - s.clientHeight) * 0.5; });
+            await page.waitForTimeout(300);
+            const c2before = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            check('前置:游標在開頭且被捲出畫面(閱讀中)', c2before.vis === false && c2before.pos.scrollTop > 5000, JSON.stringify(c2before));
+            await page.setViewportSize({width: 640, height: 672});
+            await page.waitForTimeout(500);
+            const c2after = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), vis: window.__perkinsEditor?.cursorVisible()}));
+            check('游標在畫面外(閱讀中)縮放保留閱讀位置,不拉回開頭',
+                c2after.vis === false && Math.abs(c2after.pos.scrollTop - c2before.pos.scrollTop) <= 400,
+                `before=${JSON.stringify(c2before)} after=${JSON.stringify(c2after)}`);
+            await shot('74-resize-reading-preserved');
             await page.setViewportSize({width: 1440, height: 900});
             await page.waitForTimeout(400);
 
@@ -3019,6 +3071,27 @@ const maybe = async (name, fn, detail = '') => {
             });
             check('外部重載後游標超出長度會夾住(不報錯、游標在文件內)',
                 clamped.head <= clamped.len + 1 && clamped.lines === 2, JSON.stringify(clamped));
+
+            // --- C6:刪除章節後位置記憶清除;同名新章節從預設位置開始 ---
+            await page.hover('[data-testid=chapter-row]:has-text("第一章")');
+            await page.click('[data-testid=chapter-row]:has-text("第一章") button:has(svg.lucide-more-horizontal)');
+            await page.click('[role=menu] div:has-text("移到回收區")');
+            await page.waitForSelector('[role=dialog]');
+            await page.click('[role=dialog] button:has-text("移到回收區")');
+            await page.waitForTimeout(800); // refreshTree + 位置記憶清理
+            const memoAfterDel = await page.evaluate(() => [...((window.__perkinsPosMemo?.current) ?? new Map()).keys()]);
+            check('刪除章節後位置記憶一併清除', !memoAfterDel.includes('manuscript/第一章.md'), JSON.stringify(memoAfterDel));
+            // 建立同名新章節,開啟後從預設位置開始(head 0)
+            await page.click('[data-testid=add-chapter-0]');
+            await page.fill('[data-testid=chapter-name]', '第一章');
+            await page.click('[data-testid=chapter-create]');
+            await page.waitForSelector('[data-testid=chapter-row]:has-text("第一章")', {timeout: 15000});
+            await page.click('[data-testid=chapter-row]:has-text("第一章")');
+            await page.waitForSelector('.cm-content');
+            await page.waitForTimeout(400);
+            const recreated = await page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
+            check('刪除後建立同名文件,從預設位置開始(游標在開頭)',
+                !!recreated && recreated.head === 0, JSON.stringify(recreated));
         } catch (e) {
             check('貼上的格式處理', false, e.message);
             check('全域 Ctrl+F / Ctrl+H / 不攔截檢查', false, e.message);
