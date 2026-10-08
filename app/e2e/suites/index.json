@@ -1,0 +1,62 @@
+[
+ {
+  "name": "titlebar-zen",
+  "desc": "開檔基本(B1 需新 fixture)、標題欄、品牌、應用程式選單、禪模式、白屏回歸"
+ },
+ {
+  "name": "bot-chat",
+  "desc": "快速指令、建議附加、提案(需模型)、版本初覽"
+ },
+ {
+  "name": "bible",
+  "desc": "設定集別名、自訂分類與回歸、寫法檢查"
+ },
+ {
+  "name": "shelf",
+  "desc": "摘要與前情、複製到平台、新增卷拖曳、設定頁標題欄與主題、書櫃"
+ },
+ {
+  "name": "layout-visual",
+  "desc": "書櫃 1B 視覺(H4 長書名封面)與重新開啟"
+ },
+ {
+  "name": "research",
+  "desc": "研究記錄 R1/R2"
+ },
+ {
+  "name": "polish",
+  "desc": "介面打磨 U1-U8"
+ },
+ {
+  "name": "visual-1b",
+  "desc": "1B 視覺:AI 浮窗回覆與提案卡、資訊欄(深/淺)"
+ },
+ {
+  "name": "save-flow",
+  "desc": "存檔按鈕 E3、序列化存檔 E5、重開同章 E6、過期導覽 E7"
+ },
+ {
+  "name": "notion",
+  "desc": "Notion 逐頁分類匯入與撤銷"
+ },
+ {
+  "name": "settings-layout",
+  "desc": "設定頁導覽版面 900/640/1280"
+ },
+ {
+  "name": "error-guard",
+  "desc": "錯誤防護 E1/E2/E2b/E4/E4a"
+ },
+ {
+  "name": "close-guard",
+  "desc": "關閉前存檔保護、對話框關閉鈕、聊天浮窗拖曳"
+ },
+ {
+  "name": "layout-half",
+  "desc": "標題欄 640、半螢幕 640 互斥、窄寬度工具列與更多選單"
+ },
+ {
+  "name": "search-editor",
+  "desc": "搜尋/取代面板、IME 組字防護、編輯器手感(內文比對需新 fixture)"
+ }
+]
