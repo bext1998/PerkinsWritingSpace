@@ -502,7 +502,7 @@ func TestPreviewUsesDocDraftButAskDoesNot(t *testing.T) {
 	a.ContextTokens = 2000
 	long := strings.Repeat("草", 3000) // 草稿比磁碟內容長很多:足以讓預覽超過 limit=1500,但磁碟內容不會
 	// 預覽:用草稿估算,超過可用上下文
-	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: long})
+	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &long})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +514,7 @@ func TestPreviewUsesDocDraftButAskDoesNot(t *testing.T) {
 	}
 	// Ask:同參數(含 DocDraft)走 Ask,應以磁碟內容送出且成功(不超預算、不使用草稿)
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
-	if _, err := a.Ask(context.Background(), AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: long}, func(Event) {}); err != nil {
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &long}, func(Event) {}); err != nil {
 		t.Fatalf("Ask 不應使用草稿估算而拒絕送出: %v", err)
 	}
 	reqMsgs := s.reqs[len(s.reqs)-1].Messages
@@ -524,6 +524,19 @@ func TestPreviewUsesDocDraftButAskDoesNot(t *testing.T) {
 	}
 	if !strings.Contains(userMsg, "小明走進森林") {
 		t.Fatalf("Ask 送出的請求應用磁碟內容: %s", userMsg[:60])
+	}
+}
+
+// 空草稿不是「未提供」:作者清空全文但未存檔時,預覽要以空文件估算(送出前會先存成空檔),不得改讀磁碟舊稿。
+func TestPreviewEmptyDocDraftIsNotMissing(t *testing.T) {
+	a, _, _ := setup(t)
+	empty := ""
+	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: &empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(pv.Messages[len(pv.Messages)-1].Content, "小明走進森林") {
+		t.Fatal("空草稿時預覽不得讀回磁碟舊稿")
 	}
 }
 

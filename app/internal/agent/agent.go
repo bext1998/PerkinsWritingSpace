@@ -47,8 +47,8 @@ type AskParams struct {
 	QuickID        string   `json:"quickId,omitempty"` // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
 	QuickEdited    bool     `json:"quickEdited,omitempty"` // 作者送出前改過快速指令帶入的問題文字(只記布林,不記改前全文)
 	// DocDraft 只供 Preview 使用的目前文件編輯器草稿(PR #54 返工):背景用量預覽在作者未存檔時也以草稿估算;
-	// Ask 路徑不用(送出前已存檔,磁碟內容與草稿相同,AskAI 會清除它)。
-	DocDraft string `json:"docDraft,omitempty"`
+	// Ask 路徑不用(送出前已存檔,磁碟內容與草稿相同,AskAI 會清除它)。nil = 未提供;空字串 = 作者清空了全文,不是未提供。
+	DocDraft *string `json:"docDraft,omitempty"`
 }
 
 type Event struct {
@@ -312,8 +312,10 @@ func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
 		}
 	}
 	if p.Doc != "" {
-		text := p.DocDraft
-		if text == "" {
+		var text string
+		if p.DocDraft != nil {
+			text = *p.DocDraft
+		} else {
 			var err error
 			text, err = a.Proj.ReadFile(p.Doc)
 			if err != nil {
@@ -472,7 +474,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	}
 	defer logAsk() // 恰好一筆:唯一出口
 
-	p.DocDraft = "" // Ask 路徑不使用草稿:送出前已存檔,一律以磁碟內容估算(A6)
+	p.DocDraft = nil // Ask 路徑不使用草稿:送出前已存檔,一律以磁碟內容估算(A6)
 	msgs, err := a.BuildMessages(p)
 	if err != nil {
 		result, errMsg = "error", errText(err)

@@ -246,9 +246,10 @@ export default function ChatWindow(props: Props) {
     // (debounce 400ms,同 SuggestAttachments);usageTick 由 chat:done 與「新對話」觸發
     // (後端 History 變了但這些狀態沒變);請求進行中不重算(chat:done 後再算,PR #54 返工)。
     useEffect(() => {
+        // 世代計數:較早發出、較晚回來的回應不得覆蓋較新的用量;關閉或忙碌時也先遞增,讓在途的舊回應失效
+        const seq = ++usageSeq.current;
         if (!open) { setUsage(null); return; }
         if (busy) return; // 送出後的背景重算不介入執行中的請求;chat:done(busy=false)會再觸發
-        const seq = ++usageSeq.current; // 世代計數:較早發出、較晚回來的回應不得覆蓋較新的用量
         const id = setTimeout(() => {
             PreviewContext(params()).then(pv => {
                 if (seq !== usageSeq.current) return;
@@ -275,7 +276,7 @@ export default function ChatWindow(props: Props) {
         quickEdited: !!quickId && question !== quickQ,
         // 編輯器目前草稿(PR #54 返工):背景用量預覽在未存檔時也以草稿估算;
         // 只有預覽使用,Ask 送出前已存檔(後端會清掉這個欄位)
-        docDraft: withDoc && doc ? docText : '',
+        docDraft: withDoc && doc ? docText : undefined, // 空字串是作者清空全文,與未提供不同
     });
 
     const send = async () => {
