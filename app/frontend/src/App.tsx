@@ -3,7 +3,7 @@ import {GetSettings, GetTree, ProjectPath} from '../wailsjs/go/main/App';
 import {project} from '../wailsjs/go/models';
 import {TooltipProvider} from '@/components/ui/overlay';
 import {CrashPoint, onCrashRequest} from '@/components/ErrorBoundary';
-import {setProjectName, setRailLogoVisible} from '@/lib/shellState';
+import {setFrameVisible, setProjectName, setShellActions} from '@/lib/shellState';
 import {setCategoriesProject} from './panels/types';
 import Bookshelf from './Bookshelf';
 import Workspace from './Workspace';
@@ -27,9 +27,13 @@ function App() {
         document.documentElement.classList.toggle('light', theme !== 'dark');
     }, [theme]);
 
-    // 標題欄(在 RootBoundary 之外)靠這個模組層狀態取得作品名稱與「目前畫面看不看得到側欄 logo」
+    // 標題欄(在 RootBoundary 之外)靠這個模組層狀態取得作品名稱與「目前畫面看不看得到作品外框」與選單動作
     useEffect(() => { setProjectName(tree?.name ?? null); }, [tree]);
-    useEffect(() => { setRailLogoVisible(!!tree && !settings); }, [tree, settings]);
+    useEffect(() => { setFrameVisible(!!tree && !settings); }, [tree, settings]);
+    useEffect(() => {
+        setShellActions({settings: settings ? undefined : () => setSettings(true)});
+        return () => setShellActions({settings: undefined});
+    }, [settings]);
 
     // 分類快照綁定作品(SPEC §12.2 第二輪):以作品路徑為識別,切作品時清空並重查,
     // 世代計數忽略上一作品的在途結果;同作品的 tree 刷新(同路徑)不重置。

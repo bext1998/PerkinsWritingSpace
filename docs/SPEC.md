@@ -292,6 +292,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
      6. Notion 匯出頁首帶有「狀態」「簡介」屬性列。
    - **初步方向(未定案,2026-10-07 修正)**:Perkins 不假設設定集的寫法。作者重申每位作者寫設定集的方式都不一樣,因此否決前一版「實體從標題產生」——那只是從單一樣本歸納出的另一種固定結構,換成不用標題或用表格的作者一樣失效。改為:(1) 設定文件完全自由(分檔、資料夾、標題、表格都由作者決定),Perkins 只把它們當作可閱讀、搜尋、附加給 AI 的文字;(2) 登場索引與寫法檢查需要的「要追蹤的名字」與文件結構脫鉤,另立名詞清單(名稱、別名、指向設定所在的文件或段落),由作者新增,或由 AI 從設定中找出候選、作者確認後加入(G3/G4 不放寬);(3) AI 取用設定靠搜尋全部設定文件,把相關段落給作者預覽、同意後才送出(G2)。影響資料格式、Notion 匯入、登場索引與 AI 附加,須與作者討論定案並補強規格後才實作。
 12. **側欄與視窗框架設計微調**(2026-10-07 作者回饋):對圖形介面的側邊欄做小幅度設計調整。需決定:(a) 左側邊欄最上方 Perkins SVG 應用程式圖標要保留還是移除;(b) 重新設計客製視窗框架(`TitleBar.tsx`,無原生標題欄,見 §17.1)。動手前先提出設計方案給作者選定。
+   - **定案(2026-10-08,作者選 B 案)**:logo 不移除,移到標題欄左上角改為「應用程式選單」按鈕;圖示列頂端不再放 logo。標題欄與圖示列同色連成 L 形外框,內容區嵌在框內(左上圓角);側欄開關移到標題欄固定位置;作品名稱只在標題欄出現一次。上一步/下一步不做(Perkins 沒有瀏覽歷史)。選單目前只放既有功能(儲存、回到書櫃、設定);禪模式(第 6 項)等功能完成後再加入選單。規則見 §17.1。
 13. **修正:右鍵選單「詢問 AI」改為「詢問 Perkins Bot」**(2026-10-07 作者回饋):編輯器右鍵選單(`Editor.tsx`)的「詢問 AI…」改成「詢問 Perkins Bot…」;Perkins Bot 對話窗空白狀態提示(`ChatWindow.tsx`)中引用此選單名稱的文字一併更新。屬於只改文字的小修改,依 AGENTS.md 可直接提交 `main`,不必等其他項目(2026-10-07 Agent 提案,作者同意)。
 14. **Perkins Bot 大範圍改善**(2026-10-07 作者回饋):
    - **自動上下文壓縮正式化並提供開關**:現行已有對話壓縮(§12.3、§15「上下文預算」、B7),但沒有開關;需在設定頁加入開啟/關閉,關閉時須說明超出上下文長度時的處理方式(例如提示作者開新會話或手動壓縮)。
@@ -344,9 +345,9 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 
 - **應用程式顯示名稱**:`Perkins WritingSpace`。用於視窗標題(`app/main.go`)、`app/wails.json` 的 `info.productName`(決定 exe 檔案內容與工作列顯示)、`index.html` 與前端顯示應用程式名稱的文字。`info.productVersion` 為 `0.2.0`(對應第二階段規格 v0.2)。
 - **AI 助手名稱**:`Perkins Bot`。用於對話框標題與開啟按鈕的 title。泛指功能類別的「AI」字樣保留不改(例如「AI 模型」、「AI 一致性檢查」、「詢問 AI」與設定頁的說明文字)。
-- **圖示來源**:以作者 2026-09-30 選定的 `docs/perkins-icon-black-gold.png` 為原稿,產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(內含 16/24/32/48/64/128/256 各尺寸);側欄與標題欄的 logo 用向量版(見下一條)。造型與主配色不變,細節見 `docs/BRAND_ICON.md`。
+- **圖示來源**:以作者 2026-09-30 選定的 `docs/perkins-icon-black-gold.png` 為原稿,產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(內含 16/24/32/48/64/128/256 各尺寸);標題欄的 logo 用向量版(見下一條)。造型與主配色不變,細節見 `docs/BRAND_ICON.md`。
 - **刻意不改的內部識別**:`outputfilename`(維持 `perkins`,E2E 流程依賴 `perkins-dev.exe`)、Go module 與套件路徑 `perkins`、`%APPDATA%\Perkins` 設定目錄、專案內 `.perkins/` 與 `perkins.json`、keyring 服務名、`PERKINS_OPEN` 環境變數、`window.__perkins*` 開發鉤子。這些是磁碟與程式介面上的識別,改名會讓作者既有的設定、金鑰與作品讀不到。
-- **向量版 logo**:側欄與標題欄用 `app/frontend/src/assets/images/perkins-logo.svg`(兩色黑底圓角方塊 + 金色 P,由 PNG 原稿描圖);exe 圖示(`appicon.png`、`icon.ico`)仍用點陣原稿。
+- **向量版 logo**:標題欄(應用程式選單按鈕)用 `app/frontend/src/assets/images/perkins-logo.svg`(兩色黑底圓角方塊 + 金色 P,由 PNG 原稿描圖);exe 圖示(`appicon.png`、`icon.ico`)仍用點陣原稿。
 
 ### 17.1 視窗與關閉(2026-10-05)
 
@@ -366,7 +367,10 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   選 960 為門檻的理由:驗收尺寸中最大的是 960(1920×1080 縮放 100% 的半邊);≤960 時兩欄同開主編輯區最多只剩 348px(960),640 時只剩 28px,低於可用寫作寬度;960 以上不限制(1280×800 兩欄同開主編輯區約 668px,是既有 900×600 退化驗收的延伸情境)。互斥只看視窗寬度(`window.innerWidth` + `resize` 事件),與 900×600 工具列退化(看工具列自身寬度)獨立運作。
 - **設定頁窄寬度(640)**:「AI 模型」「平台輸出」的清單欄(220px)與表單在 lg(1024px)以下改上下堆疊(清單在上、表單滿寬)——三欄並排會把表單壓到約 148px、模型輸入框剩 24px,無水平捲軸但不可用(2026-10-07 返工)。表單控制項(input、下拉選單觸發器)可用寬度不得低於 200px;`Input`/`Textarea` 加 `min-w-0`、grid 欄一律 `minmax(0,1fr)`、按鈕列 `flex-wrap`,Input 的固有最小寬度不得把內容區撐出水平捲軸;左側導覽 200px 維持固定寬度(640 寬時內容區約 392px,不需收成圖示)。
 - **自畫標題欄**(`app/frontend/src/components/TitleBar.tsx`,高度 32px,疊在所有對話框之上):
-  - 左側顯示 `Perkins WritingSpace`;有開作品時顯示「作品名 — Perkins WritingSpace」。目前畫面看不見側欄 logo 時(書櫃、設定頁、錯誤畫面)左側加 20px 小 logo;作品編輯畫面已有側欄 logo,標題欄不重複放。是不是看得到側欄 logo 由外殼狀態(`lib/shellState.ts`)決定,不是只看「有沒有開作品」。
+  - **L 形外框(2026-10-08,§16 第 12 項)**:作品畫面時標題欄與圖示列同色(`bg-rail`)、標題欄不畫底線,內容區(側欄+編輯區+資訊欄)嵌在框內,左上圓角;內容區邊緣用不佔版面的陰影線(不用 border,避免 640 寬主編輯區少 1px)。書櫃、設定頁、錯誤畫面沒有作品外框,標題欄照常畫底線。是不是看得到作品外框由外殼狀態(`lib/shellState.ts`)決定,不是只看「有沒有開作品」。
+  - **應用程式選單**:左上角 60px 寬(與圖示列等寬、上下對齊)的 20px logo 按鈕,點開為下拉選單:頂端顯示 `Perkins WritingSpace`,下方依目前畫面列出可用項目——作品畫面:儲存(Ctrl+S,與存檔按鈕同一條序列化存檔流程)、回到書櫃、設定;書櫃:設定;設定頁開著或錯誤畫面:不列作品相關項目。選單動作由 App/Workspace 登記到外殼狀態,卸載時清掉。圖示列不再放 logo。
+  - **側欄開關**:作品外框看得到時在 logo 右側;收合後展開回到上次的面板。側欄標頭改顯示目前面板名稱(稿件、設定集、大綱與筆記、檢查)。
+  - 標題文字:有開作品時只顯示作品名(作品名不再在側欄標頭或未開檔的工具列重複出現);沒開作品時顯示 `Perkins WritingSpace`。
   - 右側為最小化、最大化/還原、關閉三顆按鈕(各約 46×32);關閉鈕滑過變紅底白字;最大化/還原圖示依 `WindowIsMaximised` 與 `resize` 事件切換。
   - 拖曳:空白處 `--wails-draggable: drag`,按鈕為 `no-drag`;雙擊拖曳區切換最大化(Wails v2.12 無內建雙擊,由前端自行呼叫 `WindowToggleMaximise`)。
   - 高度由 `lib/layout.ts` 的 `TITLEBAR_HEIGHT` 提供(標題欄、設定頁上緣、聊天浮窗拖曳上界共用)。

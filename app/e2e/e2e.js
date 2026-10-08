@@ -97,18 +97,67 @@ const maybe = async (name, fn, detail = '') => {
         check('標題欄 作品畫面存在', await page.isVisible('[data-testid=titlebar]'));
         check('標題欄 三顆視窗鈕存在', !!(await page.$('[data-testid=win-min]')) && !!(await page.$('[data-testid=win-max]')) && !!(await page.$('[data-testid=win-close]')));
         const wsTitle = (await page.textContent('[data-testid=titlebar-title]')).trim();
-        check('標題欄 作品畫面標題含作品名', wsTitle.includes('E2E測試') && wsTitle.includes('Perkins WritingSpace'), wsTitle);
-        check('標題欄 作品畫面不重複放 logo', !(await page.$('[data-testid=titlebar-logo]')));
+        check('標題欄 作品畫面標題為作品名(不再重複應用程式名稱)', wsTitle === 'E2E測試', wsTitle);
+        check('標題欄 作品名只出現在標題欄(側欄標頭改顯示面板名稱)',
+            (await page.textContent('[data-testid=sidebar-title]')).trim() === '稿件');
+        // L 形外框(SPEC §17.1):作品畫面標題欄與圖示列同色、標題欄不畫底線、logo 欄與圖示列等寬
+        const lFrame = await page.evaluate(() => {
+            const tb = document.querySelector('[data-testid=titlebar]');
+            const rail = document.querySelector('[data-testid=rail]');
+            const menu = document.querySelector('[data-testid=app-menu]');
+            return {tbBg: getComputedStyle(tb).backgroundColor, railBg: getComputedStyle(rail).backgroundColor,
+                tbBorder: getComputedStyle(tb).borderBottomWidth, menuW: menu.getBoundingClientRect().width,
+                railW: rail.getBoundingClientRect().width, railLogo: !!document.querySelector('[data-testid=rail-logo]')};
+        });
+        check('標題欄 作品畫面與圖示列同色、無底線,logo 欄與圖示列等寬',
+            lFrame.tbBg === lFrame.railBg && lFrame.tbBorder === '0px' && lFrame.menuW === lFrame.railW, JSON.stringify(lFrame));
+        check('品牌 圖示列不再放 logo', !lFrame.railLogo);
         await shot('50-titlebar-workspace-dark');
 
-        // 品牌(SPEC §17):側欄 logo 與 AI 助手名稱
+        // 品牌(SPEC §17):標題欄 logo 是應用程式選單
         const logoState = () => page.evaluate(() => {
-            const el = document.querySelector('[data-testid=rail-logo]');
+            const el = document.querySelector('[data-testid=app-menu] img');
             return el ? {tag: el.tagName, naturalWidth: el.naturalWidth, w: el.offsetWidth, h: el.offsetHeight} : null;
         });
         const logoDark = await logoState();
-        check('品牌 側欄 logo 是已載入的圖片', !!logoDark && logoDark.tag === 'IMG' && logoDark.naturalWidth > 0, JSON.stringify(logoDark));
-        check('品牌 側欄 logo 尺寸 36×36', !!logoDark && logoDark.w === 36 && logoDark.h === 36, JSON.stringify(logoDark));
+        check('品牌 標題欄 logo 是已載入的圖片', !!logoDark && logoDark.tag === 'IMG' && logoDark.naturalWidth > 0, JSON.stringify(logoDark));
+        check('品牌 標題欄 logo 尺寸 20×20', !!logoDark && logoDark.w === 20 && logoDark.h === 20, JSON.stringify(logoDark));
+        // 應用程式選單:作品畫面有儲存、回到書櫃、設定
+        await page.click('[data-testid=app-menu]');
+        await page.waitForSelector('[data-testid=app-menu-content]');
+        check('應用程式選單 作品畫面有儲存/回到書櫃/設定',
+            !!(await page.$('[data-testid=menu-save]')) && !!(await page.$('[data-testid=menu-bookshelf]')) && !!(await page.$('[data-testid=menu-settings]')));
+        await page.waitForTimeout(250); // 等開啟動畫結束再拍
+        await shot('57-app-menu-workspace');
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=app-menu-content]', {state: 'detached'});
+        // 選單「儲存」走與 Ctrl+S 相同的存檔流程:打字變未儲存 → 選單儲存 → 已儲存
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('選');
+        await page.waitForSelector('[data-testid=statusbar] >> text=未儲存');
+        await page.click('[data-testid=app-menu]');
+        await page.waitForSelector('[data-testid=app-menu-content]');
+        await page.click('[data-testid=menu-save]');
+        await page.waitForSelector('[data-testid=app-menu-content]', {state: 'detached'});
+        await page.waitForSelector('[data-testid=statusbar] >> text=已儲存', {timeout: 5000}).catch(() => {});
+        check('應用程式選單 儲存會存檔', (await page.textContent('[data-testid=statusbar]')).includes('已儲存'));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=statusbar] >> text=已儲存', {timeout: 5000}).catch(() => {});
+        // 側欄開關在標題欄:收合後再展開,回到原本的面板
+        await page.click('[data-testid=rail-bible]');
+        await page.waitForSelector('[data-testid=sidebar-title] >> text=設定集');
+        await page.click('[data-testid=titlebar-sidebar]');
+        await page.waitForTimeout(150);
+        const collapsed = !(await page.$('[data-testid=sidebar-title]'));
+        await page.click('[data-testid=titlebar-sidebar]');
+        await page.waitForSelector('[data-testid=sidebar-title]');
+        check('標題欄 側欄開關可收合並展開回原面板', collapsed && (await page.textContent('[data-testid=sidebar-title]')).trim() === '設定集');
+        await page.click('[data-testid=rail-manuscript]');
+        await page.waitForSelector('[data-testid=sidebar-title] >> text=稿件');
         const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'title');
         check('品牌 開啟按鈕標題為 Perkins Bot', fabTitle === 'Perkins Bot', String(fabTitle));
         await shot('40-brand-rail-dark');
@@ -125,7 +174,7 @@ const maybe = async (name, fn, detail = '') => {
         const errs0 = errors.length;
         await page.click('[data-testid=chapter-row]:has-text("第三章")');
         await page.waitForSelector('.cm-line:has-text("風停了")');
-        await page.click('aside button:has(svg.lucide-panel-left-close)');
+        await page.click('[data-testid=titlebar-sidebar]');
         await page.click('[data-testid=chat-fab]');
         await page.waitForTimeout(1000);
         check('收合側欄後在無設定的章節開啟 AI 視窗', await page.isVisible('[data-testid=chat-window]').catch(() => false) && errors.length === errs0,
@@ -505,7 +554,7 @@ const maybe = async (name, fn, detail = '') => {
         const cardSel = 'button[title="' + projB + '"], button[title="' + projB.replace(/\//g, '\\') + '"]';
         await page.waitForSelector(cardSel, {timeout: 10000});
         await page.click(cardSel);
-        await page.waitForSelector('aside span[title="乙作品"]', {timeout: 30000});
+        await page.waitForFunction(n => document.querySelector("[data-testid=titlebar-title]")?.textContent.trim() === n, "乙作品", {timeout: 30000});
         await page.click('[data-testid=rail-bible]');
         await page.waitForSelector('[data-testid=manage-categories]');
         await page.click('[data-testid=manage-categories]');
@@ -544,7 +593,7 @@ const maybe = async (name, fn, detail = '') => {
         const cardA = 'button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]';
         await page.waitForSelector(cardA, {timeout: 10000});
         await page.click(cardA);
-        await page.waitForSelector('aside span[title="E2E測試"]', {timeout: 30000});
+        await page.waitForFunction(n => document.querySelector("[data-testid=titlebar-title]")?.textContent.trim() === n, "E2E測試", {timeout: 30000});
         await page.evaluate(() => { if (window.__etRestore) window.__etRestore(); });
         // (回歸#8)清理:只清本次建立的路徑;預先存在的 guardDir 檔案必須還在
         const guardOk = fs.existsSync(guardFile);
@@ -616,8 +665,16 @@ const maybe = async (name, fn, detail = '') => {
         const spBox = await page.locator('[data-testid=settings-page]').boundingBox();
         check('標題欄 設定頁仍可見且未被蓋住', !!tbBox && !!spBox && tbBox.height > 0 && spBox.y >= tbBox.y + tbBox.height - 1,
             JSON.stringify({titlebarBottom: tbBox && tbBox.y + tbBox.height, settingsTop: spBox && spBox.y}));
-        // 設定頁蓋住側欄 logo → 標題欄要補上小 logo(不是只看「有沒有開作品」)
-        check('標題欄 設定頁蓋住側欄 logo 時標題欄有小 logo', !!(await page.$('[data-testid=titlebar-logo]')));
+        // 設定頁蓋住作品外框 → 標題欄畫底線、不提供側欄開關與作品項目(不是只看「有沒有開作品」)
+        check('標題欄 設定頁時有底線且無側欄開關',
+            await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid=titlebar]')).borderBottomWidth !== '0px')
+            && !(await page.$('[data-testid=titlebar-sidebar]')));
+        await page.click('[data-testid=app-menu]');
+        await page.waitForSelector('[data-testid=app-menu-content]');
+        check('應用程式選單 設定頁時不提供回到書櫃/儲存/設定',
+            !(await page.$('[data-testid=menu-bookshelf]')) && !(await page.$('[data-testid=menu-save]')) && !(await page.$('[data-testid=menu-settings]')));
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=app-menu-content]', {state: 'detached'});
         await shot('56-titlebar-settings-logo');
         await shot('52-titlebar-settings');
         await shot('10-settings-models');
@@ -631,7 +688,7 @@ const maybe = async (name, fn, detail = '') => {
         await page.click('[data-testid=close-settings]');
         await page.waitForTimeout(300);
         await shot('12-light-theme');
-        check('標題欄 離開設定頁回到作品畫面後收起小 logo', !(await page.$('[data-testid=titlebar-logo]')));
+        check('標題欄 離開設定頁回到作品畫面後恢復側欄開關', !!(await page.$('[data-testid=titlebar-sidebar]')));
 
         // 淺色主題下的標題欄
         check('標題欄 淺色主題仍存在', await page.isVisible('[data-testid=titlebar]'));
@@ -661,7 +718,16 @@ const maybe = async (name, fn, detail = '') => {
             (document.querySelector('[data-testid=titlebar-title]')?.textContent || '').trim() === 'Perkins WritingSpace',
             null, {timeout: 3000}).catch(() => {});
         check('標題欄 書櫃顯示應用程式名稱', (await page.textContent('[data-testid=titlebar-title]')).trim() === 'Perkins WritingSpace');
-        check('標題欄 書櫃有小 logo', !!(await page.$('[data-testid=titlebar-logo]')));
+        check('標題欄 書櫃有 logo 選單', !!(await page.$('[data-testid=app-menu] img')));
+        await page.click('[data-testid=app-menu]');
+        await page.waitForSelector('[data-testid=app-menu-content]');
+        check('應用程式選單 書櫃只有設定', !!(await page.$('[data-testid=menu-settings]'))
+            && !(await page.$('[data-testid=menu-bookshelf]')) && !(await page.$('[data-testid=menu-save]')));
+        await page.click('[data-testid=menu-settings]');
+        await page.waitForSelector('[data-testid=settings-page]', {timeout: 3000}).catch(() => {});
+        check('應用程式選單 設定項可開啟設定頁', !!(await page.$('[data-testid=settings-page]')));
+        await page.click('[data-testid=close-settings]');
+        await page.waitForSelector('[data-testid=bookshelf-title]');
         // 既有檢查的 flaky race(已知問題,原因未明,見 docs/PROGRESS.md):先等列 render 再斷言,不弱化檢查
         await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {});
         check('書櫃顯示最近的作品', !!(await page.$('p:has-text("E2E測試")')));
@@ -2193,7 +2259,8 @@ const maybe = async (name, fn, detail = '') => {
                 const r = document.querySelector(`[data-testid=${id}]`)?.getBoundingClientRect();
                 return r && r.width > 0 && r.height > 0 && r.right <= window.innerWidth + 1;
             })));
-        check('標題欄 640×672 下有側欄 logo 與編輯器', !!(await page.$('[data-testid=rail-logo]')) && !!(await page.$('.cm-content')));
+        check('標題欄 640×672 下有 logo 選單、側欄開關與編輯器', !!(await page.$('[data-testid=app-menu]'))
+            && !!(await page.$('[data-testid=titlebar-sidebar]')) && !!(await page.$('.cm-content')));
         await shot('54-titlebar-min-640x672');
 
         // ===== 半螢幕並排(SPEC §16 第 7 項):640×672 =====
