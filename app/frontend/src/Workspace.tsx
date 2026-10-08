@@ -8,7 +8,7 @@ import {
     ResearchOpenFile, SaveFile, SetChapterStatus, WordCount,
 } from '../wailsjs/go/main/App';
 import {bible, main, project} from '../wailsjs/go/models';
-import Editor, {EditorHandle, Selection} from './Editor';
+import Editor, {EditorHandle, EditorPos, Selection} from './Editor';
 import ChatWindow, {ChatRequest} from './ChatWindow';
 import VersionDialog from './VersionDialog';
 import SummaryDialog from './SummaryDialog';
@@ -101,6 +101,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [summaryTick, setSummaryTick] = useState(0);
     const editor = useRef<EditorHandle>(null);
     const loaded = useRef<string | null>(null);
+    // 切章位置記憶(§16 第 24 項第一層):檔案路徑 → 上次游標(選取)與捲動位置;
+    // 只存在記憶體(本次執行期間),不寫檔。Editor 掛載時讀取還原、編輯/捲動時寫回,
+    // 因此外部重載(reloadCurrent、接受提案)重掛後也回到原位置,超出文件長度由 Editor 夾住。
+    const posMemo = useRef(new Map<string, EditorPos>());
     // 工具列寬度退化(SPEC §17.1):用 ResizeObserver 量工具列自身寬度(contentRect 不含 px-4 內距),
     // 依寬度把按鈕從「完整文字」→「只剩圖示(保留 title/aria-label)」→「隱藏次要按鈕」三段退化。
     // 588/408 是實測門檻:900×600、側欄+資訊欄都開時主編輯區約 288px(content 256)落最窄段;
@@ -330,6 +334,23 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [saveNow]);
+
+    // 全域 Ctrl+F / Ctrl+H(§16 第 24 項第一層):編輯器未聚焦時(作品畫面任何地方)按也開啟
+    // 搜尋/取代面板並聚焦輸入框。編輯器聚焦時不會走到這裡(cm-content 是 contenteditable,
+    // 由 Editor 的 searchKeymap 處理);輸入框、對話框、Perkins Bot 浮窗、選單內不攔截;
+    // 沒有開檔時不做任何事。
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (!(e.ctrlKey || e.metaKey) || (e.key !== 'f' && e.key !== 'h')) return;
+            const t = e.target as HTMLElement | null;
+            if (t?.closest?.('input, textarea, select, [contenteditable="true"], [role=dialog], [role=menu], [data-testid=chat-window]')) return;
+            if (!latest.current.current) return; // 沒有開檔:不做任何事
+            e.preventDefault();
+            editor.current?.openSearch(e.key.toLowerCase() === 'h');
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, []);
 
     const goBookshelf = useCallback(async () => {
         try { await save(); CloseProject(); onClose(); } catch (e) { fail(e); }
@@ -593,7 +614,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);

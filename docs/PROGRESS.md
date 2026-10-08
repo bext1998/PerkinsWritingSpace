@@ -1,5 +1,23 @@
 # PROGRESS.md
 
+## 2026-10-08 — 編輯器手感(§16 第 24 項第一層剩餘)
+
+- **切章位置記憶**:`Workspace` 持有 `posMemo` Map(檔案路徑 → {anchor, head, scrollTop},只存記憶體不寫檔);`Editor` 掛載時讀取還原、選取/捲動變動時持續寫回(updateListener + scroll 事件 rAF 節流),因此外部重載(`reloadCurrent`、接受提案、`applyHeader`)重掛後也回到原位置。相容性靠既有機制:過期導覽由 `navSeq` 擋、重掛由 `key={current}:{reloadKey}`。陷阱:
+  - 掛載還原的 `dispatch(selection)` 自己會觸發 `selectionSet` → 把 `scrollTop=0` 寫回 Map 蓋掉記住的值:還原期間用旗標擋 `savePos`。
+  - 捲動還原要等 CM 排版(首次排版捲動高度逐步長大),等不到目標高度就重試(最多約 40 frame);不額外 `scrollIntoView`(游標在可視範圍外時會把捲動位置拉走)。
+  - 超出文件長度夾住(`Math.min(saved, len)`):外部重載縮短後 `EditorSelection.range` 超界會拋錯(「Selection points outside of document」),E2E 已驗。
+- **全域 Ctrl+F / Ctrl+H**:`Workspace` 的 window keydown;編輯器聚焦時不會走到這裡(cm-content 是 contenteditable,由 Editor 的 searchKeymap 處理);守衛 `input, textarea, select, [contenteditable=true], [role=dialog], [role=menu], [data-testid=chat-window]`(對話框、Perkins Bot 浮窗、選單內不攔截);沒有開檔不做任何事。Editor 新增 `openSearch(replace?)` handle。
+- **視窗縮放游標穩定**:Editor 內 `ResizeObserver`(rAF 節流)觀察自身寬高,游標(`coordsAtPos`)落在可視範圍外才以 `scrollIntoView(nearest)` 最小捲動帶回(不跳到頂端,本來就看得到就不動);≤960 側欄/資訊欄互斥收合的情境由 E2E 以 640×672 實測。
+- **貼上的格式處理**:CodeMirror 原生 paste 只取純文字圖層(帶 `text/html` 雙格式的合成 paste 事件也只插入 plain,已驗證,不需改);右鍵選單「貼上」走前端 `clipboard.readText()`,補 `\r\n→\n` 正規化(不做其他改寫)。
+- **長章節實測**:約 7.7 萬字章節(E2E fixture 動態建立),輸入一個字到畫面更新中位數 19–22ms、最大 21–31ms(10 次),捲動定位 16–27ms;無明顯問題,**未改程式**。
+- **E2E**:新增 13 項檢查(貼上 3、全域鍵 4、長章量測 1、縮放穩定 1、位置記憶 3 + 前置 1);全段在 IME 段之後,檢查間會關閉開著的面板。**破壞驗證(三輪)**:(1) 移除夾住 + 縮放保護 + 全域鍵 + 貼上正規化 → 縮放穩定 FAIL(游標不可視)、夾住移除後「Selection points outside of document」炸掉編輯器(JS 錯誤檢查抓到)、貼上檢查 FAIL;(2) 移除還原 + 不攔截守衛 → 切章還原 FAIL(anchor 46→0、scroll 360→0)、Perkins Bot 輸入框與對話框內 Ctrl+F 被攔截(兩項 FAIL);(3) 全域鍵移除 + 貼上插錯內容 → 全域鍵兩項 FAIL;貼上檢查原以「文件變長」為容差,收緊為「嚴格內容斷言 + 剪貼簿確認」後破壞版必 FAIL。還原後全綠。
+- **E2E 陷阱(重要)**:
+  - E4a 段(crash/救援)把 `navigator.clipboard.writeText` 換成不寫真剪貼簿的替身,之後未還原;該段結尾 app 會 reload(替身消失),但無頭環境真 `writeText` 在此之後仍偶發不生效(寫入 resolve、讀回仍是舊內容)→ 右鍵貼上檢查用雙軌斷言:剪貼簿是預期測試文字時驗內容,不生效時(殘留的救援複本仍含 `\r\n`)以「文件精確變長 + 無 `\r`」驗正規化,兩軌都能抓到破壞。
+  - Chromium 右鍵點擊會把游標移到點擊處(貼入位置在中間,不是檔尾);右鍵選單用明確座標 + `waitForSelector('.ctxmenu')`。
+  - 還原捲動的 `maxScroll` 掛載當下為 0(視埠未排版),要等排版完成重試。
+  - 每輪 run 前重建 fixture + 重啟 wails dev(run 會新增章節/修改檔案,不重置會讓章節數檢查與存檔類檢查互相汙染)。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**349/349 passed,略過 8 項**。截圖:`app/e2e/shots/70-global-find.png`(全域 Ctrl+F)、`71-resize-640-stable.png`(640 縮放後游標可視)、`72-long-chapter.png`(長章)、`73-position-restored.png`(切章還原選取+捲動),均已親自檢視。**IME(A9)未驗證**:無頭環境無真實 IME,真實 IME(注音/倉頡)仍待作者實機確認。
+
 ## 2026-10-08 — 搜尋面板返工二(PR #23 審查修復)
 
 - **#1(Major)面板顯示與實際取代條件不同步**:`openSearchPanel` 等內建流程會用 `setSearchQuery` effect 帶入新條件(例如回編輯器選取「天」再按 Ctrl+H,實際 query 變成「天→空」),自訂面板的 `update()` 沒處理,會顯示舊條件(森林→樹林),作者按「全部取代」實際卻刪「天」。修法:`update()` 掃 transactions 的 effects,`setSearchQuery` 且不等於目前 query 時呼叫 `setQuery()` 同步兩欄與比對數。**回歸檢查**:面板開著輸入「森林→樹林」→ 回編輯器選取「天」(TreeWalker 找文字節點,行內文字包在 highlight span 裡,不能用 `.cm-line` 直接子節點找)→ Ctrl+H → 斷言面板顯示「天→空」、比對數 1/1、選取高亮在「天」→ 全部取代後文件確實移除「天」且走正常 dirty → 存檔流程。**破壞驗證**:拿掉 update() 同步 → FAIL,症狀與審查描述一致(synced=森林/樹林/2/2,sel=天);還原 → PASS。
