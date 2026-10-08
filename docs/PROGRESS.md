@@ -1,5 +1,10 @@
 # PROGRESS.md
 
+## 2026-10-09 — Bot 浮窗用量返工(PR #54 審查)
+
+- `App.PreviewContext` 在請求進行中(`a.cancel != nil`)時不再呼叫 `prepare()`,沿用執行中 Agent 的端點設定估算(背景重算不得繞過送出確認換端點;App 層回歸測試 `TestPreviewContextDoesNotTouchRunningAgent`);前端 `busy` 期間停止背景重算,`chat:done` 後再算。
+- 背景預覽改用編輯器目前草稿:`AskParams` 新增僅供 Preview 的 `docDraft`,`BuildMessages` 以它取代目前文件的磁碟內容;`AskAI` 清除該欄位(送出前已存檔,兩者相同;回歸測試 `TestPreviewUsesDocDraftButAskDoesNot` + E2E「未存草稿的用量反映草稿內容」)。重算依賴補 `keepSel` 與目前端點的 `contextTokens`;用量重算加世代計數,過期回應不覆蓋。全新 fixture `--all`(E2E_SKIP_AI=1)381/381 passed(基準 380 + 1),略過 8 項。
+
 ## 2026-10-09 — Bot 浮窗上下文用量 + 送出預覽來源標示(Issue #37 部分)
 
 範圍:用量百分比與來源標示先行;壓縮狀態指示與開關等 #32 定案,本輪不做。

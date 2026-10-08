@@ -9,6 +9,7 @@ export namespace agent {
 	    priorSummaries: boolean;
 	    quickId?: string;
 	    quickEdited?: boolean;
+	    docDraft?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AskParams(source);
@@ -24,6 +25,7 @@ export namespace agent {
 	        this.priorSummaries = source["priorSummaries"];
 	        this.quickId = source["quickId"];
 	        this.quickEdited = source["quickEdited"];
+	        this.docDraft = source["docDraft"];
 	    }
 	}
 	export class Preview {

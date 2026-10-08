@@ -118,6 +118,7 @@ export default function ChatWindow(props: Props) {
     const [quickId, setQuickId] = useState<string | undefined>();
     const [quickQ, setQuickQ] = useState('');
     const [pos, setPos] = useState<{x: number; y: number} | null>(null);
+    const usageSeq = useRef(0); // 用量重算的世代計數(PR #54 返工):過期回應不得覆蓋較新用量
     // 上下文用量(§16 第 16 項):「目前對話若現在送出」佔可用上下文的百分比。
     // 數字與程式判斷一致:直接用後端 PreviewContext 回傳的 tokens 與 limit(= ContextTokens − replyReserve,與 Ask 超預算判斷同一套),
     // 前端不重算公式;limit=0(端點未設定上下文長度)時不顯示。
@@ -241,19 +242,23 @@ export default function ChatWindow(props: Props) {
         return () => clearTimeout(id);
     }, [open, sel, docText, withDoc, isChapter]);
 
-    // 上下文用量:開啟浮窗、問題/選取/附加/目前文件等組成改變時重算(debounce 400ms,同 SuggestAttachments);
-    // usageTick 由 chat:done 與「新對話」觸發(後端 History 變了但這些狀態沒變)。
+    // 上下文用量:開啟浮窗、問題/選取/附加/目前文件/選取附加資格(keepSel)等組成改變時重算
+    // (debounce 400ms,同 SuggestAttachments);usageTick 由 chat:done 與「新對話」觸發
+    // (後端 History 變了但這些狀態沒變);請求進行中不重算(chat:done 後再算,PR #54 返工)。
     useEffect(() => {
         if (!open) { setUsage(null); return; }
+        if (busy) return; // 送出後的背景重算不介入執行中的請求;chat:done(busy=false)會再觸發
+        const seq = ++usageSeq.current; // 世代計數:較早發出、較晚回來的回應不得覆蓋較新的用量
         const id = setTimeout(() => {
             PreviewContext(params()).then(pv => {
+                if (seq !== usageSeq.current) return;
                 setUsage(pv.limit > 0 ? {tokens: pv.tokens, limit: pv.limit} : null); // limit=0:端點未設定上下文長度,不顯示
-            }).catch(() => setUsage(null)); // 無可用端點等錯誤:不顯示
+            }).catch(() => { if (seq === usageSeq.current) setUsage(null); }); // 無可用端點等錯誤:不顯示
         }, 400);
         return () => clearTimeout(id);
         // params 由下列狀態組成;cfg/profile 變了(切換模型、上下文長度)也要重算
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [open, question, sel, attach, withDoc, doc, docText, prior, mode, usageTick, cfg?.active, profile?.model]);
+    }, [open, question, sel, attach, withDoc, doc, docText, prior, mode, keepSel, usageTick, busy, cfg?.active, profile?.model, profile?.contextTokens]);
 
     // 送出的選取:來源不是目前文件時,除非作者明確點「仍要附加」,預設不送出
     const selStale = !!sel && !!selFrom && selFrom !== doc;
@@ -268,6 +273,9 @@ export default function ChatWindow(props: Props) {
         priorSummaries: prior && withDoc && isChapter,
         quickId: quickId ?? '',
         quickEdited: !!quickId && question !== quickQ,
+        // 編輯器目前草稿(PR #54 返工):背景用量預覽在未存檔時也以草稿估算;
+        // 只有預覽使用,Ask 送出前已存檔(後端會清掉這個欄位)
+        docDraft: withDoc && doc ? docText : '',
     });
 
     const send = async () => {

@@ -495,6 +495,38 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+// 意圖(PR #54 返工):背景用量預覽要在作者還沒存檔時就反映編輯器草稿(DocDraft 取代磁碟內容);
+// Ask 路徑不使用草稿(送出前已存檔,磁碟內容與草稿相同),不會被草稿拖進超預算路徑。
+func TestPreviewUsesDocDraftButAskDoesNot(t *testing.T) {
+	a, s, _ := setup(t)
+	a.ContextTokens = 2000
+	long := strings.Repeat("草", 3000) // 草稿比磁碟內容長很多:足以讓預覽超過 limit=1500,但磁碟內容不會
+	// 預覽:用草稿估算,超過可用上下文
+	pv, err := a.Preview(AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: long})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pv.Over {
+		t.Fatalf("草稿超過 limit 時預覽應標示超過: tokens=%d limit=%d", pv.Tokens, pv.Limit)
+	}
+	if !strings.Contains(pv.Messages[len(pv.Messages)-1].Content, "【目前文件】manuscript/第一章.md") {
+		t.Fatal("預覽仍應包含目前文件段")
+	}
+	// Ask:同參數(含 DocDraft)走 Ask,應以磁碟內容送出且成功(不超預算、不使用草稿)
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q", Doc: "manuscript/第一章.md", DocDraft: long}, func(Event) {}); err != nil {
+		t.Fatalf("Ask 不應使用草稿估算而拒絕送出: %v", err)
+	}
+	reqMsgs := s.reqs[len(s.reqs)-1].Messages
+	userMsg := reqMsgs[len(reqMsgs)-1].Content
+	if strings.Contains(userMsg, long) {
+		t.Fatal("Ask 送出的請求不得使用草稿內容")
+	}
+	if !strings.Contains(userMsg, "小明走進森林") {
+		t.Fatalf("Ask 送出的請求應用磁碟內容: %s", userMsg[:60])
+	}
+}
+
 // ---- 研究記錄(§12.8) ----
 
 // rlogText 讀回研究記錄全文(不存在時回傳空字串)。

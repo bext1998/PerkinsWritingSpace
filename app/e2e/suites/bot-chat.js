@@ -90,10 +90,11 @@ module.exports = {
         await page.waitForSelector('[data-testid=context-usage]', {timeout: 5000});
         const shown = (await page.textContent('[data-testid=context-usage]')).trim();
         const qNow = await page.inputValue('[data-testid=question]');
-        const pvCtx = await page.evaluate(q => window.go.main.App.PreviewContext({
+        const draftNow = await page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map(l => l.textContent).join('\n'));
+        const pvCtx = await page.evaluate(([q, draft]) => window.go.main.App.PreviewContext({
             question: q, doc: 'manuscript/第一章.md', selection: '', attachments: [], mode: '',
-            priorSummaries: false, quickId: '', quickEdited: false,
-        }), qNow);
+            priorSummaries: false, quickId: '', quickEdited: false, docDraft: draft,
+        }), [qNow, draftNow]);
         const expectPct = Math.round(pvCtx.tokens / pvCtx.limit * 100);
         check('context-usage 顯示百分比與 PreviewContext(tokens/limit)一致',
             shown === `上下文 ${expectPct}%`, `shown=${shown} expect=${expectPct}% tokens=${pvCtx.tokens} limit=${pvCtx.limit}`);
@@ -132,18 +133,39 @@ module.exports = {
                 const m = el.textContent.match(/(\d+)%/);
                 return m && parseInt(m[1]) > 100;
             }, null, {timeout: 5000});
-            // 小 limit 下百分比有意義,再做一次精確一致性比對(此時附加了艾莉絲與雷恩)
+            // 小 limit 下百分比有意義,再做一次精確一致性比對(此時附加了艾莉絲與雷恩;docDraft 帶當下編輯器內容)
             const shownTiny = (await page.textContent('[data-testid=context-usage]')).trim();
-            const pvTiny = await page.evaluate(() => window.go.main.App.PreviewContext({
+            const draftTiny = await page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map(l => l.textContent).join('\n'));
+            const pvTiny = await page.evaluate(draft => window.go.main.App.PreviewContext({
                 question: 'q', doc: 'manuscript/第一章.md', selection: '',
                 attachments: ['canon/艾莉絲.md', 'canon/雷恩.md'], mode: '',
-                priorSummaries: false, quickId: '', quickEdited: false,
-            }));
+                priorSummaries: false, quickId: '', quickEdited: false, docDraft: draft,
+            }), draftTiny);
             const expectTiny = Math.round(pvTiny.tokens / pvTiny.limit * 100);
             check('超量時 context-usage 百分比也與 PreviewContext(tokens/limit)一致',
                 shownTiny === `上下文 ${expectTiny}%`, `shown=${shownTiny} expect=${expectTiny}% tokens=${pvTiny.tokens} limit=${pvTiny.limit}`);
             const cls = await page.$eval('[data-testid=context-usage]', el => el.className);
             check('超過 100% 時 context-usage 用警示色(同 preview-over 語意)', cls.includes('text-warning'), cls);
+
+            // 未存草稿也反映在用量(PR #54 返工):在編輯器插入一大段字但不存檔,用量應以草稿估算
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.insertText('這是一段還沒存檔的草稿。'.repeat(60)); // 約 660 字,不改變附加
+            const draftUnsaved = await page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map(l => l.textContent).join('\n'));
+            const pvDraft = await page.evaluate(draft => window.go.main.App.PreviewContext({
+                question: 'q', doc: 'manuscript/第一章.md', selection: '',
+                attachments: ['canon/艾莉絲.md', 'canon/雷恩.md'], mode: '',
+                priorSummaries: false, quickId: '', quickEdited: false, docDraft: draft,
+            }), draftUnsaved);
+            const expectDraft = `上下文 ${Math.round(pvDraft.tokens / pvDraft.limit * 100)}%`;
+            await page.waitForFunction(exp => {
+                const el = document.querySelector('[data-testid=context-usage]');
+                return el && el.textContent.trim() === exp;
+            }, expectDraft, {timeout: 5000});
+            const shownDraft = (await page.textContent('[data-testid=context-usage]')).trim();
+            check('未存草稿的用量反映草稿內容',
+                shownDraft === expectDraft && pvDraft.tokens > pvTiny.tokens, `shown=${shownDraft} expect=${expectDraft} delta=${pvDraft.tokens - pvTiny.tokens}`);
+            await page.keyboard.press('Control+Z'); // 還原草稿:不留內容給後面的組(存檔前還原,dirty 也消失)
         } finally {
             // 還原使用者設定(原端點與模型;只刪本次建立的暫時端點)
             await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [orig.active, origModel]);

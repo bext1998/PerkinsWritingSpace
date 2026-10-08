@@ -46,7 +46,8 @@ module.exports = {
 
         // ===== Perkins Bot 浮窗 640 寬可讀性(Issue #37 部分):context-usage 可見、不擠壞標題列與輸入區 =====
         // close-guard 把浮窗拖到寬視窗的位置;640 下事件點會落在視窗外拖不回來,
-        // 所以暫時放大到 1440 把浮窗拖回左上,再縮回 640 量測
+        // 所以暫時放大到 1440 把浮窗拖回左上,再縮回 640 量測(暫時避開 #55 的既有產品問題,
+        // #55 修好後移除這段變通)
         await page.setViewportSize({width: 1440, height: 900});
         await page.click('[data-testid=chat-fab]');
         await page.waitForSelector('[data-testid=chat-window]:visible');
