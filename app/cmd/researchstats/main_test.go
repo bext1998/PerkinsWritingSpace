@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -264,4 +265,39 @@ func TestComputeCompactUnpaired(t *testing.T) {
 	if s.Compactions != 0 || s.ContextBeforeAvg != nil || s.ContextAfterAvg != nil {
 		t.Fatalf("無法配對時應為 0/nil,得 Compactions=%d", s.Compactions)
 	}
+}
+
+// 混合記錄:一筆舊版 compact(無法確認)+ 一筆成功但沒有後續 ask 的新版 compact。
+// 統計應為 0 配對、1 未知;說明文字不得聲稱「壓縮都是舊版格式」(其中一筆是新版)。
+func TestComputeMixedCompactNote(t *testing.T) {
+	lines := []string{
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{compactReqLegacy(500), askReq(30)}}),
+		line(t, "ask", "s1", fields{"sent": true, "requests": []fields{askReq(40), compactReq(600, true)}}),
+	}
+	s := compute(lines)
+	if s.Compactions != 0 || s.CompactionsUnknown != 1 {
+		t.Fatalf("Compactions=%d Unknown=%d, 應為 0/1", s.Compactions, s.CompactionsUnknown)
+	}
+	out := captureStdout(t, func() { printHuman("mixed.jsonl", s) })
+	if strings.Contains(out, "都是舊版") {
+		t.Fatalf("混合記錄時說明不得斷言全部是舊版:\n%s", out)
+	}
+	if !strings.Contains(out, "另外有 1 次壓縮無法確認") || !strings.Contains(out, "資料不足") {
+		t.Fatalf("應列出 1 次無法確認並標示資料不足:\n%s", out)
+	}
+}
+
+func captureStdout(t *testing.T, f func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	f()
+	os.Stdout = old
+	w.Close()
+	b, _ := io.ReadAll(r)
+	return string(b)
 }

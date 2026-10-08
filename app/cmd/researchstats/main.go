@@ -308,11 +308,7 @@ func printHuman(path string, s *stats) {
 		fmt.Printf("另外有 %d 次壓縮無法確認是否套用(舊版記錄的 compact 請求沒有 ok 欄位),不計入統計。\n", s.CompactionsUnknown)
 	}
 	if s.Compactions == 0 {
-		if s.CompactionsUnknown > 0 {
-			fmt.Println("資料不足:記錄中的壓縮都是舊版格式(無 ok 欄位),無法確認是否成功套用,無法統計。")
-		} else {
-			fmt.Println("資料不足:記錄中沒有可配對的壓縮(成功的 compact 請求之後,同 session 內再沒有帶 ask 請求的事件)。")
-		}
+		fmt.Println(insufficientCompactNote)
 	} else {
 		if s.ContextBeforeAvg != nil {
 			fmt.Printf("壓縮前平均 %.0f 字元\n", *s.ContextBeforeAvg)
@@ -322,6 +318,10 @@ func printHuman(path string, s *stats) {
 		}
 	}
 }
+
+// 新舊記錄可能混在一起(例如一筆舊版 compact 加一筆成功但還沒有後續 ask 的新版 compact),
+// 所以不推斷是哪一種原因;無法確認的次數已在上一行另外列出。
+const insufficientCompactNote = "資料不足:沒有可確認成功且完成配對的壓縮(成功的 compact 請求之後,需在同一事件或同 session 的後續事件中有 ask 請求)。"
 
 func pct(a, b int) float64 {
 	if b == 0 {
