@@ -30,6 +30,7 @@ export namespace agent {
 	    messages: llm.Message[];
 	    tokens: number;
 	    budget: number;
+	    limit: number;
 	    over: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -41,6 +42,7 @@ export namespace agent {
 	        this.messages = this.convertValues(source["messages"], llm.Message);
 	        this.tokens = source["tokens"];
 	        this.budget = source["budget"];
+	        this.limit = source["limit"];
 	        this.over = source["over"];
 	    }
 	

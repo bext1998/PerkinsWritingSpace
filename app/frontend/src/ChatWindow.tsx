@@ -97,6 +97,9 @@ export default function ChatWindow(props: Props) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [attach, setAttach] = useState<string[]>([]);
+    // 附加來源(§16 第 16 項):作者手動附加(迴紋針/點選)= manual;採用建議附加(點建議標籤、檢查面板帶入)= suggested。
+    // 只影響送出預覽的來源標示,不改變送出內容本身。
+    const [attachSrc, setAttachSrc] = useState<Record<string, 'manual' | 'suggested'>>({});
     const [withDoc, setWithDoc] = useState(true);
     const [sel, setSel] = useState<string | null>(null);
     // 選取來源(§16 第 1 項 02):記住選取來自哪個檔案;切章後來源≠目前文件時警示,送出預設不附加
@@ -115,6 +118,11 @@ export default function ChatWindow(props: Props) {
     const [quickId, setQuickId] = useState<string | undefined>();
     const [quickQ, setQuickQ] = useState('');
     const [pos, setPos] = useState<{x: number; y: number} | null>(null);
+    // 上下文用量(§16 第 16 項):「目前對話若現在送出」佔可用上下文的百分比。
+    // 數字與程式判斷一致:直接用後端 PreviewContext 回傳的 tokens 與 limit(= ContextTokens − replyReserve,與 Ask 超預算判斷同一套),
+    // 前端不重算公式;limit=0(端點未設定上下文長度)時不顯示。
+    const [usage, setUsage] = useState<{tokens: number; limit: number} | null>(null);
+    const [usageTick, setUsageTick] = useState(0); // 後端 History 變了但前端狀態沒變時(chat:done、新對話)手動觸發重算
     const bottom = useRef<HTMLDivElement>(null);
     const box = useRef<HTMLDivElement>(null);
     const input = useRef<HTMLTextAreaElement>(null);
@@ -146,7 +154,14 @@ export default function ChatWindow(props: Props) {
             setSelFrom(doc); // 帶入選取時記下來源(此時的 doc 就是選取來源)
             setKeepSel(false);
         }
-        if (request.attach?.length) setAttach(a => [...new Set([...a, ...request.attach!])]);
+        if (request.attach?.length) {
+            setAttach(a => [...new Set([...a, ...request.attach!])]);
+            setAttachSrc(m => {
+                const n = {...m};
+                for (const p of request.attach!) if (!(p in n)) n[p] = 'suggested'; // 檢查面板帶入 = 建議附加;已手動附加的不覆蓋
+                return n;
+            });
+        }
         if (request.priorSummaries) setPrior(true);
         setTimeout(() => input.current?.focus(), 50);
     }, [request?.nonce]);
@@ -182,6 +197,7 @@ export default function ChatWindow(props: Props) {
         const offDone = EventsOn('chat:done', (d: {reply: string; error?: string}) => {
             setBusy(false);
             refreshProposals();
+            setUsageTick(t => t + 1); // 對話(含壓縮後)寫回後端 History,用量要重算
             if (d.error) setError(d.error);
         });
         return () => { offEvent(); offDone(); };
@@ -224,6 +240,20 @@ export default function ChatWindow(props: Props) {
         const id = setTimeout(() => SuggestAttachments(text).then(r => setSuggest(r ?? [])).catch(() => setSuggest([])), 400);
         return () => clearTimeout(id);
     }, [open, sel, docText, withDoc, isChapter]);
+
+    // 上下文用量:開啟浮窗、問題/選取/附加/目前文件等組成改變時重算(debounce 400ms,同 SuggestAttachments);
+    // usageTick 由 chat:done 與「新對話」觸發(後端 History 變了但這些狀態沒變)。
+    useEffect(() => {
+        if (!open) { setUsage(null); return; }
+        const id = setTimeout(() => {
+            PreviewContext(params()).then(pv => {
+                setUsage(pv.limit > 0 ? {tokens: pv.tokens, limit: pv.limit} : null); // limit=0:端點未設定上下文長度,不顯示
+            }).catch(() => setUsage(null)); // 無可用端點等錯誤:不顯示
+        }, 400);
+        return () => clearTimeout(id);
+        // params 由下列狀態組成;cfg/profile 變了(切換模型、上下文長度)也要重算
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, question, sel, attach, withDoc, doc, docText, prior, mode, usageTick, cfg?.active, profile?.model]);
 
     // 送出的選取:來源不是目前文件時,除非作者明確點「仍要附加」,預設不送出
     const selStale = !!sel && !!selFrom && selFrom !== doc;
@@ -291,9 +321,11 @@ export default function ChatWindow(props: Props) {
         setMode('');
         setSel(null);
         setAttach([]);
+        setAttachSrc({});
         setPrior(false);
         setQuickId(undefined);
         setQuickQ('');
+        setUsageTick(t => t + 1); // 後端 History 已清空,重算用量
     };
 
     const loadModels = async (profileID: string) => {
@@ -329,7 +361,15 @@ export default function ChatWindow(props: Props) {
         return groups.map(g => ({...g, items: g.items.filter(i => !pickQ || i.title.includes(pickQ))})).filter(g => g.items.length);
     }, [tree, doc, pickQ]);
 
-    const toggleAttach = (p: string) => setAttach(a => a.includes(p) ? a.filter(x => x !== p) : [...a, p]);
+    const toggleAttach = (p: string, src: 'manual' | 'suggested' = 'manual') => {
+        const has = attach.includes(p);
+        setAttach(a => has ? a.filter(x => x !== p) : [...a, p]);
+        setAttachSrc(m => {
+            const n = {...m};
+            if (has) delete n[p]; else n[p] = src;
+            return n;
+        });
+    };
     const suggested = suggest.filter(s => !attach.includes(s) && s !== doc).slice(0, 6);
     const titleOf = (p: string) => [...tree.canon, ...tree.outline, ...tree.notes, ...tree.manuscript].find(e => e.path === p)?.title ?? baseName(p);
 
@@ -360,6 +400,14 @@ export default function ChatWindow(props: Props) {
                     <Bot className="h-4 w-4 text-primary"/>
                     <span data-testid="chat-title" className="text-sm font-semibold">Perkins Bot</span>
                     {mode === 'report' && <Badge variant="warning" className="text-xs">檢查報告模式</Badge>}
+                    {usage && (
+                        <Tip label="目前對話若現在送出,佔可用上下文的比例" side="bottom">
+                            <span data-testid="context-usage"
+                                  className={cn('text-xs', usage.tokens > usage.limit ? 'font-semibold text-warning' : 'text-muted-foreground')}>
+                                上下文 {Math.round(usage.tokens / usage.limit * 100)}%
+                            </span>
+                        </Tip>
+                    )}
                     <GripHorizontal className="mx-auto h-4 w-4 text-muted-foreground/40"/>
                     <Tip label="新對話" side="bottom">
                         <Button variant="ghost" size="iconSm" onMouseDown={e => e.stopPropagation()} onClick={reset}><SquarePen/></Button>
@@ -485,7 +533,7 @@ export default function ChatWindow(props: Props) {
                         ))}
                         {mode === 'report' && <Chip onRemove={() => setMode('')} className="border-warning/40 text-warning">檢查報告</Chip>}
                         {suggested.map(s => (
-                            <Chip key={s} dashed onClick={() => toggleAttach(s)} title="稿件中出現了這個設定,點選附加">
+                            <Chip key={s} dashed onClick={() => toggleAttach(s, 'suggested')} title="稿件中出現了這個設定,點選附加">
                                 <Plus className="inline h-3 w-3"/>{titleOf(s)}
                             </Chip>
                         ))}
@@ -589,7 +637,7 @@ export default function ChatWindow(props: Props) {
                                 {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
                                 {!withDoc && <p className="text-muted-foreground">· 目前文件:未附加</p>}
                                 {!selSent && sel && <p className="text-warning">· 選取:未附加(來自〈{titleOf(selFrom!)}〉,與目前文件不同)</p>}
-                                {attach.map(a => <p key={a}>· 附加設定/檔案:{titleOf(a)}(全文)</p>)}
+                                {attach.map(a => <p key={a}>· 附加設定/檔案:{titleOf(a)}(全文,{attachSrc[a] === 'suggested' ? '採用建議附加' : '手動附加'})</p>)}
                                 {prior && withDoc && isChapter && <p>· 前情摘要:本章之前的章節摘要</p>}
                                 <p>· 你的問題:{question || '(尚未輸入)'}</p>
                                 {mode === 'report' && <p>· 檢查報告模式:本次不含提案工具</p>}
@@ -607,12 +655,28 @@ export default function ChatWindow(props: Props) {
                             <summary className="cursor-pointer px-2 py-1 text-xs font-semibold text-muted-foreground">原始訊息(完整)</summary>
                             {/* 內層不再包框:以分隔線與留白分層(設計審查 15) */}
                             <div className="p-2 pt-0">
-                                {preview?.messages.map((m, i) => (
-                                    <div key={i} className={cn('py-2', i > 0 && 'border-t border-border/60')}>
-                                        <div className="text-xs font-semibold text-muted-foreground">{m.role}</div>
-                                        <pre className="whitespace-pre-wrap pt-1 font-sans text-xs leading-relaxed">{m.content}</pre>
-                                    </div>
-                                ))}
+                                {preview?.messages.map((m, i) => {
+                                    const msgs = preview.messages;
+                                    // 來源標籤(§16 第 16 項):依訊息本身判斷,不改訊息內容。
+                                    // role=tool 的工具名稱從前一則 assistant 的 toolCalls 以 toolCallId 對回來(訊息本身不帶工具名)。
+                                    const toolName = m.role === 'tool' && i > 0
+                                        ? msgs[i - 1].toolCalls?.find(tc => tc.id === m.toolCallId)?.name
+                                        : undefined;
+                                    const src = m.role === 'system' ? '系統指示'
+                                        : m.role === 'tool' ? 'Agent 工具讀取或搜尋結果'
+                                        : m.role === 'assistant' ? '先前對話(AI)'
+                                        : m.content.startsWith('【較早對話的摘要】') ? '較早對話的摘要'
+                                        : i === msgs.length - 1 ? '本次提問'
+                                        : '先前對話(使用者)';
+                                    return (
+                                        <div key={i} className={cn('py-2', i > 0 && 'border-t border-border/60')}>
+                                            <div className="text-xs font-semibold text-muted-foreground" data-testid="preview-msg-src">
+                                                {src}{toolName ? `(${toolName})` : ''}
+                                            </div>
+                                            <pre className="whitespace-pre-wrap pt-1 font-sans text-xs leading-relaxed">{m.content}</pre>
+                                        </div>
+                                    );
+                                })}
                             </div>
                         </details>
                     </div>

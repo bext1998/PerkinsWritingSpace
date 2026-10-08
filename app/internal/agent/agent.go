@@ -369,6 +369,7 @@ type Preview struct {
 	Messages []llm.Message `json:"messages"`
 	Tokens   int           `json:"tokens"`
 	Budget   int           `json:"budget"` // 0 = 未設定
+	Limit    int           `json:"limit"`  // 可用上下文 = Budget-replyReserve(Budget);Budget=0 時為 0(前端不顯示用量)
 	Over     bool          `json:"over"`   // 超過預算:送出時會先濃縮較早對話,仍不夠則拒絕送出
 }
 
@@ -378,7 +379,10 @@ func (a *Agent) Preview(p AskParams) (*Preview, error) {
 		return nil, err
 	}
 	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens}
-	pv.Over = a.ContextTokens > 0 && pv.Tokens > a.ContextTokens-replyReserve(a.ContextTokens)
+	if b := a.ContextTokens; b > 0 {
+		pv.Limit = b - replyReserve(b)
+		pv.Over = pv.Tokens > pv.Limit
+	}
 	return pv, nil
 }
 

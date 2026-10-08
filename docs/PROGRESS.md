@@ -1,5 +1,16 @@
 # PROGRESS.md
 
+## 2026-10-09 — Bot 浮窗上下文用量 + 送出預覽來源標示(Issue #37 部分)
+
+範圍:用量百分比與來源標示先行;壓縮狀態指示與開關等 #32 定案,本輪不做。
+
+- **上下文用量**:`agent.Preview` 新增 `limit` 欄位(= `ContextTokens − replyReserve(ContextTokens)`,與 Ask 超預算判斷同一套;budget=0 時為 0),前端不自行重算公式。`ChatWindow` 標題列常駐顯示 `context-usage`(「上下文 N%」,tokens 用後端 `PreviewContext` 回傳值;limit=0 時不顯示,超過 100% 用警示色)。更新時機:開啟浮窗、問題/選取/附加/目前文件/模式等組成改變(debounce 400ms,同 SuggestAttachments)、`chat:done`(含壓縮後)、按「新對話」、切換端點/模型。
+- **送出預覽標示來源**(前端追蹤,不改 Go):「本次直接送出」的附加檔案標示「手動附加」(迥紋針/點選)或「採用建議附加」(點建議標籤、檢查面板帶入);「原始訊息」每則加來源標籤:系統指示、先前對話(使用者/AI)、較早對話的摘要(以「【較早對話的摘要】」開頭)、本次提問(最後一則 user)、role=tool 顯示「Agent 工具讀取或搜尋結果」(工具名稱從前一則 assistant 的 toolCalls 以 toolCallId 對回)。依訊息本身判斷,不改訊息內容。
+- **驗證**:Go 新增 `TestPreviewLimitMatchesOverBudgetCheck`(limit 與 Ask 超預算判斷同一個值:未超過時 Ask 送出、超過時 Ask 拒絕、以 tokens/limit 重算 Over 與 `Preview.Over` 一致、budget=0 時 limit=0 且不標示超過);`tsc --noEmit`、`npm run build` 通過。
+- **E2E(E2E_SKIP_AI=1)**:bot-chat 加 5 項(context-usage 百分比 = 以 `PreviewContext` 拿到的 tokens/limit 算出的值,並用綁定 `contextTokens:200` 的暫時端點在小 limit 下再做精確比對(255%)與警示色;手動附加(迥紋針)與建議附加(建議標籤)在預覽中標示不同;原始訊息有來源標籤);layout-half 加 3 項(640 寬下 context-usage 可見、在浮窗與視窗範圍內,標題未被擠壞,輸入區 ≥ 200)。注意:浮窗位置會被 close-guard 拖到寬視窗位置,layout-half 先暫放大到 1440 把浮窗拖回左上再縮回 640 量測。
+- **破壞驗證**:拿掉 `pv.Limit` 賦值 → Go 測試 FAIL;移除 `context-usage` 元素 → bot-chat/layout-half FAIL;前端改用錯誤公式(budget×2)→ 精確百分比 FAIL;附加一律標「手動附加」→ 區分檢查 FAIL;來源標籤改回只顯示 role → 標籤檢查 FAIL;還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)380/380 passed(基準 372 + 8),略過 8 項,143s;settings.json 已逐位元組還原,書櫃無殘留。「新對話」不清問題框屬既有行為(非本輪改動),bot-chat 的參數比對直接讀畫面當下的問題文字。
+
 ## 2026-10-09 — 研究記錄指標 E2E(§16 第 21 項,PR #27 建議的 4 項)
 
 - **research 組新增 R3**(5 項檢查):選取浮動列「分析這段」原樣送出 → ask 記 `quickId=analyze`、`quickEdited=false`;「節奏」帶入後改寫 → `quickId=pace`、`quickEdited=true`,且事件不含原始問題全文(同時確認改寫後問題有被記錄,避免空泛通過);自行輸入 → 無 `quickId`/`quickEdited` 欄位;檢查面板「人物設定矛盾」→ `quickId=char`。

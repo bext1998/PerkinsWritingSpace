@@ -81,6 +81,77 @@ module.exports = {
             check('編輯器重新載入為磁碟內容', (await page.textContent('.cm-content')).includes('夜色濃得化不開'));
         }
         }
+
+        // ===== 上下文用量 + 送出預覽來源標示(Issue #37 部分)=====
+        // 先按「新對話」回到乾淨狀態:無選取、無附加、模式歸零(doc=第一章仍帶著;
+        // 新對話不清問題框,既有行為,所以問題文字直接讀畫面)。
+        // 此時前端 params 與測試直呼 PreviewContext 的參數完全相同,可比對百分比
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
+        await page.waitForSelector('[data-testid=context-usage]', {timeout: 5000});
+        const shown = (await page.textContent('[data-testid=context-usage]')).trim();
+        const qNow = await page.inputValue('[data-testid=question]');
+        const pvCtx = await page.evaluate(q => window.go.main.App.PreviewContext({
+            question: q, doc: 'manuscript/第一章.md', selection: '', attachments: [], mode: '',
+            priorSummaries: false, quickId: '', quickEdited: false,
+        }), qNow);
+        const expectPct = Math.round(pvCtx.tokens / pvCtx.limit * 100);
+        check('context-usage 顯示百分比與 PreviewContext(tokens/limit)一致',
+            shown === `上下文 ${expectPct}%`, `shown=${shown} expect=${expectPct}% tokens=${pvCtx.tokens} limit=${pvCtx.limit}`);
+
+        // 送出預覽標示來源:艾莉絲用建議標籤附加(採用建議附加)、雷恩用迥紋針手動附加(手動附加)
+        await page.waitForSelector('[data-testid=chips] >> text=艾莉絲', {timeout: 5000});
+        await page.click('[data-testid=chips] >> text=艾莉絲');
+        await page.click('[data-testid=attach-btn]');
+        await page.waitForSelector('label:has-text("雷恩")');
+        await page.click('label:has-text("雷恩")');
+        await page.keyboard.press('Escape');
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview]');
+        const pvTxt = await page.textContent('[data-testid=preview]');
+        check('預覽區分手動附加與採用建議附加',
+            pvTxt.includes('雷恩(全文,手動附加)') && pvTxt.includes('艾莉絲(全文,採用建議附加)'),
+            pvTxt.split('\n').filter(l => l.includes('附加')).join(' / ').slice(0, 160));
+        check('原始訊息有來源標籤(系統指示/本次提問)',
+            pvTxt.includes('系統指示') && pvTxt.includes('本次提問'));
+        await page.keyboard.press('Escape');
+
+        // 超過 100% 用警示色:暫時切到 contextTokens 很小的端點(不呼叫模型,PreviewContext 只做組裝)
+        const orig = await page.evaluate(() => window.go.main.App.GetSettings());
+        const origModel = orig.profiles.find(p => p.id === orig.active).model;
+        const DEAD = 'e2e-tiny-ctx';
+        let tinyCreated = false;
+        try {
+            await page.evaluate(id => window.go.main.App.SaveProfile(
+                {id, name: 'E2E 極小上下文', baseUrl: 'http://127.0.0.1:9/v1', model: 'e2e', contextTokens: 200}, null), DEAD);
+            tinyCreated = true;
+            await page.evaluate(id => window.go.main.App.SetActiveModel(id, 'e2e'), DEAD);
+            await page.fill('[data-testid=question]', 'q'); // 觸發用量重算(切換端點不改變前端狀態)
+            await page.waitForFunction(() => {
+                const el = document.querySelector('[data-testid=context-usage]');
+                if (!el) return false;
+                const m = el.textContent.match(/(\d+)%/);
+                return m && parseInt(m[1]) > 100;
+            }, null, {timeout: 5000});
+            // 小 limit 下百分比有意義,再做一次精確一致性比對(此時附加了艾莉絲與雷恩)
+            const shownTiny = (await page.textContent('[data-testid=context-usage]')).trim();
+            const pvTiny = await page.evaluate(() => window.go.main.App.PreviewContext({
+                question: 'q', doc: 'manuscript/第一章.md', selection: '',
+                attachments: ['canon/艾莉絲.md', 'canon/雷恩.md'], mode: '',
+                priorSummaries: false, quickId: '', quickEdited: false,
+            }));
+            const expectTiny = Math.round(pvTiny.tokens / pvTiny.limit * 100);
+            check('超量時 context-usage 百分比也與 PreviewContext(tokens/limit)一致',
+                shownTiny === `上下文 ${expectTiny}%`, `shown=${shownTiny} expect=${expectTiny}% tokens=${pvTiny.tokens} limit=${pvTiny.limit}`);
+            const cls = await page.$eval('[data-testid=context-usage]', el => el.className);
+            check('超過 100% 時 context-usage 用警示色(同 preview-over 語意)', cls.includes('text-warning'), cls);
+        } finally {
+            // 還原使用者設定(原端點與模型;只刪本次建立的暫時端點)
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [orig.active, origModel]);
+            if (tinyCreated) await page.evaluate(id => window.go.main.App.DeleteProfile(id), DEAD);
+            // 清掉本段帶入的選取/附加/問題,不漏到後面的版本段與下一組
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
+        }
+
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
         // 版本
