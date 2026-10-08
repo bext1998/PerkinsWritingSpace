@@ -1,15 +1,18 @@
 // 自畫標題欄(SPEC §17.1)。Wails 以 Frameless 執行時沒有原生標題欄,由這裡提供:
-// 應用程式/作品名稱、最小化、最大化/還原、關閉,以及視窗拖曳與雙擊最大化。
+// 應用程式選單(左上 logo)、側欄開關、作品名稱、最小化、最大化/還原、關閉,以及視窗拖曳與雙擊最大化。
+// 作品畫面時與圖示列同色、不畫底線,連成 L 形外框;logo 欄寬與圖示列同為 60px,上下對齊。
 //
 // 這個元件掛在 RootBoundary 之外(見 main.tsx),錯誤畫面出現時仍看得到、關得掉視窗。
 // Radix 對話框開著時 body 會被設成 pointer-events:none,因此這裡要自己把 pointer-events 拉回來,
 // 否則標題欄按鈕會在對話框開著時點不到。
 import * as React from 'react';
 import {useEffect, useState} from 'react';
-import {Copy, Minus, Square, X} from 'lucide-react';
+import {Copy, Library, Minus, PanelLeftClose, PanelLeftOpen, Save, Settings, Square, X} from 'lucide-react';
 import {Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise} from '../../wailsjs/runtime/runtime';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
-import {getProjectName, isRailLogoVisible, subscribeShellState} from '@/lib/shellState';
+import {getProjectName, getShellActions, isFrameVisible, subscribeShellState} from '@/lib/shellState';
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger} from '@/components/ui/overlay';
+import {cn} from '@/lib/utils';
 import logo from '../assets/images/perkins-logo.svg';
 
 const drag: React.CSSProperties = {'--wails-draggable': 'drag'} as React.CSSProperties;
@@ -19,12 +22,14 @@ const btn = 'flex h-full w-[46px] items-center justify-center text-muted-foregro
 
 export default function TitleBar() {
     const [project, setProject] = useState<string | null>(getProjectName());
-    const [railLogo, setRailLogo] = useState(isRailLogoVisible());
+    const [frame, setFrame] = useState(isFrameVisible());
+    const [actions, setActions] = useState(getShellActions());
     const [maximised, setMaximised] = useState(false);
 
     useEffect(() => subscribeShellState(() => {
         setProject(getProjectName());
-        setRailLogo(isRailLogoVisible());
+        setFrame(isFrameVisible());
+        setActions(getShellActions());
     }), []);
 
     // 最大化狀態:進入時問一次,之後靠視窗大小改變更新(Wails 沒有狀態變更事件)
@@ -38,15 +43,45 @@ export default function TitleBar() {
         return () => { alive = false; window.removeEventListener('resize', sync); };
     }, []);
 
-    const title = project ? `${project} — Perkins WritingSpace` : 'Perkins WritingSpace';
+    // 作品相關項目只在作品外框看得到時提供(設定頁開著時不從選單直接跳回書櫃)
+    const save = frame ? actions.save : undefined;
+    const bookshelf = frame ? actions.bookshelf : undefined;
+    const sidebar = frame ? actions.sidebar : undefined;
 
     return (
         <header data-testid="titlebar" style={{...drag, height: TITLEBAR_HEIGHT}}
-                className="pointer-events-auto relative z-[60] flex shrink-0 select-none items-center border-b bg-rail text-xs"
+                className={cn('pointer-events-auto relative z-[60] flex shrink-0 select-none items-center bg-rail text-xs', !frame && 'border-b')}
                 onDoubleClick={() => WindowToggleMaximise()}>
-            {/* 只有目前畫面真的看得到側欄 logo 時才不放(作品畫面),其餘(書櫃、設定頁、錯誤畫面)都要放 */}
-            {!railLogo && <img src={logo} alt="Perkins WritingSpace" data-testid="titlebar-logo" className="ml-2 h-5 w-5"/>}
-            <span data-testid="titlebar-title" className="ml-2 truncate text-muted-foreground">{title}</span>
+            <div className="flex h-full items-center" style={noDrag} onDoubleClick={e => e.stopPropagation()}>
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button data-testid="app-menu" title="Perkins WritingSpace 選單" aria-label="Perkins WritingSpace 選單"
+                                className="flex h-full w-[60px] items-center justify-center transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+                            <img src={logo} alt="" className="h-5 w-5"/>
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="z-[70] min-w-[13rem]" data-testid="app-menu-content">
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">Perkins WritingSpace</div>
+                        {(save || bookshelf || actions.settings) && <DropdownMenuSeparator/>}
+                        {save && (
+                            <DropdownMenuItem data-testid="menu-save" onSelect={save}>
+                                <Save/>儲存<span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+S</span>
+                            </DropdownMenuItem>
+                        )}
+                        {bookshelf && <DropdownMenuItem data-testid="menu-bookshelf" onSelect={bookshelf}><Library/>回到書櫃</DropdownMenuItem>}
+                        {actions.settings && <DropdownMenuItem data-testid="menu-settings" onSelect={actions.settings}><Settings/>設定</DropdownMenuItem>}
+                    </DropdownMenuContent>
+                </DropdownMenu>
+                {sidebar && (
+                    <button data-testid="titlebar-sidebar" title={sidebar.open ? '收合側欄' : '展開側欄'}
+                            aria-label={sidebar.open ? '收合側欄' : '展開側欄'}
+                            className="flex h-full w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onClick={sidebar.toggle}>
+                        {sidebar.open ? <PanelLeftClose className="h-4 w-4"/> : <PanelLeftOpen className="h-4 w-4"/>}
+                    </button>
+                )}
+            </div>
+            <span data-testid="titlebar-title" className="ml-2 truncate text-muted-foreground">{project ?? 'Perkins WritingSpace'}</span>
             <div className="ml-auto flex h-full" style={noDrag} onDoubleClick={e => e.stopPropagation()}>
                 <button data-testid="win-min" title="最小化" className={btn} onClick={() => WindowMinimise()}>
                     <Minus className="h-4 w-4"/>

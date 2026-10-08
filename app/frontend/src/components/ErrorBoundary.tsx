@@ -7,7 +7,7 @@
 //   E2E 用它們刻意讓某區下一次 render 拋錯、或模擬緊急存檔失敗。正式建置不存在。
 import * as React from 'react';
 import {Button} from '@/components/ui/button';
-import {setRailLogoVisible} from '@/lib/shellState';
+import {setFrameVisible} from '@/lib/shellState';
 import {cn, errText} from '@/lib/utils';
 
 // 緊急存檔的救援資料:在呼叫 SaveFile 前就取好,存檔失敗時錯誤畫面靠它還原原文。
@@ -175,8 +175,8 @@ export class RootBoundary extends React.Component<{children: React.ReactNode}, R
     }
 
     componentDidCatch() {
-        // 崩潰畫面沒有側欄 logo;救援原文與存檔進度同時寫進模組層給關閉流程讀。
-        setRailLogoVisible(false);
+        // 崩潰畫面沒有作品外框;救援原文與存檔進度同時寫進模組層給關閉流程讀。
+        setFrameVisible(false);
         const p = startCrashSave();
         const rescue = getCrashSave().rescue;
         if (!p) {

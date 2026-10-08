@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
-    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelLeftClose, PanelRightClose,
+    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelRightClose,
     PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
@@ -25,10 +25,11 @@ import {
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
 import {Quick} from './quick';
-import perkinsLogo from './assets/images/perkins-logo.svg';
+import {setShellActions} from '@/lib/shellState';
 import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
 
 type Panel = 'manuscript' | 'bible' | 'docs' | 'checks';
+const PANEL_LABEL: Record<Panel, string> = {manuscript: '稿件', bible: '設定集', docs: '大綱與筆記', checks: '檢查'};
 
 // 開發模式專用:E2E 用 window.__perkinsSaveDelay(ms) 讓 SaveFile 延遲、__perkinsReadDelay(ms)
 // 讓 ReadFile 延遲(重疊導覽回歸用)、__perkinsSaveFailOnce() 讓下一次實際寫入失敗
@@ -330,6 +331,23 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         return () => window.removeEventListener('keydown', onKey);
     }, [saveNow]);
 
+    const goBookshelf = useCallback(async () => {
+        try { await save(); CloseProject(); onClose(); } catch (e) { fail(e); }
+    }, [save, onClose, fail]);
+
+    // 標題欄(React 樹外)的應用程式選單與側欄開關(SPEC §17.1)
+    useEffect(() => {
+        setShellActions({save: saveNow, bookshelf: goBookshelf});
+        return () => setShellActions({save: undefined, bookshelf: undefined});
+    }, [saveNow, goBookshelf]);
+    // 展開時回到上次收合前的面板
+    const lastPanel = useRef<Panel>('manuscript');
+    if (panel) lastPanel.current = panel;
+    useEffect(() => {
+        setShellActions({sidebar: {open: !!panel, toggle: () => panel ? setPanel(null) : openSidebar(lastPanel.current)}});
+    }, [panel, openSidebar]);
+    useEffect(() => () => setShellActions({sidebar: undefined}), []);
+
     // 本章字數(與後端同一套計算規則)
     useEffect(() => {
         const id = setTimeout(() => WordCount(text).then(setLiveCount).catch(() => {}), 250);
@@ -417,9 +435,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     return (
         <div className="flex h-full">
-            {/* 圖示列:齒輪固定在左下角 */}
-            <nav className="flex w-[60px] shrink-0 flex-col items-center gap-1 border-r bg-rail py-3">
-                <img src={perkinsLogo} alt="Perkins WritingSpace" data-testid="rail-logo" className="mb-3 h-9 w-9"/>
+            {/* 圖示列:與標題欄同色連成 L 形外框(SPEC §17.1);齒輪固定在左下角 */}
+            <nav data-testid="rail" className="flex w-[60px] shrink-0 flex-col items-center gap-1 bg-rail py-2">
                 {railBtn('manuscript', '稿件', BookOpen)}
                 {railBtn('bible', '設定集', Users)}
                 {railBtn('docs', '大綱與筆記', NotebookPen)}
@@ -427,7 +444,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <div className="flex-1"/>
                 <Tip label="回到書櫃">
                     <button className="flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
-                            onClick={async () => { try { await save(); CloseProject(); onClose(); } catch (e) { fail(e); } }}>
+                            onClick={goBookshelf}>
                         <Home className="h-5 w-5"/>
                     </button>
                 </Tip>
@@ -440,15 +457,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 </Tip>
             </nav>
 
-            {/* 可收合的側欄 */}
+            {/* 內容區嵌在外框內:左上圓角;邊緣用不佔版面的陰影線畫,半螢幕 640 寬的主編輯區寬度不受影響 */}
+            <div data-testid="workspace-content" className="flex min-w-0 flex-1 overflow-hidden rounded-tl-lg shadow-[-1px_-1px_0_hsl(var(--border))]">
+            {/* 可收合的側欄(開關在標題欄) */}
             {panel && (
                 <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
                 <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
-                    <div className="flex h-12 items-center justify-between border-b px-4">
-                        <span className="truncate font-serif text-[15px] font-semibold" title={tree.name}>{tree.name}</span>
-                        <Tip label="收合側欄" side="bottom">
-                            <Button variant="ghost" size="iconSm" onClick={() => setPanel(null)}><PanelLeftClose/></Button>
-                        </Tip>
+                    {/* 作品名稱已在標題欄,這裡標示目前面板 */}
+                    <div className="flex h-12 items-center border-b px-4">
+                        <span data-testid="sidebar-title" className="truncate font-serif text-[15px] font-semibold">{PANEL_LABEL[panel]}</span>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto">
                         {panel === 'manuscript' && <ManuscriptPanel {...panelProps} onCopy={copyTo} onStatus={setStatus} onSummary={setSummaryFor}/>}
@@ -570,7 +587,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                 </Button>
                             </Tip>
                         </>
-                    ) : <span className="text-sm text-muted-foreground">{tree.name}</span>}
+                    ) : null}
                 </div>
                 {current && current.startsWith('canon/') && entity && (
                     <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
@@ -610,6 +627,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     <CrashPoint area="inspector"/>
                 </AreaBoundary>
             )}
+            </div>
 
             {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流 */}
             <AreaBoundary area="chat"
