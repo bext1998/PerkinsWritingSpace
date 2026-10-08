@@ -565,6 +565,37 @@ func TestResearchAskRecordsMessagesAndReply(t *testing.T) {
 	}
 }
 
+// 意圖(§16 第 21 項):ask 帶快速指令來源時記 quickId 與 quickEdited;
+// 非快速指令來源不寫這兩個欄位(與 §12.8 欄位說明一致)。
+func TestResearchAskQuickFields(t *testing.T) {
+	a, s, dir := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-q")
+	s.replies = []llm.Message{{Role: "assistant", Content: "回答"}}
+	// 快速指令來源:記 id 與「是否改過問題」布林
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改過的問題", QuickID: "analyze", QuickEdited: true}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// 非快速指令來源:不應出現 quickId/quickEdited 欄位
+	if _, err := a.Ask(context.Background(), AskParams{Question: "自己打的"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("應兩筆 ask, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], `"quickId":"analyze"`) || !strings.Contains(lines[0], `"quickEdited":true`) {
+		t.Errorf("快速指令來源應記 quickId/quickEdited: %s", lines[0])
+	}
+	if strings.Contains(lines[1], "quickId") || strings.Contains(lines[1], "quickEdited") {
+		t.Errorf("非快速指令來源不應記快速指令欄位: %s", lines[1])
+	}
+}
+
 // 意圖:AI 的回覆/研究記錄不得進入上下文,工具也讀不到 research.jsonl(G1–G4)。
 func TestResearchFileNotInContextAndNotReadableByTools(t *testing.T) {
 	a, s, dir := setup(t)
@@ -655,6 +686,91 @@ func TestResearchOverBudgetExactlyOneRecord(t *testing.T) {
 	}
 	if d.Result != "error" {
 		t.Fatalf("result 應為 error: %q", d.Result)
+	}
+}
+
+// 意圖(§16 第 21 項返工):compact 請求在研究記錄中要標記壓縮是否成功套用(ok);
+// 失敗的壓縮未改變 History,不得被當成完成的壓縮。
+func TestResearchCompactRequestRecordsOk(t *testing.T) {
+	fillHistory := func(a *Agent) {
+		for i := 0; i < 6; i++ {
+			a.History = append(a.History, llm.Message{Role: "user", Content: fmt.Sprintf("訊息 %d", i)})
+			a.History = append(a.History, llm.Message{Role: "assistant", Content: "好"})
+		}
+	}
+	// 成功:ok=true
+	a, s, _ := setup(t)
+	a.Proj.SetResearch(true)
+	a.Research = research.New(a.Proj, "sess-c")
+	fillHistory(a)
+	s.replies = []llm.Message{{Role: "assistant", Content: "濃縮摘要"}}
+	okGot := false
+	if err := a.compactCollect(context.Background(), func(Event) {}, func(_ string, _ []llm.Message, _ string, ok bool) { okGot = ok }); err != nil {
+		t.Fatal(err)
+	}
+	if !okGot {
+		t.Fatal("成功壓縮應回報 ok=true")
+	}
+	// 失敗:ok=false
+	a2, _, _ := setup(t)
+	a2.LLM = failLLM{}
+	fillHistory(a2)
+	okFail := true
+	err := a2.compactCollect(context.Background(), func(Event) {}, func(_ string, _ []llm.Message, _ string, ok bool) { okFail = ok })
+	if err == nil {
+		t.Fatal("失敗壓縮應回傳錯誤")
+	}
+	if okFail {
+		t.Fatal("失敗壓縮應回報 ok=false")
+	}
+}
+
+// 回歸測試(§16 第 21 項返工):走完整 Ask 路徑,失敗的壓縮在 research.jsonl 的
+// compact 請求標 ok=false;成功的標 ok=true。舊版記錄無此欄(nil),由 researchstats 端判未知。
+func TestResearchCompactOkInAskRecord(t *testing.T) {
+	run := func(compactOK bool) *research.Event {
+		a, s, _ := setup(t)
+		a.Proj.SetResearch(true)
+		a.Research = research.New(a.Proj, "sess-c")
+		a.ContextTokens = 200
+		a.Proj.WriteFile("canon/巨大.md", strings.Repeat("設定。", 200))
+		// History 要超過 compactKeep(4) 才會真的嘗試壓縮(否則直接回「沒有可濃縮的較早對話」)
+		for i := 0; i < 6; i++ {
+			a.History = append(a.History,
+				llm.Message{Role: "user", Content: fmt.Sprintf("訊息 %d", i)},
+				llm.Message{Role: "assistant", Content: "好"})
+		}
+		if !compactOK {
+			a.LLM = failLLM{} // compact 也會失敗
+		} else {
+			// 第一個回覆給壓縮用,之後的請求(仍超預算)不會送出
+			s.replies = []llm.Message{{Role: "assistant", Content: "濃縮摘要"}}
+		}
+		_, _ = a.Ask(context.Background(), AskParams{Question: "q", Attachments: []string{"canon/巨大.md"}}, func(Event) {})
+		evs, _ := research.Read(a.Proj)
+		if len(evs) != 1 {
+			t.Fatalf("應恰好一筆 ask, got %d", len(evs))
+		}
+		return &evs[0]
+	}
+	for _, compactOK := range []bool{true, false} {
+		ev := run(compactOK)
+		var d struct {
+			Requests []struct {
+				Purpose string `json:"purpose"`
+				Ok      *bool  `json:"ok"`
+			} `json:"requests"`
+		}
+		if err := json.Unmarshal(ev.Detail, &d); err != nil {
+			t.Fatal(err)
+		}
+		if len(d.Requests) != 1 || d.Requests[0].Purpose != "compact" {
+			t.Fatalf("compactOK=%v 應記一筆 compact 請求: %+v", compactOK, d.Requests)
+		}
+		got := d.Requests[0].Ok
+		if got == nil || *got != compactOK {
+			t.Fatalf("compactOK=%v 應記 ok=%v: %v", compactOK, compactOK, got)
+		}
 	}
 }
 

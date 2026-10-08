@@ -44,6 +44,8 @@ type AskParams struct {
 	Attachments    []string `json:"attachments"`    // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
 	Mode           string   `json:"mode"`           // "" = 一般;report = 檢查報告(不提供提案工具,B5)
 	PriorSummaries bool     `json:"priorSummaries"` // 附上本章之前已確認的章節摘要
+	QuickID        string   `json:"quickId,omitempty"` // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
+	QuickEdited    bool     `json:"quickEdited,omitempty"` // 作者送出前改過快速指令帶入的問題文字(只記布林,不記改前全文)
 }
 
 type Event struct {
@@ -396,8 +398,8 @@ func (a *Agent) compact(ctx context.Context, emit func(Event)) error {
 	return a.compactCollect(ctx, emit, nil)
 }
 
-// collect 非 nil 時收集濃縮請求(研究記錄的 ask 事件用它)。
-func (a *Agent) compactCollect(ctx context.Context, emit func(Event), collect func(purpose string, msgs []llm.Message, reply string)) error {
+// collect 非 nil 時收集濃縮請求(研究記錄的 ask 事件用它);ok 表示壓縮是否成功套用。
+func (a *Agent) compactCollect(ctx context.Context, emit func(Event), collect func(purpose string, msgs []llm.Message, reply string, ok bool)) error {
 	a.mu.Lock()
 	if len(a.History) <= compactKeep {
 		a.mu.Unlock()
@@ -418,7 +420,8 @@ func (a *Agent) compactCollect(ctx context.Context, emit func(Event), collect fu
 	compactMsgs := []llm.Message{{Role: "system", Content: compactPrompt}, {Role: "user", Content: tr.String()}}
 	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: compactMsgs}, nil)
 	if collect != nil {
-		collect("compact", compactMsgs, strings.TrimSpace(reply.Content))
+		// 失敗也記錄,但標 ok=false;是否套用由這個欄位分辨(§16 第 21 項返工)
+		collect("compact", compactMsgs, strings.TrimSpace(reply.Content), err == nil)
 	}
 	if err != nil {
 		return fmt.Errorf("濃縮較早對話失敗: %w", err)
@@ -464,8 +467,8 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		return "", err
 	}
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {
-		collect := func(purpose string, msgs []llm.Message, reply string) {
-			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply})
+		collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
+			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 		}
 		if err := a.compactCollect(ctx, emit, collect); err == nil {
 			if msgs, err = a.BuildMessages(p); err != nil {
@@ -508,8 +511,8 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			a.mu.Unlock()
 			// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
 			if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
-				collect := func(purpose string, msgs []llm.Message, reply string) {
-					requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply})
+				collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
+					requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 				}
 				a.compactCollect(ctx, emit, collect)
 			}
@@ -556,10 +559,13 @@ type researchToolCall struct {
 }
 
 // researchRequest 記錄一次實際送出的請求:用途、送出的 messages、該次回覆。
+// Ok 只用於 compact 請求(§16 第 21 項返工):壓縮是否成功套用;ask 請求不設(nil,
+// omitempty 下不會出現在記錄,也不會被誤認為成功)。
 type researchRequest struct {
 	Purpose  string        `json:"purpose"` // ask | compact
 	Messages []llm.Message `json:"messages"`
 	Reply    string        `json:"reply,omitempty"` // 該次請求的回覆文字(工具迭代的中間回覆不重複存)
+	Ok       *bool         `json:"ok,omitempty"`    // compact:true=成功套用、false=失敗(舊版記錄無此欄)
 }
 
 // rlogAsk 寫一筆 ask 事件(含每次實際送出的請求快照、回覆、工具呼叫、本次建立的提案、耗時、結果)。
@@ -567,14 +573,20 @@ func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText strin
 	if a.Research == nil || !a.Research.Enabled() {
 		return
 	}
-	a.Research.Log("ask", map[string]any{
+	d := map[string]any{
 		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
 		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
 		"sent": len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
 		"requests": requests, "reply": replyText, "toolCalls": tcs,
 		"proposalIds": pIDs, "elapsedMs": time.Since(start).Milliseconds(),
 		"result": result, "error": errMsg,
-	})
+	}
+	// 快速指令來源(§16 第 21 項):非快速指令來源不寫這兩個欄位。
+	if p.QuickID != "" {
+		d["quickId"] = p.QuickID
+		d["quickEdited"] = p.QuickEdited
+	}
+	a.Research.Log("ask", d)
 }
 
 // ResearchRemote 回傳目前模型端點是否在本機之外(研究記錄用;由 App 在 prepare 時設定)。

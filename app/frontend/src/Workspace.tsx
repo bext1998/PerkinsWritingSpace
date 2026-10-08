@@ -422,7 +422,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     };
 
     const onAskAI = (sel: Selection, quick?: Quick) => {
-        ask({selection: sel.text, question: quick?.question, mode: quick?.mode, nonce: 0});
+        ask({selection: sel.text, question: quick?.question, mode: quick?.mode, quickId: quick?.id, nonce: 0});
     };
 
     // AI 圓鈕開啟對話框時讀取編輯器當下的選取(若有)(§16 第 1 項 04)
