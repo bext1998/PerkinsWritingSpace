@@ -1,5 +1,5 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
-import {EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
+import {Compartment, EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
@@ -59,6 +59,8 @@ interface Props {
     posStore?: Map<string, EditorPos>;
     // 接受提案後重掛時短暫標示的範圍(#45 a);只在掛載時讀取
     flash?: {from: number; to: number} | null;
+    // 唯讀(接受提案期間,#56):可捲動、選取,不能修改
+    readOnly?: boolean;
 }
 
 const theme = EditorView.theme({
@@ -358,9 +360,10 @@ const openReplace: Command = view => {
 };
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
-const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash}, ref) {
+const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, readOnly = false}, ref) {
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
+    const readOnlyComp = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
     const onSelectRef = useRef(onSelect);
@@ -450,6 +453,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
                     aiFlashField,
+                    readOnlyComp.current.of(EditorState.readOnly.of(readOnly)),
                     EditorView.lineWrapping,
                     theme,
                     EditorView.updateListener.of(u => {
@@ -565,6 +569,11 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // 唯讀切換(#56):掛載後隨 prop 重新設定
+    useEffect(() => {
+        view.current?.dispatch({effects: readOnlyComp.current.reconfigure(EditorState.readOnly.of(readOnly))});
+    }, [readOnly]);
 
     const onContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();

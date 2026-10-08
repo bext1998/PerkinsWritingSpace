@@ -120,6 +120,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [summaryTick, setSummaryTick] = useState(0);
     const editor = useRef<EditorHandle>(null);
     const loaded = useRef<string | null>(null);
+    // 開檔世代(#56):每次開檔遞增;重載讀檔期間若開過檔(含 A→B→A 回到原檔),該次重載作廢
+    const navGen = useRef(0);
+    // 接受提案期間(存檔→套用→重載)編輯器唯讀(#56):否則期間的新輸入會被重載覆蓋
+    const [editLocked, setEditLocked] = useState(false);
     // 切章位置記憶(§16 第 24 項第一層):檔案路徑 → 上次游標(選取)與捲動位置;
     // 只存在記憶體(本次執行期間),不寫檔。Editor 掛載時讀取還原、編輯/捲動時寫回,
     // 因此外部重載(reloadCurrent、接受提案)重掛後也回到原位置,超出文件長度由 Editor 夾住。
@@ -321,6 +325,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             if (latest.current.dirty) await save();
             if (stale()) return;
             loaded.current = rel;
+            navGen.current++;
             setCurrent(rel);
             setText(content);
             setDirty(false);
@@ -336,9 +341,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const reloadCurrent = useCallback(async (files?: string[], flash?: proposal.Proposal) => {
         const cur = current;
         if (!cur || (files && !files.includes(cur))) return;
+        const gen = navGen.current;
         const content = await ReadFile(cur);
-        // 讀檔期間已切到別章:不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案)
-        if (latest.current.current !== cur) return;
+        // 讀檔期間開過檔(切到別章,或 A→B→A):不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案)
+        if (navGen.current !== gen || latest.current.current !== cur) return;
         setText(content);
         setFlashP(flash ?? null);
         setDirty(false);
@@ -666,7 +672,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -718,7 +724,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onAcceptLock={setEditLocked} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>

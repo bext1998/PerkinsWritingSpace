@@ -131,39 +131,92 @@ module.exports = {
             start: raceStart, end: raceStart + Buffer.byteLength('甲章原文。'), status: 'pending',
         }, null, 2));
         await page.evaluate(() => window.__perkinsRefreshProposals());
-        // 覆寫 ReadFile:只對章節 A 回傳受控 Promise;放行時用原始綁定讀回真實內容
-        await page.evaluate(rel => {
-            window.__perkinsReadOrig = window.go.main.App.ReadFile;
+        // 覆寫 ReadFile:只對章節 A 回傳受控 Promise;放行時用原始綁定讀回真實內容,讀完設旗標。
+        // try/finally:中途失敗也要放行並還原綁定,不讓後續組卡在被覆寫的 ReadFile
+        const gateRead = rel => page.evaluate(rel => {
+            window.__perkinsReadOrig = window.__perkinsReadOrig || window.go.main.App.ReadFile;
+            window.__perkinsReadDone = false;
             window.go.main.App.ReadFile = (r, ...rest) => {
-                if (r === rel) return new Promise(resolve => { window.__perkinsReadGate = resolve; });
+                if (r === rel) return new Promise(resolve => {
+                    window.__perkinsReadGate = () => resolve(window.__perkinsReadOrig(r, ...rest).then(c => { window.__perkinsReadDone = true; return c; }));
+                });
                 return window.__perkinsReadOrig(r, ...rest);
             };
-        }, raceA);
-        await page.click('[data-testid=chat-fab]');
-        await page.click('[data-testid=proposal]:has-text("甲章原文") [data-testid=accept]');
-        // 接受已送出,重載卡在章節 A 的 ReadFile;等待期間切到章節 B
-        await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
-        await page.locator('[data-testid=chapter-row]:has-text("重載競態B")').first().click({timeout: 15000});
-        await page.waitForFunction(c => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(c), '重載競態B', {timeout: 15000});
-        await page.waitForSelector('.cm-content:has-text("乙章原文")', {timeout: 15000});
-        // 放行章節 A 的讀取
-        await page.evaluate(() => window.__perkinsReadGate(window.__perkinsReadOrig('manuscript/重載競態A.md')));
-        await settle(80, 900);
-        await page.evaluate(() => { window.go.main.App.ReadFile = window.__perkinsReadOrig; });
-        const raceCrumbs = await page.textContent('[data-testid=crumbs]');
-        const raceBody = await page.textContent('.cm-content');
-        check('#56 讀檔卡住期間切章:麵包屑仍是章節 B', raceCrumbs.includes('重載競態B') && !raceCrumbs.includes('重載競態A'), raceCrumbs);
-        check('#56 讀檔卡住期間切章:編輯器仍顯示章節 B 內容',
-            raceBody.includes('乙章原文') && !raceBody.includes('甲章'), JSON.stringify(raceBody.slice(0, 80)));
-        // 在 B 打字存檔:磁碟上的 B 不得被寫成 A 章內容
-        await page.click('.cm-content');
-        await page.keyboard.press('Control+End');
-        await page.keyboard.type('乙章標記');
-        await page.keyboard.press('Control+s');
-        await page.waitForSelector('[data-testid=toast]');
-        const raceBDisk = read(raceB);
-        check('#56 讀檔卡住期間切章:存檔後磁碟上的章節 B 不變(未被寫成章節 A 內容)',
-            raceBDisk.includes('乙章原文') && raceBDisk.includes('乙章標記') && !raceBDisk.includes('甲章'), JSON.stringify(raceBDisk.slice(0, 80)));
+        }, rel);
+        // 放行並等讀檔真的完成,再等 React 套用(或作廢)結果與解除鎖定
+        const releaseRead = async () => {
+            await page.evaluate(() => window.__perkinsReadGate());
+            await page.waitForFunction(() => window.__perkinsReadDone === true, null, {timeout: 5000});
+            await settle(80, 900);
+        };
+        const restoreRead = () => page.evaluate(() => {
+            if (window.__perkinsReadGate) window.__perkinsReadGate();
+            window.__perkinsReadGate = null;
+            if (window.__perkinsReadOrig) window.go.main.App.ReadFile = window.__perkinsReadOrig;
+        });
+        const waitDisk = async (rel, mark) => {
+            const t0 = Date.now();
+            while (!read(rel).includes(mark) && Date.now() - t0 < 5000) await page.waitForTimeout(100);
+        };
+        try {
+            await gateRead(raceA);
+            await page.click('[data-testid=chat-fab]');
+            await page.click('[data-testid=proposal]:has-text("甲章原文") [data-testid=accept]');
+            // 接受已送出,重載卡在章節 A 的 ReadFile;等待期間切到章節 B
+            await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
+            await page.locator('[data-testid=chapter-row]:has-text("重載競態B")').first().click({timeout: 15000});
+            await page.waitForFunction(c => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(c), '重載競態B', {timeout: 15000});
+            await page.waitForSelector('.cm-content:has-text("乙章原文")', {timeout: 15000});
+            await releaseRead();
+            const raceCrumbs = await page.textContent('[data-testid=crumbs]');
+            const raceBody = await page.textContent('.cm-content');
+            check('#56 讀檔卡住期間切章:麵包屑仍是章節 B', raceCrumbs.includes('重載競態B') && !raceCrumbs.includes('重載競態A'), raceCrumbs);
+            check('#56 讀檔卡住期間切章:編輯器仍顯示章節 B 內容',
+                raceBody.includes('乙章原文') && !raceBody.includes('甲章'), JSON.stringify(raceBody.slice(0, 80)));
+            // 在 B 打字存檔(等落盤):磁碟上的 B 不得被寫成 A 章內容
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('乙章標記');
+            await page.keyboard.press('Control+s');
+            await waitDisk(raceB, '乙章標記');
+            const raceBDisk = read(raceB);
+            check('#56 讀檔卡住期間切章:存檔後磁碟上的章節 B 不變(未被寫成章節 A 內容)',
+                raceBDisk.includes('乙章原文') && raceBDisk.includes('乙章標記') && !raceBDisk.includes('甲章'), JSON.stringify(raceBDisk.slice(0, 80)));
+
+            await restoreRead(); // 第一段結束:還原 ReadFile,下面重開章節 A 要讀真實內容
+            // 同一章:接受期間(存檔→套用→重載)編輯器唯讀,打的字不會進編輯器、也就不會被重載覆蓋
+            await page.locator('[data-testid=chapter-row]:has-text("重載競態A")').first().click({timeout: 15000});
+            await page.waitForSelector('.cm-content:has-text("甲章已接受")', {timeout: 15000});
+            const srcA2 = read(raceA);
+            const at2 = Buffer.byteLength(srcA2.slice(0, srcA2.indexOf('甲章已接受。')));
+            projWrite('.perkins/proposals/20261009-130100-race56b.json', JSON.stringify({
+                id: '20261009-130100-race56b', createdAt: '2026-10-09T13:01:00+08:00', model: 'E2E', target: raceA,
+                original: '甲章已接受。', replacement: '甲章再改。', rationale: 'E2E 唯讀測試', assumptions: [],
+                baseHash: require('crypto').createHash('sha256').update(srcA2).digest('hex'),
+                start: at2, end: at2 + Buffer.byteLength('甲章已接受。'), status: 'pending',
+            }));
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await gateRead(raceA);
+            await page.click('[data-testid=proposal]:has-text("甲章已接受") [data-testid=accept]');
+            await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('接受中輸入');
+            const lockedBody = await page.textContent('.cm-content');
+            check('#56 接受期間編輯器唯讀:打的字不會進入編輯器', !lockedBody.includes('接受中輸入'), JSON.stringify(lockedBody.slice(-40)));
+            await releaseRead();
+            const afterBody = await page.textContent('.cm-content');
+            check('#56 接受完成後顯示套用後內容,且可再編輯',
+                afterBody.includes('甲章再改') && read(raceA).includes('甲章再改'), JSON.stringify(afterBody.slice(-40)));
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('解鎖後輸入');
+            check('#56 接受完成後解除唯讀', (await page.textContent('.cm-content')).includes('解鎖後輸入'));
+            await page.keyboard.press('Control+s');
+            await waitDisk(raceA, '解鎖後輸入');
+        } finally {
+            await restoreRead();
+        }
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },
