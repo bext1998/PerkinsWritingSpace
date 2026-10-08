@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-09 — 全形標點插入 + 選取字數(Issue #46 前半)
+
+- **標點插入**(`Editor.tsx`):作者決定打字時不做任何自動改寫,只以快捷鍵與右鍵選單「插入標點」子選單(沿用快速指令子選單樣式與往左開規則)插入:`Alt+[`「」、`Alt+Shift+[`『』(無選取游標在中間;有選取包住、選取保持在內文)、`Alt+.` `……`、`Alt+-` `——`(取代選取);IME 組字中(`view.composing`)不動作。插入為單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原。
+- **實作細節**:快捷鍵不用 `keymap.of`——Windows Chromium 在 Alt 組合下 `event.key` 不反映 Shift(`Alt+Shift+[` 的 key 仍是 `[`),CM 的 key 名會把兩者視為同一鍵(實測 `Alt+Shift+[` 被當成 `Alt-[` 插了「」);改用 `EditorView.domEventHandlers` 以實體鍵 `event.code` + `shiftKey` 區分,並只在編輯器內容聚焦時處理。衝突檢查:defaultKeymap/historyKeymap/searchKeymap 與 CM 預設無這四個 Alt 組合(既有僅 `Alt-u` redo)。
+- **選取字數**(`Workspace.tsx`):編輯器有選取時狀態列在本章字數旁顯示「已選 N 字」(`count-selection`),N 用與本章字數同一套 `WordCount` 綁定、同樣 250ms debounce,不在前端另算;沒有選取不顯示;640 寬 `shrink-0 whitespace-nowrap` 不溢出。
+- **E2E(search-editor,22 項,E2E_SKIP_AI=1)**:專用章節;4 個快捷鍵(無選取游標位置、有選取包住並保留選取)、各 Ctrl+Z 一次復原、右鍵選單 4 項與快捷鍵標示、靠右緣子選單往左開、選取字數與 `WordCount(該段)` 同值、取消選取消失、640 寬狀態列不溢出。注意:Windows Chromium 右鍵會先把游標移到點擊處(原生 contenteditable 行為),選單插入落在右鍵點擊處,以累積連續片段驗證。
+- **破壞驗證**:移除快捷鍵 handler → 12 項快捷鍵檢查 FAIL;選單項目改為不動作 → 4 項選單插入檢查 FAIL;選取字數固定值 → 同值檢查 FAIL;無條件渲染 span → 「取消選取後消失」的 detach 等待逾時(組中斷,守住存在性);還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)405/405 passed(基準 383 + 22),略過 8 項,153s。`tsc --noEmit`、`npm run build` 通過。後半(段落上移/下移、場景標題插入與跳轉)未做。
+
 ## 2026-10-09 — Bot 浮窗用量返工(PR #54 審查)
 
 - `App.PreviewContext` 在請求進行中(`a.cancel != nil`)時不再呼叫 `prepare()`,沿用執行中 Agent 的端點設定估算(背景重算不得繞過送出確認換端點;App 層回歸測試 `TestPreviewContextDoesNotTouchRunningAgent`);前端 `busy` 期間停止背景重算,`chat:done` 後再算。

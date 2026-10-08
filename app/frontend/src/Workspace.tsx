@@ -112,6 +112,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [chatOpen, setChatOpen] = useState(false);
     const [chatReq, setChatReq] = useState<ChatRequest | null>(null);
     const [selection, setSelection] = useState<Selection | null>(null);
+    const [selCount, setSelCount] = useState<number | null>(null); // 選取字數(#46 前半),沒選取時為 null
     // 最後一次的非空選取及其來源(§16 第 1 項 02):切章不清除;AI 視窗開啟時由 ChatWindow 判斷是否沿用
     const [lastSel, setLastSel] = useState<{sel: Selection; from: string} | null>(null);
     const [remoteOk, setRemoteOk] = useState<Record<string, boolean>>({});
@@ -418,6 +419,14 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         return () => clearTimeout(id);
     }, [text]);
 
+    // 選取字數(#46 前半):與本章字數同一套規則(WordCount 綁定)與同樣的 250ms debounce,
+    // 不在前端另算;沒有選取時不顯示
+    useEffect(() => {
+        if (!selection) { setSelCount(null); return; }
+        const id = setTimeout(() => WordCount(selection.text).then(setSelCount).catch(() => {}), 250);
+        return () => clearTimeout(id);
+    }, [selection]);
+
     // 設定檔:解析 frontmatter 供表單顯示
     useEffect(() => {
         if (!current?.startsWith('canon/')) { setEntity(null); return; }
@@ -680,6 +689,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 {/* 狀態列:不換行、不溢出;最窄段省略「本卷」「全書」,模型名以省略號截斷(SPEC §17.1) */}
                 <footer data-testid="statusbar" className="flex h-7 shrink-0 items-center gap-4 overflow-hidden border-t px-4 text-xs text-muted-foreground">
                     {chapter && <span data-testid="count-chapter" className="shrink-0 whitespace-nowrap">本章 {liveCount.toLocaleString()} 字</span>}
+                    {selCount !== null && <span data-testid="count-selection" className="shrink-0 whitespace-nowrap">已選 {selCount.toLocaleString()} 字</span>}
                     {volume && !tight && <span className="shrink-0 whitespace-nowrap">本卷 {volumeCount.toLocaleString()} 字</span>}
                     <span className={cn('shrink-0 whitespace-nowrap', tight && 'hidden')}>全書 {totalCount.toLocaleString()} 字</span>
                     {current && !chapter && <span className="shrink-0 whitespace-nowrap">{liveCount.toLocaleString()} 字</span>}
