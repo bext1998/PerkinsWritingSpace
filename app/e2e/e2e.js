@@ -2657,13 +2657,13 @@ const maybe = async (name, fn, detail = '') => {
                 input.value = 'ㄙㄣ'; // 組字中途的暫存字串
                 input.dispatchEvent(new InputEvent('input', {bubbles: true, isComposing: true}));
                 r.mid = count(); // 不得提交(isComposing 事件層防護)
-                input.value = '營火'; // 提交(一般 input 事件,非組字)
+                input.value = '雷恩'; // 提交與原 query 不同總數的字(森林 total 2 → 雷恩 total 1,營火也是 2 筆會分不出新舊條件)
                 input.dispatchEvent(new InputEvent('input', {bubbles: true}));
-                r.afterSubmit = count(); // 營火:1/2
+                r.afterSubmit = count(); // 雷恩:1/1(總數變了,才證明提交真的生效)
                 return r;
             });
             check('IME 組字中不提交(isComposing 略過),提交不同字後更新',
-                ime.start === '1/2' && ime.mid === ime.start && ime.afterSubmit === '1/2', JSON.stringify(ime));
+                ime.start === '1/2' && ime.mid === ime.start && ime.afterSubmit === '1/1', JSON.stringify(ime));
 
             // 重新搜尋森林,改用 CDP 驗 keydown 防護(真實 composition 事件讓組字旗標生效)
             await page.click('.perkins-search input[name=search]', {clickCount: 3});
@@ -2696,32 +2696,37 @@ const maybe = async (name, fn, detail = '') => {
                 for (const t of ['compositionstart', 'compositionend', 'input', 'keydown'])
                     input.addEventListener(t, e => window.__evts.push({t, isComp: !!e.isComposing, keyCode: e.keyCode, text: (e.target?.value || '').slice(0, 12)}));
             });
-            // 提交與原 query 不同的文字:組字仍在,insertText 會提交組字並結束
+            // 提交與原 query 不同總數的文字:組字仍在,insertText 會提交組字並結束(森林 total 2 → 雷恩 total 1)
             const doc2 = await editorTxt();
-            await cdp.send('Input.insertText', {text: '營火'});
+            await cdp.send('Input.insertText', {text: '雷恩'});
             await page.waitForTimeout(300);
             const q2 = await page.$eval('.perkins-search input[name=search]', el => el.value);
             const c2 = await countOf();
             const doc2b = await editorTxt();
             const evts2 = await page.evaluate(() => window.__evts);
-            check('IME(CDP) 提交不同文字後更新(值、比對總數=營火的 2 筆、文件不變、組字結束)',
-                q2 === '營火' && (c2 || '').split('/')[1] === '2' && doc2b === doc2 && evts2.some(x => x.t === 'compositionend'),
-                `value=${q2}, count=${c2}, evts=${JSON.stringify(evts2)}`);
-            // 組字結束後一般 Enter 恢復:跳到下一筆營火比對(游標位置無關)
+            // 提交後的高亮:整份文件只剩雷恩這一筆比對高亮(Enter 前不會有 selected,看一般 searchMatch 即可)
+            const hl2 = await page.evaluate(() => {
+                const ms = [...document.querySelectorAll('.cm-searchMatch')];
+                return {n: ms.length, texts: [...new Set(ms.map(m => m.textContent))]};
+            });
+            check('IME(CDP) 提交不同文字後更新(值、比對數 1/1、高亮在雷恩、文件不變、組字結束)',
+                q2 === '雷恩' && c2 === '1/1' && hl2.n === 1 && hl2.texts[0] === '雷恩' && doc2b === doc2 && evts2.some(x => x.t === 'compositionend'),
+                `value=${q2}, count=${c2}, hl=${JSON.stringify(hl2)}, evts=${JSON.stringify(evts2)}`);
+            // 組字結束後一般 Enter 恢復:雷恩只有一筆,Enter 後仍選在同一筆(斷言選取與高亮仍在雷恩)
             await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
             await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
             await page.waitForTimeout(200);
             const c3 = await countOf();
             const sel3 = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
-            check('IME(CDP) 組字結束後一般 Enter 恢復(跳下一筆營火、選取同步)',
-                sel3 === '營火' && (c3 || '').split('/')[1] === '2', `count=${c3}, sel=${sel3}`);
+            check('IME(CDP) 組字結束後一般 Enter 恢復(選取仍同步在雷恩比對)',
+                sel3 === '雷恩' && c3 === '1/1', `count=${c3}, sel=${sel3}`);
             await page.keyboard.press('Escape');
             await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000}).catch(() => {});
         } catch (e) {
             check('IME 組字中不提交(isComposing 略過),提交不同字後更新', false, e.message);
             check('IME(CDP) 組字中 229 的 Enter/Escape 不跳比對、不關面板、文件不變', false, e.message);
-            check('IME(CDP) 提交不同文字後更新(值、比對總數=營火的 2 筆、文件不變、組字結束)', false, e.message);
-            check('IME(CDP) 組字結束後一般 Enter 恢復(跳下一筆營火、選取同步)', false, e.message);
+            check('IME(CDP) 提交不同文字後更新(值、比對數 1/1、選取在雷恩、文件不變、組字結束)', false, e.message);
+            check('IME(CDP) 組字結束後一般 Enter 恢復(選取仍同步在雷恩比對)', false, e.message);
         }
 
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
