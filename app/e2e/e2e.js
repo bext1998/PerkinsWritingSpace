@@ -2460,6 +2460,342 @@ const maybe = async (name, fn, detail = '') => {
             JSON.stringify({contentRight: m1280.contentRight, tbRight: m1280.tbRight}));
         check('半螢幕 變寬到 1280 後不自動重開資訊欄', !(await page.$('[data-testid=inspector]')));
         await shot('61-toolbar-1280x800');
+
+        // ===== 搜尋/取代(SPEC §16 第 24 項第一層;返工:安靜精簡兩列面板)=====
+        const editorTxt = () => page.$$eval('.cm-content .cm-line', els => els.map(e => e.textContent).join('\n'));
+        const openPanel = async key => { await page.keyboard.press(key); await page.waitForSelector('.perkins-search', {timeout: 5000}); };
+        await page.setViewportSize({width: 1440, height: 900});
+        await page.waitForTimeout(300);
+        const searchRow = (await page.$$('[data-testid=chapter-row]'))[0];
+        await searchRow.click();
+        await page.waitForSelector('.cm-content');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(300);
+
+        // Ctrl+F 開面板,焦點在搜尋欄(中文 placeholder)。Ctrl+F 只在編輯器聚焦時作用(CodeMirror 慣例),先點回編輯器
+        try {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await openPanel('Control+f');
+            const okFocus = await page.evaluate(() =>
+                document.activeElement?.matches('.perkins-search input[name=search]') &&
+                document.activeElement.placeholder === '搜尋');
+            check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', okFocus,
+                await page.evaluate(() => document.activeElement?.placeholder || '(焦點不在面板)'));
+            await shot('65-search-panel-dark');
+        } catch (e) { check('搜尋 Ctrl+F 開啟面板且搜尋欄自動聚焦(中文介面)', false, e.message); }
+
+        // 面板精簡:沒有任何核取方塊(區分大小寫/正規/整詞不做)
+        try {
+            const boxes = await page.$$eval('.perkins-search input[type=checkbox]', els => els.length);
+            const labels = await page.textContent('.perkins-search');
+            check('搜尋 面板精簡(無區分大小寫/正規/整詞核取方塊)',
+                boxes === 0 && !/區分大小寫|正規|整詞/.test(labels), `checkbox=${boxes}`);
+        } catch (e) { check('搜尋 面板精簡(無區分大小寫/正規/整詞核取方塊)', false, e.message); }
+
+        // 輸入關鍵字 → Enter:選取比對、高亮、顯示目前第幾個/比對數
+        try {
+            await page.click('.perkins-search input[name=search]');
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
+            await page.waitForSelector('.cm-searchMatch-selected', {timeout: 5000});
+            const sel = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
+            check('搜尋 Enter 後選取比對並以主題色高亮', sel.includes('森林'), sel);
+            const count = (await page.textContent('.perkins-search .perkins-search-count')).trim();
+            check('搜尋 顯示目前第幾個/比對數', /1\s*\/\s*2/.test(count), count);
+        } catch (e) {
+            check('搜尋 Enter 後選取比對並以主題色高亮', false, e.message);
+            check('搜尋 顯示目前第幾個/比對數', false, e.message);
+        }
+
+        // Escape 關面板(先確認面板開著,避免「沒開也沒關」的假通過)
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+            check('搜尋 Escape 關閉面板', true);
+        } catch (e) { check('搜尋 Escape 關閉面板', false, e.message); }
+
+        // 面板預設收起取代列;「取代」切換鈕可展開/收起
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            const hidden0 = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display === 'none');
+            check('搜尋 面板預設收起取代列', hidden0);
+            await page.click('button[name=toggle-replace]');
+            const shown = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display !== 'none');
+            check('取代 切換鈕展開取代列', shown);
+            await page.click('button[name=toggle-replace]');
+            const hidden2 = await page.$eval('.perkins-replace-row', el => getComputedStyle(el).display === 'none');
+            check('取代 切換鈕再點收起取代列', hidden2);
+        } catch (e) {
+            check('搜尋 面板預設收起取代列', false, e.message);
+            check('取代 切換鈕展開取代列', false, e.message);
+            check('取代 切換鈕再點收起取代列', false, e.message);
+        }
+
+        // Ctrl+H:開啟面板並展開取代列,焦點在「取代為」欄
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+h');
+            const okRepl = await page.evaluate(() =>
+                document.activeElement?.matches('.perkins-search input[name=replace]') &&
+                getComputedStyle(document.querySelector('.perkins-replace-row')).display !== 'none');
+            check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', okRepl);
+        } catch (e) { check('取代 Ctrl+H 開啟面板並聚焦「取代為」欄(取代列展開)', false, e.message); }
+
+        // 回歸(PR #23 審查#1):面板顯示與實際取代條件同步。
+        // 面板開著輸入「森林→樹林」,回編輯器選取「天」再按 Ctrl+H:openSearchPanel 會以編輯器選取字
+        // 重設 query(天→空),面板若未同步會顯示舊條件,實際全部取代卻刪「天」
+        try {
+            // 先關掉上一段遺留的開啟面板(取代列展開中),重開才是全新狀態
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await openPanel('Control+f');
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
+            await page.click('button[name=toggle-replace]');
+            await page.click('.perkins-search input[name=replace]');
+            await page.keyboard.type('樹林', {delay: 20});
+            // 回編輯器選取「天」:行內文字包在 span 裡,用 TreeWalker 找文字節點;點到字元左緣,Shift+→ 選一個字
+            const pos = await page.evaluate(() => {
+                const root = document.querySelector('.cm-content');
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                let n;
+                while ((n = walker.nextNode())) {
+                    const i = (n.textContent || '').indexOf('天');
+                    if (i < 0) continue;
+                    const r = document.createRange();
+                    r.setStart(n, i); r.setEnd(n, i + 1);
+                    const rect = r.getBoundingClientRect();
+                    if (rect.width === 0) continue;
+                    return {x: rect.left + 1, y: rect.top + rect.height / 2};
+                }
+                return null;
+            });
+            await page.mouse.click(pos.x, pos.y);
+            await page.keyboard.press('Shift+ArrowRight');
+            let selChar = await page.evaluate(() => window.getSelection()?.toString() || '');
+            for (let tries = 0; selChar !== '天' && tries < 5; tries++) {
+                await page.keyboard.press('ArrowLeft');
+                await page.keyboard.press('Shift+ArrowRight');
+                selChar = await page.evaluate(() => window.getSelection()?.toString() || '');
+            }
+            await page.keyboard.press('Control+h');
+            await page.waitForTimeout(200);
+            const synced = await page.evaluate(() => ({
+                search: document.querySelector('.perkins-search input[name=search]').value,
+                replace: document.querySelector('.perkins-search input[name=replace]').value,
+                count: document.querySelector('.perkins-search .perkins-search-count').textContent,
+                sel: document.querySelector('.cm-searchMatch-selected')?.textContent || '',
+            }));
+            await page.click('.perkins-search button[name=replaceAll]');
+            await page.waitForTimeout(300);
+            const t2 = await editorTxt();
+            check('面板顯示與實際取代條件同步(Ctrl+H 後顯示「天→空」,全部取代移除的正是天)',
+                selChar === '天' && synced.search === '天' && synced.replace === '' && synced.count === '1/1' && synced.sel === '天'
+                && !t2.includes('天很黑') && t2.includes('很黑'), JSON.stringify({selChar, synced, tail: t2.slice(-40)}));
+            check('同步後取代走正常編輯流程(未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+        } catch (e) {
+            check('面板顯示與實際取代條件同步(Ctrl+H 後顯示「天→空」,全部取代移除的正是天)', false, e.message);
+            check('同步後取代走正常編輯流程(未儲存)', false, e.message);
+        }
+
+        // 取代:先加入固定字樣,全部取代,驗證走 onChange → dirty → 存檔流程
+        try {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.press('Enter');
+            await page.keyboard.type('搜尋取代目標字,又是搜尋取代目標字。');
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            await openPanel('Control+h');
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('搜尋取代目標字', {delay: 20});
+            await page.click('.perkins-search input[name=replace]', {clickCount: 3});
+            await page.keyboard.type('改寫後的字', {delay: 20});
+            await page.click('.perkins-search button[name=replaceAll]');
+            await page.waitForTimeout(300);
+            const t1 = await editorTxt();
+            check('全部取代後內容已改變', !t1.includes('搜尋取代目標字') && (t1.match(/改寫後的字/g) || []).length === 2, t1.slice(-60));
+            check('取代走正常編輯流程(狀態為未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(300);
+            check('取代結果以正常存檔流程落盤', read(ch1).includes('改寫後的字'));
+        } catch (e) {
+            check('全部取代後內容已改變', false, e.message);
+            check('取代走正常編輯流程(狀態為未儲存)', false, e.message);
+            check('取代結果以正常存檔流程落盤', false, e.message);
+        }
+
+        // 640×672:收起時單排;展開取代時最多兩排;不得出水平捲軸或按鈕被裁掉
+        try {
+            // 先關掉上一段遺留的面板(取代列展開中),重開才是全新狀態
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+            await page.setViewportSize({width: 640, height: 672});
+            await page.waitForTimeout(300);
+            await openPanel('Control+f');
+            const measure = () => page.evaluate(() => {
+                const p = document.querySelector('.perkins-search');
+                if (!p) return null;
+                const de = document.documentElement;
+                const pr = p.getBoundingClientRect();
+                const row1 = p.querySelector('.perkins-search-row');
+                const clipped = [];
+                for (const el of p.querySelectorAll('button,input')) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && (r.right > pr.right + 1 || r.left < pr.left - 1)) clipped.push(el.name || (el.getAttribute('aria-label') || '').slice(0, 6));
+                }
+                const c = p.querySelector('button[name=close]');
+                return {
+                    panelH: Math.round(pr.height),
+                    row1H: Math.round(row1.getBoundingClientRect().height),
+                    replaceVisible: getComputedStyle(p.querySelector('.perkins-replace-row')).display !== 'none',
+                    docH: de.scrollWidth > de.clientWidth,
+                    clipped,
+                    close: !!c && c.getBoundingClientRect().width > 0 && c.getBoundingClientRect().right <= pr.right + 1,
+                };
+            });
+            const m1 = await measure();
+            check('搜尋 640×672 收起時單排、無水平捲軸、按鈕不被裁掉',
+                !!m1 && !m1.docH && m1.clipped.length === 0 && m1.close && !m1.replaceVisible && m1.panelH <= 40 && m1.row1H <= 32, JSON.stringify(m1));
+            await page.click('button[name=toggle-replace]');
+            const m2 = await measure();
+            check('搜尋 640×672 展開取代時最多兩排、無水平捲軸、按鈕不被裁掉',
+                !!m2 && !m2.docH && m2.clipped.length === 0 && m2.close && m2.replaceVisible && m2.panelH <= 76, JSON.stringify(m2));
+            await shot('66-search-640-dark-replace');
+            await page.click('button[name=toggle-replace]');
+            await shot('66-search-640-dark');
+        } catch (e) {
+            check('搜尋 640×672 收起時單排、無水平捲軸、按鈕不被裁掉', false, e.message);
+            check('搜尋 640×672 展開取代時最多兩排、無水平捲軸、按鈕不被裁掉', false, e.message);
+        }
+
+        // 兩種主題的面板外觀
+        await page.setViewportSize({width: 1280, height: 800});
+        await page.waitForTimeout(300);
+        await shot('67-search-dark-1280');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(400);
+        try {
+            await page.click('.cm-content');
+            await openPanel('Control+f');
+            await shot('68-search-light');
+            await page.keyboard.press('Escape');
+        } catch (e) { await shot('68-search-light-error'); }
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await page.waitForTimeout(300);
+
+        // IME 組字(PR #23 審查#2/#3)。三個防護分支的驗證:
+        // (a) 合成 InputEvent(isComposing: true):組字中途不提交比對數;提交不同字(一般 input)後才更新。
+        // (b) CDP:imeSetComposition 會發真實 composition 事件(旗標生效);keyCode 229 的 Enter/Escape
+        //     key='Enter' 才會進 Enter 分支,配合 229 才能驗防護本身)不觸發 findNext/不關面板;
+        //     提交與原 query 不同的文字後核對值/比對數/選取;組字結束後一般 Enter(keyCode 13)恢復。
+        // 註:無頭環境無真實 IME,真實 IME 建議作者實機確認。
+        try {
+            await page.setViewportSize({width: 1440, height: 900});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            await openPanel('Control+f');
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(200);
+            const ime = await page.evaluate(() => {
+                const input = document.querySelector('.perkins-search input[name=search]');
+                const count = () => document.querySelector('.perkins-search .perkins-search-count').textContent;
+                const r = {};
+                r.start = count(); // 森林:1/2
+                input.value = 'ㄙㄣ'; // 組字中途的暫存字串
+                input.dispatchEvent(new InputEvent('input', {bubbles: true, isComposing: true}));
+                r.mid = count(); // 不得提交(isComposing 事件層防護)
+                input.value = '雷恩'; // 提交與原 query 不同總數的字(森林 total 2 → 雷恩 total 1,營火也是 2 筆會分不出新舊條件)
+                input.dispatchEvent(new InputEvent('input', {bubbles: true}));
+                r.afterSubmit = count(); // 雷恩:1/1(總數變了,才證明提交真的生效)
+                return r;
+            });
+            check('IME 組字中不提交(isComposing 略過),提交不同字後更新',
+                ime.start === '1/2' && ime.mid === ime.start && ime.afterSubmit === '1/1', JSON.stringify(ime));
+
+            // 重新搜尋森林,改用 CDP 驗 keydown 防護(真實 composition 事件讓組字旗標生效)
+            await page.click('.perkins-search input[name=search]', {clickCount: 3});
+            await page.keyboard.type('森林', {delay: 20});
+            await page.keyboard.press('Enter');
+            await page.waitForTimeout(200);
+            const countOf = () => page.evaluate(() => document.querySelector('.perkins-search .perkins-search-count')?.textContent);
+            const scrollOf = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
+            const cdp = await page.context().newCDPSession(page);
+            const c0 = await countOf(); // 1/2
+            const s0 = await scrollOf();
+            const doc0 = await editorTxt();
+            await cdp.send('Input.imeSetComposition', {text: 'ㄙㄣ', selectionStart: 1, selectionEnd: 1});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 229});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 229});
+            await page.waitForTimeout(200);
+            const c1 = await countOf();
+            const s1 = await scrollOf();
+            const open1 = !!(await page.$('.perkins-search'));
+            const doc1 = await editorTxt();
+            check('IME(CDP) 組字中 229 的 Enter/Escape 不跳比對、不關面板、文件不變',
+                c1 === c0 && s1 === s0 && open1 && doc1 === doc0, `count ${c0}→${c1}, scroll ${s0}→${s1}, open=${open1}`);
+            // 提交與原 query 不同的文字,核對值/比對數/選取
+            // 事件記錄(診斷用):組字/提交的實際事件流
+            await page.evaluate(() => {
+                window.__evts = [];
+                const input = document.querySelector('.perkins-search input[name=search]');
+                for (const t of ['compositionstart', 'compositionend', 'input', 'keydown'])
+                    input.addEventListener(t, e => window.__evts.push({t, isComp: !!e.isComposing, keyCode: e.keyCode, text: (e.target?.value || '').slice(0, 12)}));
+            });
+            // 提交與原 query 不同總數的文字:組字仍在,insertText 會提交組字並結束(森林 total 2 → 雷恩 total 1)
+            const doc2 = await editorTxt();
+            await cdp.send('Input.insertText', {text: '雷恩'});
+            await page.waitForTimeout(300);
+            const q2 = await page.$eval('.perkins-search input[name=search]', el => el.value);
+            const c2 = await countOf();
+            const doc2b = await editorTxt();
+            const evts2 = await page.evaluate(() => window.__evts);
+            // 提交後的高亮:整份文件只剩雷恩這一筆比對高亮(Enter 前不會有 selected,看一般 searchMatch 即可)
+            const hl2 = await page.evaluate(() => {
+                const ms = [...document.querySelectorAll('.cm-searchMatch')];
+                return {n: ms.length, texts: [...new Set(ms.map(m => m.textContent))]};
+            });
+            check('IME(CDP) 提交不同文字後更新(值、比對數 1/1、高亮在雷恩、文件不變、組字結束)',
+                q2 === '雷恩' && c2 === '1/1' && hl2.n === 1 && hl2.texts[0] === '雷恩' && doc2b === doc2 && evts2.some(x => x.t === 'compositionend'),
+                `value=${q2}, count=${c2}, hl=${JSON.stringify(hl2)}, evts=${JSON.stringify(evts2)}`);
+            // 組字結束後一般 Enter 恢復:雷恩只有一筆,Enter 後仍選在同一筆(斷言選取與高亮仍在雷恩)
+            await cdp.send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
+            await cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13});
+            await page.waitForTimeout(200);
+            const c3 = await countOf();
+            const sel3 = await page.evaluate(() => document.querySelector('.cm-searchMatch-selected')?.textContent || '');
+            check('IME(CDP) 組字結束後一般 Enter 恢復(選取仍同步在雷恩比對)',
+                sel3 === '雷恩' && c3 === '1/1', `count=${c3}, sel=${sel3}`);
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000}).catch(() => {});
+        } catch (e) {
+            check('IME 組字中不提交(isComposing 略過),提交不同字後更新', false, e.message);
+            check('IME(CDP) 組字中 229 的 Enter/Escape 不跳比對、不關面板、文件不變', false, e.message);
+            check('IME(CDP) 提交不同文字後更新(值、比對數 1/1、選取在雷恩、文件不變、組字結束)', false, e.message);
+            check('IME(CDP) 組字結束後一般 Enter 恢復(選取仍同步在雷恩比對)', false, e.message);
+        }
+
         await page.setViewportSize({width: 1440, height: 900});    } catch (e) {
         check('執行中斷', false, e.message);
         await shot('99-error');

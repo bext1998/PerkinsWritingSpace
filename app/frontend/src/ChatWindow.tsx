@@ -364,7 +364,7 @@ export default function ChatWindow(props: Props) {
                     {turns.length === 0 && openProposals.length === 0 && (
                         <div className="mt-6 space-y-2 px-2 text-center text-xs leading-relaxed text-muted-foreground">
                             <Bot className="mx-auto h-8 w-8 opacity-40"/>
-                            <p>選取文字後按右鍵「詢問 AI」或「快速指令」,或直接在下方提問。</p>
+                            <p>選取文字後按右鍵「詢問 Perkins Bot」或「快速指令」,或直接在下方提問。</p>
                             <p>AI 只能閱讀你附加的內容並提出建議;任何修改都要你接受才會寫入。</p>
                         </div>
                     )}

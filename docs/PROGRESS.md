@@ -1,5 +1,28 @@
 # PROGRESS.md
 
+## 2026-10-08 — 搜尋面板返工二(PR #23 審查修復)
+
+- **#1(Major)面板顯示與實際取代條件不同步**:`openSearchPanel` 等內建流程會用 `setSearchQuery` effect 帶入新條件(例如回編輯器選取「天」再按 Ctrl+H,實際 query 變成「天→空」),自訂面板的 `update()` 沒處理,會顯示舊條件(森林→樹林),作者按「全部取代」實際卻刪「天」。修法:`update()` 掃 transactions 的 effects,`setSearchQuery` 且不等於目前 query 時呼叫 `setQuery()` 同步兩欄與比對數。**回歸檢查**:面板開著輸入「森林→樹林」→ 回編輯器選取「天」(TreeWalker 找文字節點,行內文字包在 highlight span 裡,不能用 `.cm-line` 直接子節點找)→ Ctrl+H → 斷言面板顯示「天→空」、比對數 1/1、選取高亮在「天」→ 全部取代後文件確實移除「天」且走正常 dirty → 存檔流程。**破壞驗證**:拿掉 update() 同步 → FAIL,症狀與審查描述一致(synced=森林/樹林/2/2,sel=天);還原 → PASS。
+- **#2(Major)IME 防護不足**:keydown 只看 `e.isComposing`,漏掉 `this.composing`(旗標)與 `keyCode===229`(IME 轉送邊界)的組字按鍵,搜尋欄會跳下一筆、取代欄可能誤取代、Escape 會誤關面板。三條件合併防護,直接 `return` 不 `preventDefault`(不影響正常 IME 輸入)。
+- **#3(Minor)e2e IME 檢查假通過**:舊檢查提交的值與原 query 相同、CDP key 用 `key:'Process'` 進不了 Enter 分支、只看捲動與 input 值。重寫:(a) 合成 `InputEvent(isComposing: true)` 驗組字中途不提交,提交後改用與原 query **不同總數**的字(森林 total 2 → 雷恩 total 1)斷言 `1/1` — 若用「營火」(total 也是 2)提交前後都是 1/2,阻止提交進處理器時仍會假通過;(b) CDP `imeSetComposition` 會發**真實** composition 事件(旗標生效),`key:'Enter'`+keyCode 229 驗 Enter/Escape 都不動作(比對數/捲動/文件不變、面板未關);(c) CDP 提交同樣用「雷恩」,斷言值、比對數 `1/1`、**唯一高亮就是雷恩那筆**(`.cm-searchMatch`,Enter 前不會有 selected)、文件不變、組字結束;(d) 組字結束後一般 Enter(keyCode 13)恢復,選取與高亮仍在雷恩比對(`1/1`)。**破壞驗證**(兩輪):(1) 拿掉 keydown+input 防護 → 組字中途立即提交(mid='0')、229 Escape 關掉面板(IME 檢查 FAIL);(2) 讓提交進不了 handler(input/compositionend 不呼叫 commit)→ 兩項提交檢查 FAIL — CDP 項抓到 value 累成「森林雷恩」但 count=0、無高亮(事件有到、提交沒生效);還原 → 全綠。
+- **環境陷阱(重要)**:CDP 模擬的 composition 事件**不會觸發 `on*` 屬性 handler**(addEventListener 會),實測 `input.oncompositionend` 有指派、事件有到 input,handler 卻沒被呼叫。面板的 input/composition 事件改用 `addEventListener` 掛(keydown 維持 property,實測正常);這同時讓 CDP 路徑與真實瀏覽器行為一致。另外合成 `CompositionEvent` dispatch 也不會觸發 property handler,組字旗標的防護只能靠真實(CDP)composition 事件驗,無頭環境無法模擬「真實 IME 組字中按一般鍵」的情境。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**329/329 passed,略過 8 項**。真實 IME(注音/倉頡)仍建議作者實機確認。
+
+## 2026-10-08 — 編輯器搜尋/取代 + 右鍵選單改名(SPEC §16 第 13 項、第 24 項第一層)
+
+- **右鍵選單改名**:「詢問 AI…」→「詢問 Perkins Bot…」(`Editor.tsx`);ChatWindow 空白狀態提示引用的文字一併更新。E2E 沒有比對舊字串的檢查,不需改。
+- **搜尋/取代 v2(PR #23 返工,自訂面板)**:初版直接用 CodeMirror 預設面板,像 IDE 且 640 寬折成四排壓掉編輯區。改為自訂 `PerkinsSearchPanel`(`search({top: true, createPanel: view => (activeSearchPanel = new PerkinsSearchPanel(view))})`),兩列設計:
+  - **搜尋列(單排,永遠顯示)**:搜尋輸入框、上一個/下一個(ChevronUp/Down 圖示鈕,含 title/aria-label)、比對數「目前第幾個/共幾個」(用公開的 `SearchQuery.getCursor` 掃全文計算,`update()` 在 docChanged/selectionSet 時即時更新,上限 10000)、「取代」切換鈕(aria-expanded)、「×」關閉。
+  - **取代列(預設隱藏)**:Ctrl+H 開面板並展開聚焦「取代為」欄(searchKeymap 沒有取代快捷鍵,自訂 Mod-h),或點「取代」切換鈕;含取代輸入框、取代、全部取代。取代走一般編輯流程:dispatch → onChange → dirty → Ctrl+S 落盤。
+  - **移除預設面板的核取方塊**:區分大小寫/正規/整詞不做(整詞對中文無意義,正規與大小寫非小說作者常用)。仍保留 query 的預設能力(未用到的 caseSensitive/regexp 欄位保持預設值)。
+  - **IME 防護**:輸入框 `oninput` 同時檢查 `compositionstart/end` 旗標與事件的 `isComposing`(雙重防護);組字中途不提交 query,`compositionend` 才提交;面板 keydown 對 `isComposing` 的按鍵(含 keyCode 229 的 Enter)不觸發 findNext/close。
+  - **樣式陷阱(沿用)**:CM baseTheme 的 `.cm-button` 帶 background-image 漸層,會蓋掉 background-color,按鈕需 `backgroundImage: 'none'`。比對高亮(`.cm-searchMatch*`)用 `--selection` token。
+  - **實作細節**:面板用小 `h()`/`searchBtn()` helper 建立原生 DOM(crelt 未安裝);`main-field` 屬性維持在搜尋欄(讓 CM 的 openSearchPanel 自動聚焦邏輯運作);`onmousedown preventDefault` 讓圖示鈕不攝走輸入框焦點。
+- **E2E 17 項檢查**(e2e.js「搜尋/取代」段,依新介面改寫):Ctrl+F 開面板聚焦(中文 placeholder)、面板精簡(0 個核取方塊)、Enter 選取比對並高亮、比對數「1/2」、Escape 關面板(先確認面板開著)、預設收起取代列、切換鈕展開/收起取代列、Ctrl+H 聚焦「取代為」並展開、全部取代後內容改變、dirty 徽章、磁碟落盤、640×672 收起單排(panelH≤40)、展開取代兩排(panelH≤61≤76,兩次量測都無水平捲軸、無裁切、×可按)、IME 組字中不更新比對數(isComposing 略過)、組字中 Enter 不捲動(CDP 229)、提交後收到完整字串。**破壞驗證**:拿掉 `search()`+`searchKeymap`+Mod-h → 17 項全 FAIL;還原 → 全綠(只拿掉 `search()` 不夠,`openSearchPanel` 會用 appendConfig 自裝擴充)。
+- **E2E 陷阱(沿用+新增)**:Playwright 對 CJK 用 insertText(無 keyup),自訂面板已改 oninput 不受影響;面板會保留上次 query,輸入前三連擊全選;640 段前要先 Escape 關掉上一段遺留的開著面板(取樣基準才乾淨);CDP `imeSetComposition` 在無頭環境不發 composition 事件(值直接改)+「組字中不提交」無法用 CDP 驗,改用合成事件(`InputEvent` isComposing/`CompositionEvent`)直接驗防護邏輯。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(E2E_SKIP_AI=1)**326/326 passed,略過 8 項**。截圖(`shots/`,兩主題+640 都看過):`65-search-panel-dark.png`、`66-search-640-dark.png`(收起單排)、`66-search-640-dark-replace.png`(展開兩排)、`67-search-dark-1280.png`、`68-search-light.png`。
+- **未驗證**:真實 IME(注音/倉頡)組字:無頭環境 CDP 不發 composition 事件,「組字中不提交」以合成事件驗證防護邏輯,建議作者實機確認一次。Ctrl+F 僅在編輯器聚焦時作用(CodeMirror 慣例;焦點在其他面板時不會轉發,轉發需改 Workspace.tsx,依指示未碰)。
+
 ## 2026-10-07 — PR #19 返工:設定頁 640 寬三欄並排壓爆表單
 
 - **#1(Major)設定頁「AI 模型」「平台輸出」640 寬不可用**:上一輪只消了水平捲軸,但導覽(200)+清單(220)+表單三欄並排把表單壓到約 148px——模型輸入框 clientWidth 只剩 24px(看不到模型名)、下拉文字被截、開關標籤擠成兩行;無水平捲軸 ≠ 可用,違反驗收 (c)。修法(`SettingsPage.tsx`):兩個分頁的清單欄/表單容器改 `grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]`——lg(1024px)以下(含 640/768/960 驗收尺寸)清單與表單上下堆疊、表單滿寬;1280 維持並排。左導覽 200px 不動(640 寬內容區約 392px,堆疊後不需收成圖示)。
