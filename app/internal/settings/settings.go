@@ -50,6 +50,9 @@ type Settings struct {
 	Recent    []Recent          `json:"recent"`
 	Platforms []publish.Platform `json:"platforms"`
 	Theme     string            `json:"theme"` // dark | light
+	// 定時自動存檔(SPEC §17.3)。指標用來區分「作者明確關閉」與「舊設定檔沒有這個欄位」,
+	// 後者視為開啟;用 bool 的話兩者都是 false,分不出來。
+	Autosave *bool `json:"autosave,omitempty"`
 }
 
 func defaults() Settings {
@@ -120,6 +123,9 @@ func (s *Store) Save(v Settings) error {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return os.WriteFile(filepath.Join(s.Dir, "settings.json"), b, 0o600)
 }
+
+// AutosaveOn 回傳定時自動存檔是否啟用:沒設定過(舊設定檔)時預設開啟。
+func (v Settings) AutosaveOn() bool { return v.Autosave == nil || *v.Autosave }
 
 func (v *Settings) ProfileByID(id string) *Profile {
 	for i := range v.Profiles {
