@@ -8,4 +8,4 @@ Responsibilities:
 - E2E 預設帶 `E2E_SKIP_AI=1`，只有改動涉及 AI 流程時才叫本機模型
 - 測試後還原環境（設定檔、dev ports、暫存執行檔），不碰作者正在執行的 `perkins.exe`
 - 回報修改內容、驗證結果與剩餘問題；略過或沒驗證到的事要明說
-- Agent 間溝通規則見 `AGENTS.md`「Agent 之間的主動溝通」：完成、受阻、需要擴大範圍時主動回報 Orchestrator，不默默擴大範圍
+- Agent 間溝通規則見 `AGENTS.md`「Agent 之間的主動溝通」：完成、受阻、需要擴大範圍時主動回報 Orchestrator（照該節的回報格式），不默默擴大範圍
