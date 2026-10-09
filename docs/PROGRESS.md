@@ -11,6 +11,13 @@
 - **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**433/435 passed**,略過 8 項,207s;新增 22 項全過。2 項 FAIL 是既有書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等待卡片逾時,suite 自己在 `bible.js` 註明為既有 flaky race);把本次改動 stash 掉只跑 main 的一輪同樣是這 2 項 FAIL(411/413),書櫃清空後(clean-recent.js)仍重現 → 與本次改動無關。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
 - **返工(codex 審查 2 項 Minor,Orchestrator 直接修)**:(1)場景跳轉改用與側欄 `ParseScenes` 同一套判準,略過程式碼區塊內的 `## `;新增 2 項 E2E(fence 內假標題雙向都不跳入),破壞驗證(停用 fence 判斷 → 2 項 FAIL)後還原。(2)上方基準的剪貼簿描述改為實情。全新 fixture `--all` 447/447 passed(main 423 + 24)。
 
+## 2026-10-10 — Perkins Bot 浮窗縮窄後回到畫面內(Issue #55)
+
+- `ChatWindow.tsx`:浮窗開啟時與視窗縮放時,把拖曳過的位置限制在可見範圍內(依浮窗實際大小,上界仍是標題欄底緣);收起狀態下縮窄,重新開啟時才調整。
+- **E2E(layout-half,4 項)**:1440 寬拖到右側 → 縮到 640 後浮窗完整在畫面內;收起時縮窄 → 重新開啟仍在畫面內。移除 PR #54 留下的「放大到 1440 拖回左上再縮回」變通。
+- **破壞驗證**:停用位置限制 → 2 項 #55 檢查與 640 寬 context-usage 檢查 FAIL;還原全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)427/427 passed(基準 423 + 4)。
+
 ## 2026-10-09 — PR #59 返工(codex 審查 3 項 Minor)
 
 - **插入自成一個復原步驟**:`insertPair`/`insertRaw` 的 dispatch 加 `annotations: isolateHistory.of('full')`,打字後立刻插入不再與前次輸入合併,一次 Ctrl+Z 只撤插入。E2E:打字後立刻 Alt+[ → Ctrl+Z 只撤插入、前面的字還在。
