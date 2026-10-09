@@ -12,7 +12,8 @@ interface Props {
     onOpenChange: (o: boolean) => void;
     current: string | null;
     saveFirst: () => Promise<void>;      // 快照/還原前先存檔,避免未存的文字被忽略或被覆蓋
-    onRestored: (files: string[]) => void;
+    onRestored: (files: string[]) => Promise<void>;
+    lockEdits: () => () => void; // 還原期間(存檔→寫入→重載)鎖住編輯器(#56):關掉對話框繼續打字也不會被重載覆蓋
 }
 
 const reasonText: Record<string, string> = {
@@ -24,7 +25,7 @@ const reasonText: Record<string, string> = {
 
 const titleOf = (p: string) => p.split('/').pop()?.replace(/\.md$/, '') ?? p;
 
-export default function VersionDialog({open, onOpenChange, current, saveFirst, onRestored}: Props) {
+export default function VersionDialog({open, onOpenChange, current, saveFirst, onRestored, lockEdits}: Props) {
     const [list, setList] = useState<snapshot.Meta[]>([]);
     const [label, setLabel] = useState('');
     const [sel, setSel] = useState<snapshot.Meta | null>(null);
@@ -70,14 +71,16 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
 
     const restore = async (files: string[]) => {
         if (!sel) return;
+        const unlock = lockEdits();
         try {
             await saveFirst();
             await RestoreSnapshot(sel.id, files);
             setMsg('已還原。還原前的內容也自動備份成一個快照,需要時可以再還原回來。');
-            onRestored(files.length ? files : sel.files ?? []);
+            await onRestored(files.length ? files : sel.files ?? []);
             refresh();
             if (file) setDiff(await SnapshotDiff(sel.id, file));
         } catch (e) { fail(e); }
+        finally { unlock(); }
     };
 
     const changed = diff?.some(l => l.op !== ' ');

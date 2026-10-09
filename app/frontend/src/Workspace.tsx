@@ -120,6 +120,19 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [summaryTick, setSummaryTick] = useState(0);
     const editor = useRef<EditorHandle>(null);
     const loaded = useRef<string | null>(null);
+    // 開檔世代(#56):每次開檔遞增;重載讀檔期間若開過檔(含 A→B→A 回到原檔),該次重載作廢
+    const navGen = useRef(0);
+    // 重載世代(#56):同一章的重載重疊時(連續接受、接受與還原重疊),只套用最後發起的那次,較舊讀取晚回來不得覆蓋
+    const reloadGen = useRef(0);
+    // 接受提案、版本還原期間(存檔→寫入→重載)編輯器唯讀(#56):否則期間的新輸入會被重載覆蓋。
+    // 計數:多個操作重疊時(例如重複按接受),全部結束才解鎖;lockEdits 回傳解鎖函式
+    const [editLocked, setEditLocked] = useState(false);
+    const lockCount = useRef(0);
+    const lockEdits = useCallback(() => {
+        lockCount.current++;
+        setEditLocked(true);
+        return () => { if (--lockCount.current === 0) setEditLocked(false); };
+    }, []);
     // 切章位置記憶(§16 第 24 項第一層):檔案路徑 → 上次游標(選取)與捲動位置;
     // 只存在記憶體(本次執行期間),不寫檔。Editor 掛載時讀取還原、編輯/捲動時寫回,
     // 因此外部重載(reloadCurrent、接受提案)重掛後也回到原位置,超出文件長度由 Editor 夾住。
@@ -321,6 +334,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             if (latest.current.dirty) await save();
             if (stale()) return;
             loaded.current = rel;
+            navGen.current++;
             setCurrent(rel);
             setText(content);
             setDirty(false);
@@ -334,8 +348,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 磁碟上的檔案被系統改動(接受提案、還原)後,重新載入編輯器
     // flash:接受提案後要標示的提案,與重載內容同一次提交(#45 a)
     const reloadCurrent = useCallback(async (files?: string[], flash?: proposal.Proposal) => {
-        if (!current || (files && !files.includes(current))) return;
-        setText(await ReadFile(current));
+        const cur = current;
+        if (!cur || (files && !files.includes(cur))) return;
+        const gen = navGen.current;
+        const mine = ++reloadGen.current;
+        const content = await ReadFile(cur);
+        // 讀檔期間開過檔(切到別章,或 A→B→A):不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案);
+        // 之後又發起了新的重載:交給新的那次套用
+        if (navGen.current !== gen || latest.current.current !== cur || reloadGen.current !== mine) return;
+        setText(content);
         setFlashP(flash ?? null);
         setDirty(false);
         setReloadKey(k => k + 1);
@@ -662,7 +683,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -714,7 +735,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
@@ -723,7 +744,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             </div>
 
             <VersionDialog open={versions} onOpenChange={setVersions} current={current} saveFirst={save}
-                           onRestored={files => { reloadCurrent(files); refreshTree(); }}/>
+                           lockEdits={lockEdits} onRestored={files => { refreshTree(); return reloadCurrent(files); }}/>
 
             <SummaryDialog chapter={summaryFor} onClose={() => { setSummaryFor(null); setSummaryTick(t => t + 1); }} cfg={cfg}
                            remoteOk={remoteOk} setRemoteOk={setRemoteOk} saveFirst={save} notify={notify}/>

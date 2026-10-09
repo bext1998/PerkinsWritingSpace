@@ -43,7 +43,8 @@ interface Props {
     remoteOk: Record<string, boolean>;
     setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
-    onAccepted: (p: proposal.Proposal) => void;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
+    onAccepted: (p: proposal.Proposal) => Promise<void>;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
+    lockEdits: () => () => void;   // 接受期間(存檔→套用→重載)鎖住編輯器,避免新輸入被重載覆蓋(#56);回傳解鎖函式
     onPending: (n: number) => void;
     pending: number;
     notify: (t: Toast) => void;
@@ -91,7 +92,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
 }
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -307,14 +308,16 @@ export default function ChatWindow(props: Props) {
     };
 
     const accept = async (p: proposal.Proposal) => {
+        const unlock = lockEdits();
         try {
             await beforeAsk(); // 先存檔:後端以磁碟內容比對,未存的文字也不能在重新載入時遺失
             const mine = edited[p.id];
             const r = await AcceptProposal(p.id, mine !== undefined && mine !== p.replacement ? mine : null as any);
-            onAccepted(r);
+            await onAccepted(r);
             notify({text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
             setError('');
         } catch (e) { setError(errText(e)); }
+        finally { unlock(); }
         refreshProposals();
     };
 
