@@ -890,5 +890,265 @@ module.exports = {
         await page.waitForTimeout(800);
         check('#46 返工 取消選取後過期回覆不寫入', !(await page.$('[data-testid=count-selection]')));
         await page.evaluate(() => { window.go.main.App.WordCount = window.__perkinsWCOrig; });
+
+        // ===== 段落上移/下移、插入場景標題、場景跳轉(#46 後半):專用章節,不動其他組依賴的章節內容 =====
+        await page.setViewportSize({width: 1440, height: 900});
+        fs.writeFileSync(P('manuscript/段落場景測試.md'), '# 段落場景測試\n\n開場文字。\n\n## 場景一\n\n甲。\n\n## 場景二\n\n乙。\n');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=chapter-row]:has-text("段落場景測試")', {timeout: 15000});
+        await page.click('[data-testid=chapter-row]:has-text("段落場景測試")');
+        await page.waitForSelector('.cm-content:has-text("開場文字")', {timeout: 15000});
+        await settle(80, 800);
+        // 游標所在行(1 起算)、行內欄位與該行文字
+        const caretAt = () => page.evaluate(() => {
+            const p = window.__perkinsEditor?.pos();
+            const lines = [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent);
+            const before = lines.join('\n').slice(0, p.head);
+            const line = before.split('\n').length;
+            return {line, col: before.length - (before.lastIndexOf('\n') + 1), text: lines[line - 1], head: p.head};
+        });
+        // 換掉章節內容:全選後走 CM 的貼上路徑(與作者操作同一條路徑,也比逐行打字快)
+        const setDoc = async text => {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+a');
+            await page.evaluate(t => {
+                const dt = new DataTransfer();
+                dt.setData('text/plain', t);
+                document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+            }, text);
+            await settle(80, 600);
+            return docText();
+        };
+        const cursorToLine = async n => {
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+Home');
+            for (let i = 1; i < n; i++) await page.keyboard.press('ArrowDown');
+            await settle(80, 300);
+        };
+
+        // --- 空行分段:上移(與上方最近的非空白行交換,中間的空白行留在原處) ---
+        await setDoc('第一段\n\n第二段\n\n第三段');
+        await cursorToLine(3);
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        const m1 = await caretAt(), t1 = await docText();
+        check('#46 段落 空行分段上移:與上一段交換、空行留在原處、游標跟著內容走',
+            t1 === '第二段\n\n第一段\n\n第三段' && m1.line === 1 && m1.text === '第二段',
+            JSON.stringify({txt: t1, caret: m1}));
+        // 移動是作者自己的編輯:走正常 dirty/存檔
+        const dirtyLabel = (await page.textContent('[data-testid=save-button]')).trim();
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
+        check('#46 段落 移動走正常 dirty/存檔(存檔後磁碟內容已更新)',
+            dirtyLabel === '儲存' && read('manuscript/段落場景測試.md') === '第二段\n\n第一段\n\n第三段',
+            `label=${dirtyLabel} disk=${JSON.stringify(read('manuscript/段落場景測試.md'))}`);
+        await undoOnce();
+        const undone = await docText();
+        check('#46 段落 上移後 Ctrl+Z 一次復原',
+            t1 === '第二段\n\n第一段\n\n第三段' && undone === '第一段\n\n第二段\n\n第三段', JSON.stringify(undone));
+
+        // --- 空行分段:下移 ---
+        await cursorToLine(1);
+        await page.keyboard.press('Alt+ArrowDown');
+        await settle(80, 500);
+        const m2 = await caretAt(), t2 = await docText();
+        check('#46 段落 空行分段下移:與下一段交換、空行留在原處、游標跟著內容走',
+            t2 === '第二段\n\n第一段\n\n第三段' && m2.line === 3 && m2.text === '第一段',
+            JSON.stringify({txt: t2, caret: m2}));
+
+        // --- 不空行分段(作者沒用空行分段):整行互換,不會多出空白行 ---
+        await setDoc('第一段\n第二段\n第三段');
+        await cursorToLine(3);
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        const m3 = await caretAt(), t3 = await docText();
+        check('#46 段落 不空行分段上移:整行互換、不產生空行、游標跟著內容走',
+            t3 === '第一段\n第三段\n第二段' && m3.line === 2 && m3.text === '第三段' && m3.col === 0,
+            JSON.stringify({txt: t3, caret: m3}));
+        await setDoc('第一段\n第二段\n第三段');
+        await cursorToLine(1);
+        await page.keyboard.press('Alt+ArrowDown');
+        await settle(80, 500);
+        const m4 = await caretAt(), t4 = await docText();
+        check('#46 段落 不空行分段下移:整行互換、不產生空行、游標跟著內容走',
+            t4 === '第二段\n第一段\n第三段' && m4.line === 2 && m4.text === '第一段' && m4.col === 0,
+            JSON.stringify({txt: t4, caret: m4}));
+
+        // --- 已在頂/底:上面(下面)只有空行時不動作、文件不變 ---
+        await setDoc('\n第一段\n第二段');
+        await cursorToLine(2);
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        const m5 = await caretAt(), t5 = await docText();
+        check('#46 段落 已在頂端(上面只剩空行)上移不動作、文件不變',
+            t5 === '\n第一段\n第二段' && m5.line === 2, JSON.stringify({txt: t5, caret: m5}));
+        await setDoc('第一段\n第二段\n');
+        await cursorToLine(2);
+        await page.keyboard.press('Alt+ArrowDown');
+        await settle(80, 500);
+        const m6 = await caretAt(), t6 = await docText();
+        check('#46 段落 已在底端(下面只剩空行)下移不動作、文件不變',
+            t6 === '第一段\n第二段\n' && m6.line === 2, JSON.stringify({txt: t6, caret: m6}));
+
+        // --- 多行選取:選取涵蓋的所有行一起移動 ---
+        await setDoc('甲\n乙\n丙\n丁\n戊');
+        await cursorToLine(2);
+        await page.keyboard.press('Shift+ArrowDown');
+        await page.keyboard.press('Shift+ArrowDown');
+        await settle(80, 300);
+        const selPre = await editorPos();
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        const m7 = await caretAt(), t7 = await docText(), selPost = await editorPos();
+        check('#46 段落 多行選取一起上移:選取第 2–3 行(不含下一行)、兩行同進退、選取跟著內容走',
+            selPre.anchor === 2 && selPre.head === 6 && t7 === '乙\n丙\n甲\n丁\n戊' && selPost.anchor === 0 && selPost.head === 3 && m7.head === 3,
+            JSON.stringify({pre: selPre, txt: t7, sel: selPost}));
+
+        // --- 插入場景標題(Alt+Enter):前後各一個空白行、游標在 `## ` 之後 ---
+        // 游標在「第一段」而下一行已是空白行:那個空白行當標題前的那行,標題後面再補一個
+        await setDoc('# 章名\n\n第一段\n\n第二段');
+        await cursorToLine(3);
+        await page.keyboard.press('End');
+        await page.keyboard.press('Alt+Enter');
+        await settle(80, 500);
+        const m8 = await caretAt(), t8 = await docText();
+        check('#46 場景 Alt+Enter 在下一行插入 `## `:前後各一個空白行且不重複加、游標接在後面',
+            t8 === '# 章名\n\n第一段\n\n## \n\n第二段' && m8.line === 5 && m8.text === '## ' && m8.col === 3,
+            JSON.stringify({txt: t8, caret: m8}));
+        await page.keyboard.type('新場景');
+        await settle(80, 400);
+        check('#46 場景 插入後直接打字成為場景標題文字',
+            (await docText()).includes('## 新場景'), JSON.stringify((await docText()).slice(0, 40)));
+        await undoOnce();
+        // 檔案最後一行:標題前留一個空白行,後面沒有內容就不補
+        await setDoc('甲\n乙');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.press('Alt+Enter');
+        await settle(80, 500);
+        const m9 = await caretAt(), t9 = await docText();
+        check('#46 場景 在檔案最後一行 Alt+Enter:前面補一個空白行、游標在 `## ` 之後',
+            t9 === '甲\n乙\n\n## ' && m9.line === 4 && m9.text === '## ' && m9.col === 3,
+            JSON.stringify({txt: t9, caret: m9}));
+
+        // --- 場景跳轉(Alt+PageDown/PageUp):游標到標題行行首;到底不動作 ---
+        const sceneDoc = '# 章名\n\n開場文字。\n\n## 場景一\n\n甲。\n\n## 場景二\n\n乙。';
+        await setDoc(sceneDoc);
+        await cursorToLine(3);
+        await page.keyboard.press('Alt+PageDown');
+        await settle(80, 500);
+        const j1 = await caretAt();
+        check('#46 場景 Alt+PageDown 跳到下一個場景標題行首',
+            j1.line === 5 && j1.col === 0 && j1.text === '## 場景一', JSON.stringify(j1));
+        await page.keyboard.press('Alt+PageDown');
+        await settle(80, 400);
+        const j2 = await caretAt();
+        check('#46 場景 Alt+PageDown 再跳到下一個場景標題行首',
+            j2.line === 9 && j2.col === 0 && j2.text === '## 場景二', JSON.stringify(j2));
+        await page.keyboard.press('Alt+PageDown');
+        await settle(80, 400);
+        const j3 = await caretAt(), t10 = await docText();
+        check('#46 場景 最後一個場景再往下不動作(游標與文件都不變)',
+            j3.line === 9 && j3.col === 0 && t10 === sceneDoc, JSON.stringify({caret: j3, changed: t10 !== sceneDoc}));
+        await page.keyboard.press('Alt+PageUp');
+        await settle(80, 400);
+        const j4 = await caretAt();
+        check('#46 場景 Alt+PageUp 跳到上一個場景標題行首',
+            j4.line === 5 && j4.col === 0 && j4.text === '## 場景一', JSON.stringify(j4));
+        await page.keyboard.press('Alt+PageUp');
+        await settle(80, 400);
+        const j5 = await caretAt(), t11 = await docText();
+        check('#46 場景 已是第一個場景再往上不動作(游標與文件都不變)',
+            j5.line === 5 && t11 === sceneDoc, JSON.stringify({caret: j5, changed: t11 !== sceneDoc}));
+        // 程式碼區塊內的 `## ` 不是場景(與側欄 ParseScenes 同一套判準;PR #62 審查)
+        const fenceDoc = '開場\n\n```\n## 假場景\n```\n\n## 真場景';
+        const tf = await setDoc(fenceDoc);
+        await cursorToLine(1);
+        await page.keyboard.press('Alt+PageDown');
+        await settle(80, 400);
+        const f1 = await caretAt();
+        check('#46 場景 Alt+PageDown 略過程式碼區塊內的 ## 假標題',
+            tf === fenceDoc && f1.line === 7 && f1.text === '## 真場景', JSON.stringify({caret: f1, doc: tf}));
+        await page.keyboard.press('Alt+PageUp');
+        await settle(80, 400);
+        const f2 = await caretAt();
+        check('#46 場景 Alt+PageUp 也不跳進程式碼區塊', f2.line === 7, JSON.stringify(f2));
+
+        // --- IME 組字中快捷鍵不動作(與 #46 前半 同一情境),組字結束後恢復 ---
+        await setDoc('第一段\n\n第二段\n\n第三段');
+        await cursorToLine(3);
+        const imeDoc = await docText();
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+        });
+        await settle(80, 300);
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        check('#46 段落 IME 組字中 Alt+↑ 不移動段落', (await docText()) === imeDoc, JSON.stringify(await docText()));
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: ''}));
+        });
+        await settle(80, 300);
+        await page.keyboard.press('Alt+ArrowUp');
+        await settle(80, 500);
+        check('#46 段落 組字結束後 Alt+↑ 恢復(不會永久擋住)',
+            (await docText()) === '第二段\n\n第一段\n\n第三段', JSON.stringify(await docText()));
+        await undoOnce();
+
+        // --- 右鍵選單「段落與場景」子選單:5 項、標示快捷鍵、可點用、靠右緣往左開 ---
+        const openParaMenu = async (atRight = false) => {
+            if (atRight) {
+                const box = await page.locator('.cm-content').boundingBox();
+                await page.mouse.click(box.x + box.width - 40, box.y + 100, {button: 'right'});
+            } else {
+                await page.click('.cm-content', {button: 'right', position: {x: 200, y: 120}});
+            }
+            await page.waitForSelector('.ctxmenu', {timeout: 5000});
+            await page.hover('[data-testid=para-submenu]');
+            await page.waitForSelector('[data-testid=para-item-move-up]', {timeout: 5000});
+        };
+        // 選單壞掉時不要讓後面檢查一起被中斷:每個名稱都要能在 catch 裡單獨標成失敗
+        const menuItemsCheck = '#46 右鍵選單段落與場景:5 項且標示快捷鍵';
+        const menuClickCheck = '#46 右鍵選單插入場景標題可用(插入 `## ` 且游標接在後面、選單關閉)';
+        const menuFlipCheck = '#46 靠右緣時段落與場景子選單往左開';
+        try {
+            await setDoc(sceneDoc);
+            await openParaMenu();
+            const paraItems = await page.$$eval('[data-testid=para-submenu] > div > div', els => els.map(e => e.textContent));
+            check(menuItemsCheck,
+                paraItems.length === 5
+                && paraItems[0].includes('段落上移') && paraItems[0].includes('Alt+↑')
+                && paraItems[1].includes('段落下移') && paraItems[1].includes('Alt+↓')
+                && paraItems[2].includes('插入場景標題') && paraItems[2].includes('Alt+Enter')
+                && paraItems[3].includes('上一個場景') && paraItems[3].includes('Alt+PageUp')
+                && paraItems[4].includes('下一個場景') && paraItems[4].includes('Alt+PageDown'), JSON.stringify(paraItems));
+            await page.click('[data-testid=para-item-insert-scene]');
+            await settle(80, 500);
+            const m10 = await caretAt(), t12 = await docText();
+            check(menuClickCheck,
+                t12.includes('## ') && m10.text === '## ' && m10.col === 3 && !(await page.$('.ctxmenu')),
+                JSON.stringify({caret: m10, menu: !!(await page.$('.ctxmenu'))}));
+            await undoOnce();
+            await openParaMenu(true);
+            const paraFlip = await page.evaluate(() => {
+                const tr = document.querySelector('[data-testid=para-submenu]').getBoundingClientRect();
+                const sub = document.querySelector('[data-testid=para-submenu] > div').getBoundingClientRect();
+                return {trLeft: tr.left, subRight: sub.right};
+            });
+            check(menuFlipCheck, paraFlip.subRight <= paraFlip.trLeft + 2, JSON.stringify(paraFlip));
+            await page.click('.cm-content'); // 關閉選單
+            await settle(80, 400);
+        } catch (e) {
+            check(menuItemsCheck, false, e.message);
+            check(menuClickCheck, false, e.message);
+            check(menuFlipCheck, false, e.message);
+            await page.keyboard.press('Escape');
+            await page.click('.cm-content').catch(() => {});
+        }
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
     },
 };
