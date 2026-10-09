@@ -334,14 +334,17 @@ export default function ChatWindow(props: Props) {
         const next = openProposals[i + dir];
         if (next) setReviewId(next.id);
     };
-    // 處理完一張後接清單上的下一個待審提案;已是最後一個(沒有下一個)就關閉視窗
-    const reviewAdvance = (p: proposal.Proposal) => {
-        const i = openProposals.findIndex(x => x.id === p.id);
-        const next = i >= 0 ? openProposals[i + 1] : undefined;
+    // 目前這張離開待審(接受/拒絕成功、或從聊天卡片處理掉)時,依最新清單接它後面仍待審的下一張;沒有就關閉。
+    // 以清單實際變化為準:接受/拒絕失敗(衝突、寫檔失敗)時提案仍在清單上,視窗留在原處讓作者看到結果(PR #64 審查)
+    const prevOpen = useRef<proposal.Proposal[]>([]);
+    useEffect(() => {
+        const prev = prevOpen.current;
+        prevOpen.current = openProposals;
+        if (!reviewId || openProposals.some(x => x.id === reviewId)) return;
+        const i = prev.findIndex(x => x.id === reviewId);
+        const next = prev.slice(i + 1).find(x => openProposals.some(o => o.id === x.id));
         setReviewId(next ? next.id : null);
-    };
-    const reviewAccept = (p: proposal.Proposal) => { void accept(p).then(() => reviewAdvance(p)); };
-    const reviewReject = (p: proposal.Proposal) => { void reject(p).then(() => reviewAdvance(p)); };
+    });
 
     const reset = () => {
         ResetChat();
@@ -734,7 +737,7 @@ export default function ChatWindow(props: Props) {
             {reviewId && (
                 <ProposalReview items={openProposals} id={reviewId} onStep={dir => reviewStep(reviewId, dir)}
                                 edited={edited} setEdited={setEdited} titleOf={titleOf}
-                                onAccept={reviewAccept} onReject={reviewReject} onClose={() => setReviewId(null)}/>
+                                onAccept={accept} onReject={reject} onClose={() => setReviewId(null)}/>
             )}
         </>
     );

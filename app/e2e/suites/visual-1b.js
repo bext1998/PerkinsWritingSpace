@@ -353,6 +353,10 @@ module.exports = {
             '#35 聊天卡片內編輯:審查視窗同步顯示作者版本',
             '#35 審查視窗接受:磁碟寫入作者版本、視窗切到下一個待審提案',
             '#35 審查視窗拒絕最後一個:視窗關閉、提案從待審消失(磁碟 rejected)',
+            '#35 返工 手動放大後縮到 640:視窗尺寸跟著縮、接受/拒絕仍在畫面內',
+            '#35 返工 接受等待中從卡片拒絕下一張:完成後依最新清單切到再下一張',
+            '#35 返工 接受失敗(衝突):視窗留在目前提案並顯示衝突',
+            '#35 返工 目前提案從卡片處理掉:視窗關閉且之後縮放不拋錯',
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
@@ -475,6 +479,25 @@ module.exports = {
             const size1 = await revBox();
             revCheck(REV_CHECKS[8], size1.w > bar1.w + 40 && size1.h > bar1.h + 20,
                 JSON.stringify({before: {w: bar1.w, h: bar1.h}, after: {w: size1.w, h: size1.h}}));
+            // --- 返工:手動放大後縮成 640,尺寸上限跟著可見範圍,頁尾按鈕仍可點(PR #64 審查 Major) ---
+            await page.setViewportSize({width: 640, height: 672});
+            await settle(80, 900);
+            const big640 = await page.evaluate(() => {
+                const r = document.querySelector('[data-testid=proposal-review]').getBoundingClientRect();
+                const a = document.querySelector('[data-testid=review-accept]').getBoundingClientRect();
+                const at = document.elementFromPoint(a.left + a.width / 2, a.top + a.height / 2);
+                return {box: {l: r.left, t: r.top, r: r.right, b: r.bottom}, acc: {r: a.right, b: a.bottom},
+                        hits: !!at && !!at.closest('[data-testid=review-accept]'), vw: innerWidth, vh: innerHeight};
+            });
+            revCheck(REV_CHECKS[13],
+                size1.w > 640 && big640.box.l >= -1 && big640.box.t >= -1 && big640.box.r <= big640.vw + 0.5 && big640.box.b <= big640.vh + 0.5
+                && big640.acc.r <= big640.vw && big640.acc.b <= big640.vh && big640.hits, JSON.stringify({before: {w: size1.w, h: size1.h}, big640}));
+            await page.setViewportSize({width: 1440, height: 900});
+            await settle(80, 900);
+            if (!(await page.$('[data-testid=inspector]')) && (await page.$('[data-testid=toggle-inspector]'))) {
+                await page.click('[data-testid=toggle-inspector]');
+                await settle(80, 600);
+            }
             // --- 編輯內容與聊天卡片共用同一份狀態(兩邊互相反映) ---
             await page.fill('[data-testid=review-edit]', '春日照進了院子,麻雀在叫。');
             await settle(80, 500);
@@ -507,6 +530,76 @@ module.exports = {
                 !endState.win && !endState.cards.some(t => t.includes('秋風起了'))
                 && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'rejected'
                 && !read(revRel).includes('秋風捲起落葉'), JSON.stringify(endState));
+
+            // --- 返工(PR #64 審查):清單在視窗開著時變動、接受失敗 ---
+            const errs = [];
+            const onErr = e => errs.push(e.message);
+            page.on('pageerror', onErr);
+            const src2 = '# 審查視窗\n\n甲句。\n\n乙句。\n\n丙句。\n';
+            projWrite(revRel, src2);
+            const mk2 = (id, original) => {
+                const at = Buffer.byteLength(src2.slice(0, src2.indexOf(original)));
+                projWrite(`.perkins/proposals/${id}.json`, JSON.stringify({
+                    id, createdAt: '2026-10-10T16:00:00+08:00', model: 'E2E審查', target: revRel, original, replacement: original.replace('句', '改'),
+                    rationale: 'E2E 清單變動', assumptions: [],
+                    baseHash: require('crypto').createHash('sha256').update(src2).digest('hex'),
+                    start: at, end: at + Buffer.byteLength(original), status: 'pending',
+                }, null, 2));
+            };
+            mk2('20261010-160300-revx', '甲句。');
+            mk2('20261010-160200-revy', '乙句。');
+            mk2('20261010-160100-revz', '丙句。');
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await settle(80, 700);
+            await page.click('[data-testid=proposal]:has-text("甲句") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await settle(80, 500);
+            try {
+                // 接受甲句卡在後端期間,從聊天卡片拒絕乙句;放行後應接丙句(依最新清單,不是點擊當下的舊清單)
+                await page.evaluate(() => {
+                    const app = window.go.main.App;
+                    window.__revOrigAccept = app.AcceptProposal;
+                    let release;
+                    window.__revGate = new Promise(r => { release = r; });
+                    window.__revRelease = release;
+                    app.AcceptProposal = (...a) => window.__revGate.then(() => window.__revOrigAccept(...a));
+                });
+                await page.click('[data-testid=review-accept]');
+                await settle(80, 400);
+                await page.click('[data-testid=proposal]:has-text("乙句") button:has-text("拒絕")');
+                await settle(80, 700);
+                await page.evaluate(() => window.__revRelease());
+                await waitDisk(revRel, '甲改。');
+                await settle(80, 900);
+                const hB = await revHead();
+                revCheck(REV_CHECKS[14], hB.original === '丙句。' && hB.count === '第 1 / 1 個'
+                    && JSON.parse(read('.perkins/proposals/20261010-160200-revy.json')).status === 'rejected', JSON.stringify(hB));
+            } finally {
+                await page.evaluate(() => { if (window.__revOrigAccept) window.go.main.App.AcceptProposal = window.__revOrigAccept; });
+            }
+            // 丙句的原文在磁碟上被改掉 → 接受失敗(衝突):視窗留在丙句並顯示衝突,不跳走也不關閉
+            projWrite(revRel, read(revRel).replace('丙句。', '丙句被作者改了。'));
+            await page.click('[data-testid=review-accept]');
+            await settle(80, 1200);
+            const conf = await page.evaluate(() => ({
+                win: !!document.querySelector('[data-testid=proposal-review]'),
+                original: document.querySelector('[data-testid=review-original]')?.textContent,
+                text: document.querySelector('[data-testid=proposal-review]')?.textContent || '',
+                accept: !!document.querySelector('[data-testid=review-accept]'),
+            }));
+            revCheck(REV_CHECKS[15], conf.win && conf.original === '丙句。' && conf.text.includes('無法套用') && !conf.accept,
+                JSON.stringify({...conf, text: conf.text.slice(-60)}));
+            // 目前這張從聊天卡片捨棄:視窗關閉;之後縮放視窗不得拋錯(不能留下已卸載內容的監聽器)
+            await page.click('[data-testid=proposal]:has-text("丙句") button:has-text("捨棄")');
+            await settle(80, 900);
+            await page.setViewportSize({width: 1400, height: 880});
+            await settle(80, 500);
+            await page.setViewportSize({width: 1440, height: 900});
+            await settle(80, 500);
+            const winGone = !(await page.$('[data-testid=proposal-review]'));
+            page.off('pageerror', onErr);
+            revCheck(REV_CHECKS[16], winGone && errs.length === 0
+                && JSON.parse(read('.perkins/proposals/20261010-160100-revz.json')).status === 'rejected', JSON.stringify({winGone, errs}));
         } catch (e) {
             for (const n of REV_CHECKS) if (!revDone.has(n)) check(n, false, e.message);
             await page.keyboard.press('Escape').catch(() => {});

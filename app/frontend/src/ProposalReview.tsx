@@ -30,7 +30,10 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
     const [pos, setPos] = useState<{x: number; y: number} | null>(null);
     const [stacked, setStacked] = useState(false);
     const idx = items.findIndex(p => p.id === id);
-    const p = idx >= 0 ? items[idx] : null;
+    // 目前這張剛離開待審、父層還沒切到下一張的那一次 render,沿用上一張的內容,視窗不會卸成空殼(PR #64 審查)
+    const shown = useRef<proposal.Proposal | null>(null);
+    if (idx >= 0) shown.current = items[idx];
+    const p = shown.current;
     const mine = p ? edited[p.id] ?? p.replacement : '';
     const changed = !!p && mine !== p.replacement;
     const conflict = p?.status === 'conflict';
@@ -102,7 +105,9 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
         <div ref={box} data-testid="proposal-review"
              className="fixed z-50 flex flex-col overflow-hidden rounded-lg border bg-card text-card-foreground shadow-xl"
              style={{left: pos?.x ?? 0, top: pos?.y ?? 0, visibility: pos ? 'visible' : 'hidden',
-                     width: 'min(900px, 92vw)', height: 'min(640px, 85vh)', minWidth: 420, minHeight: 280, resize: 'both'}}>
+                     width: 'min(900px, 92vw)', height: 'min(640px, 85vh)', minWidth: 420, minHeight: 280, resize: 'both',
+                     // 作者手動放大後視窗縮窄:尺寸上限跟著可見範圍縮小(上方保留標題欄),頁尾按鈕不會落到畫面外(PR #64 審查)
+                     maxWidth: '100vw', maxHeight: `calc(100vh - ${TITLEBAR_HEIGHT}px)`}}>
             {/* 標題列(可拖曳) */}
             <div className="flex h-11 shrink-0 cursor-move select-none items-center gap-2 border-b px-3" data-testid="review-titlebar"
                  onMouseDown={startDrag}>
