@@ -241,6 +241,28 @@ module.exports = {
             const imeSaved = await savedState();
             check('自動存檔 (c) 組字結束後會存檔', imeSaved && read(ch2).includes('imeMark'), JSON.stringify(read(ch2).slice(-40)));
 
+            // (c2) 自動存檔已經在寫的途中才開始組字(PR #65 審查 Major):存完第一輪後,
+            // 不得接著把組字中的字寫進磁碟;組字結束後才存
+            await page.evaluate(() => window.__perkinsSaveDelay(1200));
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('inflightA');
+            await page.waitForSelector('[data-testid=save-button][aria-label="儲存中…"]', {timeout: 6000}); // 自動存檔第一輪已開始(卡在延遲)
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+            });
+            await page.keyboard.type('inflightB');
+            await page.waitForTimeout(3200); // 超過第一輪與(若有)第二輪的延遲
+            const inflight = read(ch2);
+            check('自動存檔 (c2) 存檔途中開始組字:組字中的字不落盤(第一輪的字已存)',
+                inflight.includes('inflightA') && !inflight.includes('inflightB'), JSON.stringify(inflight.slice(-40)));
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: 'inflightB'}));
+            });
+            const inflightSaved = await savedState();
+            check('自動存檔 (c2) 組字結束後組字內容落盤', inflightSaved && read(ch2).includes('inflightB'), JSON.stringify(read(ch2).slice(-40)));
+            await page.evaluate(() => window.__perkinsSaveDelay(0));
+
             // (d) 打字後 2 秒內切到另一章:舊章的字存進舊章檔案,新章不被寫入舊章內容
             await ensureProject('第二章', 'manuscript');
             const ch3Before = read(ch3);

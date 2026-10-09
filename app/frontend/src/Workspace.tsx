@@ -242,7 +242,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 迴圈每輪記下當輪的 current+text 配對,切檔後以新的 latest 判斷,不會寫錯檔。
     const saveInFlight = useRef<Promise<void> | null>(null);
     const [saving, setSaving] = useState(false);
-    const save = useCallback((): Promise<void> => {
+    // 只由自動存檔發起的這一輪,遇到 IME 組字就停下(組字內容不落盤,組字結束後自動存檔會再接手);
+    // 手動存檔、切章、關閉等呼叫者一加入就改回「全部落盤才結束」(PR #65 審查)
+    const saveAll = useRef(false);
+    const save = useCallback((opts?: {auto?: boolean}): Promise<void> => {
+        if (!opts?.auto) saveAll.current = true;
         if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
         // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
         // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
@@ -252,6 +256,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             setSaving(true);
             try {
                 while (latest.current.current && latest.current.dirty) {
+                    if (!saveAll.current && editor.current?.composing()) break;
                     const {current, text} = latest.current;
                     const ver = editVersion.current;
                     if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
@@ -266,6 +271,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
                 }
             } finally {
+                saveAll.current = false;
                 if (saveInFlight.current === run) saveInFlight.current = null;
                 setSaving(false);
             }
@@ -297,7 +303,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             // 重新排程而不清 autoSince:組字結束後仍受同一輪的上限約束
             if (editor.current?.composing()) { autoTimer.current = window.setTimeout(fire, AUTOSAVE_COMPOSE_RECHECK_MS); return; }
             autoSince.current = null; // 存完仍 dirty(期間又打字)時,下一輪從新的變更起算
-            try { await saveRef.current(); } catch (e) { fail(e); }
+            try { await saveRef.current({auto: true}); } catch (e) { fail(e); }
         };
         autoTimer.current = window.setTimeout(fire, delay);
         return () => { if (autoTimer.current !== null) { clearTimeout(autoTimer.current); autoTimer.current = null; } };
