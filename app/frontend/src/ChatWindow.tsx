@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {
-    AlertTriangle, Bot, Check, ChevronDown, Eye, FileText, GripHorizontal, Loader2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
+    AlertTriangle, Bot, Check, ChevronDown, Eye, FileText, GripHorizontal, Loader2, Maximize2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
     RotateCcw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
@@ -18,6 +18,7 @@ import {
 import {baseName, cn, errText} from '@/lib/utils';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {MdLite} from '@/lib/md-lite';
+import ProposalReview from './ProposalReview';
 import type {Toast} from './Workspace';
 
 export interface ChatRequest {
@@ -111,6 +112,7 @@ export default function ChatWindow(props: Props) {
     const [suggest, setSuggest] = useState<string[]>([]);
     const [proposals, setProposals] = useState<proposal.Proposal[]>([]);
     const [edited, setEdited] = useState<Record<string, string>>({});
+    const [reviewId, setReviewId] = useState<string | null>(null); // 提案審查視窗(#35)正在看的提案;null = 關著
     const [preview, setPreview] = useState<agent.Preview | null>(null);
     const [models, setModels] = useState<string[]>([]);
     const [pickQ, setPickQ] = useState('');
@@ -326,6 +328,21 @@ export default function ChatWindow(props: Props) {
         refreshProposals();
     };
 
+    // 提案審查視窗(#35):內容與卡片共用 edited,接受/拒絕走同一個函式(唯讀鎖、快照、Provenance 不變)
+    const reviewStep = (from: string, dir: -1 | 1) => {
+        const i = openProposals.findIndex(x => x.id === from);
+        const next = openProposals[i + dir];
+        if (next) setReviewId(next.id);
+    };
+    // 處理完一張後接清單上的下一個待審提案;已是最後一個(沒有下一個)就關閉視窗
+    const reviewAdvance = (p: proposal.Proposal) => {
+        const i = openProposals.findIndex(x => x.id === p.id);
+        const next = i >= 0 ? openProposals[i + 1] : undefined;
+        setReviewId(next ? next.id : null);
+    };
+    const reviewAccept = (p: proposal.Proposal) => { void accept(p).then(() => reviewAdvance(p)); };
+    const reviewReject = (p: proposal.Proposal) => { void reject(p).then(() => reviewAdvance(p)); };
+
     const reset = () => {
         ResetChat();
         setTurns([]);
@@ -495,7 +512,12 @@ export default function ChatWindow(props: Props) {
                                          className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
                                         <div className="mb-1.5 flex items-center gap-1 text-xs text-muted-foreground">
                                             <FileText className="h-3 w-3"/>{titleOf(p.target)}
-                                            <span className="ml-auto">{p.model}</span>
+                                            {/* 放大審查(#35):在較大空間比對原文與修改,內容與卡片共用 */}
+                                            <Tip label="放大審查" side="top">
+                                                <Button variant="ghost" size="iconSm" className="ml-auto h-5 w-5" data-testid="review-open"
+                                                        onClick={() => setReviewId(p.id)}><Maximize2 className="h-3.5 w-3.5"/></Button>
+                                            </Tip>
+                                            <span>{p.model}</span>
                                         </div>
                                         <div className="diff-del whitespace-pre-wrap rounded px-2 py-1 font-serif text-[13px]">{p.original}</div>
                                         <Textarea className="diff-add mt-1 min-h-[3.5rem] resize-y rounded-md border border-border bg-transparent font-serif text-[13px] focus-visible:ring-primary"
@@ -708,6 +730,12 @@ export default function ChatWindow(props: Props) {
                     </div>
                 </DialogContent>
             </Dialog>
+            {/* 提案審查視窗(#35):層級在聊天浮窗之上;關閉只收起視窗,不動提案狀態 */}
+            {reviewId && (
+                <ProposalReview items={openProposals} id={reviewId} onStep={dir => reviewStep(reviewId, dir)}
+                                edited={edited} setEdited={setEdited} titleOf={titleOf}
+                                onAccept={reviewAccept} onReject={reviewReject} onClose={() => setReviewId(null)}/>
+            )}
         </>
     );
 }

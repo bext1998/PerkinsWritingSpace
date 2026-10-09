@@ -305,6 +305,215 @@ module.exports = {
         } finally {
             await restoreRead();
         }
+        // ===== #35 提案審查視窗:專用章節 + 兩個專用提案(內容與聊天卡片共用 edited、同一組接受/拒絕) =====
+        await page.setViewportSize({width: 1440, height: 900});
+        const revRel = 'manuscript/審查視窗.md';
+        projWrite(revRel, '# 審查視窗\n\n春日在望。\n\n秋風起了。\n');
+        // 弄髒目前章節存檔觸發 refreshTree,讓專用章節出現在側欄(內容不變)
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await settle(80, 900);
+        await page.locator('[data-testid=chapter-row]:has-text("審查視窗")').first().click({timeout: 15000});
+        await page.waitForFunction(c => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(c), '審查視窗', {timeout: 15000});
+        const revSrc = read(revRel);
+        const mkRevProp = (id, original, replacement) => {
+            const at = Buffer.byteLength(revSrc.slice(0, revSrc.indexOf(original)));
+            projWrite(`.perkins/proposals/${id}.json`, JSON.stringify({
+                id, createdAt: '2026-10-10T15:00:00+08:00', model: 'E2E審查', target: revRel, original, replacement,
+                rationale: 'E2E 審查視窗測試', assumptions: ['測試假設'],
+                baseHash: require('crypto').createHash('sha256').update(revSrc).digest('hex'),
+                start: at, end: at + Buffer.byteLength(original), status: 'pending',
+            }, null, 2));
+        };
+        // 清單依 id 由大到小:revb(春日在望)在前、reva(秋風起了)在後
+        mkRevProp('20261010-150100-revb', '春日在望。', '春日照進了院子。');
+        mkRevProp('20261010-150000-reva', '秋風起了。', '秋風捲起落葉。');
+        // 先把本組前面留下的假提案收掉,讓「第 i / n 個」的分母確定
+        const leftoverProp = '.perkins/proposals/20261005-090000-abc123.json';
+        const leftoverJson = JSON.parse(fs.readFileSync(P(leftoverProp), 'utf8'));
+        leftoverJson.status = 'rejected';
+        projWrite(leftoverProp, JSON.stringify(leftoverJson, null, 2));
+        await page.evaluate(() => window.__perkinsRefreshProposals());
+        await settle(80, 700);
+        // 檢查名稱集中一處:萬一中途抛錯,尚未報告的項目才補成 FAIL(已報告的不重複)
+        const REV_CHECKS = [
+            '#35 卡片放大審查開啟視窗:顯示對應提案、第 1 / 2 個、檔名與模型',
+            '#35 審查視窗「下一個」切到第 2 個待審提案',
+            '#35 審查視窗「上一個」回到第 1 個待審提案',
+            '#35 Esc 只關閉視窗:兩個提案仍在待審(卡片仍在、磁碟狀態仍 pending)',
+            '#35 640 寬:審查視窗完整在畫面內、接受/拒絕可見可點',
+            '#35 640 寬:審查視窗內容上下堆疊',
+            '#35 1280 寬:審查視窗內容左右並排',
+            '#35 標題列可拖曳(視窗跟著移動)',
+            '#35 右下角可調整大小(拖曳後尺寸變大)',
+            '#35 審查視窗內編輯:聊天卡片同步顯示「已修改」與同一份內容',
+            '#35 聊天卡片內編輯:審查視窗同步顯示作者版本',
+            '#35 審查視窗接受:磁碟寫入作者版本、視窗切到下一個待審提案',
+            '#35 審查視窗拒絕最後一個:視窗關閉、提案從待審消失(磁碟 rejected)',
+        ];
+        const revDone = new Set();
+        const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
+        const revHead = () => page.evaluate(() => ({
+            target: document.querySelector('[data-testid=review-target]')?.textContent,
+            count: document.querySelector('[data-testid=review-count]')?.textContent,
+            model: document.querySelector('[data-testid=review-model]')?.textContent,
+            original: document.querySelector('[data-testid=review-original]')?.textContent,
+            edit: document.querySelector('[data-testid=review-edit]')?.value,
+        }));
+        const revBox = () => page.evaluate(() => {
+            const el = document.querySelector('[data-testid=proposal-review]');
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            const o = document.querySelector('[data-testid=review-original]').getBoundingClientRect();
+            const e = document.querySelector('[data-testid=review-edit]').getBoundingClientRect();
+            return {x: r.left, y: r.top, w: r.width, h: r.height, right: r.right, bottom: r.bottom,
+                    o: {left: o.left, top: o.top, right: o.right, bottom: o.bottom}, e: {left: e.left, top: e.top, right: e.right, bottom: e.bottom}};
+        });
+        try {
+            // --- 從卡片開啟;顯示對應提案、第 i / n 個 ---
+            await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await settle(80, 500);
+            const h1 = await revHead();
+            revCheck(REV_CHECKS[0],
+                h1.count === '第 1 / 2 個' && h1.original === '春日在望。' && h1.edit === '春日照進了院子。'
+                && h1.target === '審查視窗' && h1.model === 'E2E審查', JSON.stringify(h1));
+            // --- 下一個 / 上一個 ---
+            await page.click('[data-testid=review-next]');
+            await settle(80, 400);
+            const h2 = await revHead();
+            revCheck(REV_CHECKS[1], h2.count === '第 2 / 2 個' && h2.original === '秋風起了。' && h2.edit === '秋風捲起落葉。', JSON.stringify(h2));
+            await page.click('[data-testid=review-prev]');
+            await settle(80, 400);
+            const h3 = await revHead();
+            revCheck(REV_CHECKS[2], h3.count === '第 1 / 2 個' && h3.original === '春日在望。' && h3.edit === '春日照進了院子。', JSON.stringify(h3));
+            // --- Esc 只關閉視窗,不動提案狀態 ---
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[data-testid=proposal-review]', {state: 'detached', timeout: 5000});
+            const escCards = await page.$$eval('[data-testid=proposal]', els => els.length);
+            revCheck(REV_CHECKS[3],
+                escCards === 2 && JSON.parse(read('.perkins/proposals/20261010-150100-revb.json')).status === 'pending'
+                && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'pending',
+                JSON.stringify({cards: escCards}));
+            // --- 先拖到畫面右側,再縮成 640×672:視窗要自己回到可見範圍(#55 的做法),內容改上下堆疊 ---
+            await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await settle(80, 600);
+            const grabPad = await page.evaluate(() => {
+                const r = document.querySelector('[data-testid=review-titlebar]').getBoundingClientRect();
+                return {x: r.left + 150, y: r.top + 18};
+            });
+            await page.mouse.move(grabPad.x, grabPad.y);
+            await page.mouse.down();
+            await page.mouse.move(grabPad.x + 700, grabPad.y, {steps: 8});
+            await page.mouse.up();
+            await settle(80, 400);
+            await page.setViewportSize({width: 640, height: 672});
+            await settle(80, 900);
+            const b640 = await revBox();
+            const clickable640 = await page.evaluate(() => {
+                const probe = sel => {
+                    const el = document.querySelector(sel);
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return {inView: r.left >= -1 && r.top >= -1 && r.right <= window.innerWidth + 1 && r.bottom <= window.innerHeight + 1,
+                            hits: !!at && (el.contains(at) || at.contains(el)), disabled: !!el.disabled};
+                };
+                return {accept: probe('[data-testid=review-accept]'), reject: probe('[data-testid=review-reject]')};
+            });
+            revCheck(REV_CHECKS[4],
+                !!b640 && b640.x >= -1 && b640.y >= -1 && b640.right <= 640.5 && b640.bottom <= 672.5
+                && clickable640.accept?.inView && clickable640.accept.hits && !clickable640.accept.disabled
+                && clickable640.reject?.inView && clickable640.reject.hits && !clickable640.reject.disabled,
+                JSON.stringify({b640, clickable640}));
+            revCheck(REV_CHECKS[5], b640.o.bottom <= b640.e.top + 1 && b640.o.right > b640.e.left,
+                JSON.stringify({o: b640.o, e: b640.e}));
+            await shot('80-proposal-review-640');
+            // --- 1280×800:內容左右並排 ---
+            await page.setViewportSize({width: 1280, height: 800});
+            await settle(80, 900);
+            const b1280 = await revBox();
+            revCheck(REV_CHECKS[6], b1280.o.right <= b1280.e.left + 1 && Math.abs(b1280.o.top - b1280.e.top) < 2,
+                JSON.stringify({o: b1280.o, e: b1280.e}));
+            await shot('81-proposal-review-1280');
+            // 640 的檢查會觸發 ≤960 的側欄/資訊欄互斥而收掉資訊欄;後面的組(如 save-flow 的 E6)會用到
+            // 資訊欄裡的場景清單,跑完窄寬度檢查後把資訊欄還原成原本的開著狀態
+            if (!(await page.$('[data-testid=inspector]')) && (await page.$('[data-testid=toggle-inspector]'))) {
+                await page.click('[data-testid=toggle-inspector]');
+                await settle(80, 600);
+            }
+            // --- 可拖曳(標題列)與可調整大小(右下角) ---
+            await page.setViewportSize({width: 1440, height: 900});
+            await settle(80, 900);
+            const bar0 = await revBox();
+            const grab = await page.evaluate(() => {
+                const r = document.querySelector('[data-testid=review-titlebar]').getBoundingClientRect();
+                return {x: r.left + 150, y: r.top + 18};
+            });
+            // 往右下方拖(視窗預設在畫面左側,往右下還有空間;往左會被邊界夾住)
+            await page.mouse.move(grab.x, grab.y);
+            await page.mouse.down();
+            await page.mouse.move(grab.x + 80, grab.y + 40, {steps: 8});
+            await page.mouse.up();
+            await settle(80, 400);
+            const bar1 = await revBox();
+            revCheck(REV_CHECKS[7], Math.abs((bar0.x + 80) - bar1.x) <= 3 && Math.abs((bar0.y + 40) - bar1.y) <= 3,
+                JSON.stringify({before: {x: bar0.x, y: bar0.y}, after: {x: bar1.x, y: bar1.y}}));
+            const corner = await page.evaluate(() => {
+                const r = document.querySelector('[data-testid=proposal-review]').getBoundingClientRect();
+                return {x: r.right - 2, y: r.bottom - 2};
+            });
+            await page.mouse.move(corner.x, corner.y);
+            await page.mouse.down();
+            await page.mouse.move(corner.x + 100, corner.y + 60, {steps: 8});
+            await page.mouse.up();
+            await settle(80, 400);
+            const size1 = await revBox();
+            revCheck(REV_CHECKS[8], size1.w > bar1.w + 40 && size1.h > bar1.h + 20,
+                JSON.stringify({before: {w: bar1.w, h: bar1.h}, after: {w: size1.w, h: size1.h}}));
+            // --- 編輯內容與聊天卡片共用同一份狀態(兩邊互相反映) ---
+            await page.fill('[data-testid=review-edit]', '春日照進了院子,麻雀在叫。');
+            await settle(80, 500);
+            const cardAfterEdit = await page.evaluate(() => {
+                const card = document.querySelector('[data-testid=proposal]');
+                return {txt: card?.textContent || '', edit: card?.querySelector('[data-testid=proposal-edit]')?.value};
+            });
+            revCheck(REV_CHECKS[9], cardAfterEdit.txt.includes('已修改') && cardAfterEdit.edit === '春日照進了院子,麻雀在叫。', JSON.stringify(cardAfterEdit));
+            await page.fill('[data-testid=proposal]:has-text("春日在望") [data-testid=proposal-edit]', '春日終究來了。');
+            await settle(80, 500);
+            const h4 = await revHead();
+            revCheck(REV_CHECKS[10], h4.edit === '春日終究來了。', JSON.stringify(h4));
+            // --- 接受:磁碟寫入作者版本、視窗切到下一個 ---
+            await page.click('[data-testid=review-accept]');
+            await waitDisk(revRel, '春日終究來了。');
+            await settle(80, 900);
+            const h5 = await revHead();
+            revCheck(REV_CHECKS[11],
+                read(revRel).includes('春日終究來了。') && !read(revRel).includes('春日在望。')
+                && JSON.parse(read('.perkins/proposals/20261010-150100-revb.json')).status === 'accepted'
+                && h5.original === '秋風起了。' && h5.count === '第 1 / 1 個', JSON.stringify({head: h5, disk: read(revRel)}));
+            // --- 拒絕最後一個:視窗關閉、提案從待審消失 ---
+            await page.click('[data-testid=review-reject]');
+            await settle(80, 900);
+            const endState = await page.evaluate(() => ({
+                win: !!document.querySelector('[data-testid=proposal-review]'),
+                cards: [...document.querySelectorAll('[data-testid=proposal]')].map(e => e.textContent),
+            }));
+            revCheck(REV_CHECKS[12],
+                !endState.win && !endState.cards.some(t => t.includes('秋風起了'))
+                && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'rejected'
+                && !read(revRel).includes('秋風捲起落葉'), JSON.stringify(endState));
+        } catch (e) {
+            for (const n of REV_CHECKS) if (!revDone.has(n)) check(n, false, e.message);
+            await page.keyboard.press('Escape').catch(() => {});
+        }
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 700);
+
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
         if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },
