@@ -45,21 +45,43 @@ module.exports = {
         await shot('55-halfscreen-640');
 
         // ===== Perkins Bot 浮窗 640 寬可讀性(Issue #37 部分):context-usage 可見、不擠壞標題列與輸入區 =====
-        // close-guard 把浮窗拖到寬視窗的位置;640 下事件點會落在視窗外拖不回來,
-        // 所以暫時放大到 1440 把浮窗拖回左上,再縮回 640 量測(暫時避開 #55 的既有產品問題,
-        // #55 修好後移除這段變通)
+        // Issue #55:在寬視窗把浮窗拖到右側,縮到半螢幕後浮窗須自動回到可見範圍;收起時縮窄、重新開啟也一樣
         await page.setViewportSize({width: 1440, height: 900});
         await page.click('[data-testid=chat-fab]');
         await page.waitForSelector('[data-testid=chat-window]:visible');
-        const dragBar = await page.locator('[data-testid=chat-window] .cursor-move').first().boundingBox();
-        if (dragBar.x + 440 > 640 || dragBar.y + 200 > 672) {
-            await page.mouse.move(dragBar.x + 60, dragBar.y + 8);
+        const dragRight = async () => { // 拖動標題列,讓浮窗左緣約在 900
+            const bar = await page.locator('[data-testid=chat-window] .cursor-move').first().boundingBox();
+            await page.mouse.move(bar.x + 60, bar.y + 8);
             await page.mouse.down();
-            await page.mouse.move(220, 40, {steps: 8}); // 拖到左上:640×672 內可完整容納 620 高的浮窗
+            await page.mouse.move(960, 300, {steps: 8});
             await page.mouse.up();
             await settle(80, 700);
-        }
+        };
+        const chatRect = () => page.evaluate(() => {
+            const r = document.querySelector('[data-testid=chat-window]').getBoundingClientRect();
+            return {l: Math.round(r.left), t: Math.round(r.top), r: Math.round(r.right), b: Math.round(r.bottom), vw: innerWidth, vh: innerHeight};
+        });
+        const fits = c => c.l >= 0 && c.t >= 0 && c.r <= c.vw && c.b <= c.vh;
+        await dragRight();
+        const wide = await chatRect();
+        check('#55 前置:寬視窗下浮窗已拖到右側(縮窄後會超出 640)', wide.l > 640, JSON.stringify(wide));
         await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 700);
+        const narrow = await chatRect();
+        check('#55 縮到 640 寬後浮窗完整回到畫面內', fits(narrow), JSON.stringify(narrow));
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 500);
+        await dragRight();
+        const wide2 = await chatRect();
+        check('#55 前置:再次拖到右側', wide2.l > 640, JSON.stringify(wide2));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 500);
+        await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await settle(80, 700);
+        const reopened = await chatRect();
+        check('#55 收起時縮窄,重新開啟浮窗仍在畫面內', fits(reopened), JSON.stringify(reopened));
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
         await page.waitForSelector('[data-testid=context-usage]', {timeout: 5000});
         const cu640 = await page.evaluate(() => {

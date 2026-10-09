@@ -361,6 +361,20 @@ export default function ChatWindow(props: Props) {
         window.addEventListener('mouseup', up);
     };
 
+    // 視窗縮窄或重新開啟時把浮窗限制回可見範圍(Issue #55):拖到寬視窗右側後縮到半螢幕,標題列會落在畫面外拖不回來
+    useEffect(() => {
+        if (!open || !pos) return;
+        const fit = () => {
+            const r = box.current!.getBoundingClientRect();
+            const x = Math.min(Math.max(0, pos.x), Math.max(0, window.innerWidth - r.width));
+            const y = Math.min(Math.max(TITLEBAR_HEIGHT, pos.y), Math.max(TITLEBAR_HEIGHT, window.innerHeight - r.height));
+            if (x !== pos.x || y !== pos.y) setPos({x, y});
+        };
+        fit();
+        window.addEventListener('resize', fit);
+        return () => window.removeEventListener('resize', fit);
+    }, [open, pos]);
+
     const openProposals = proposals.filter(p => p.status === 'pending' || p.status === 'conflict');
 
     const pickable = useMemo(() => {
