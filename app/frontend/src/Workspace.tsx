@@ -122,6 +122,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const loaded = useRef<string | null>(null);
     // 開檔世代(#56):每次開檔遞增;重載讀檔期間若開過檔(含 A→B→A 回到原檔),該次重載作廢
     const navGen = useRef(0);
+    // 重載世代(#56):同一章的重載重疊時(連續接受、接受與還原重疊),只套用最後發起的那次,較舊讀取晚回來不得覆蓋
+    const reloadGen = useRef(0);
     // 接受提案、版本還原期間(存檔→寫入→重載)編輯器唯讀(#56):否則期間的新輸入會被重載覆蓋。
     // 計數:多個操作重疊時(例如重複按接受),全部結束才解鎖;lockEdits 回傳解鎖函式
     const [editLocked, setEditLocked] = useState(false);
@@ -349,9 +351,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         const cur = current;
         if (!cur || (files && !files.includes(cur))) return;
         const gen = navGen.current;
+        const mine = ++reloadGen.current;
         const content = await ReadFile(cur);
-        // 讀檔期間開過檔(切到別章,或 A→B→A):不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案)
-        if (navGen.current !== gen || latest.current.current !== cur) return;
+        // 讀檔期間開過檔(切到別章,或 A→B→A):不得套用(把舊章內容放進新章編輯器,之後存檔會寫進新章檔案);
+        // 之後又發起了新的重載:交給新的那次套用
+        if (navGen.current !== gen || latest.current.current !== cur || reloadGen.current !== mine) return;
         setText(content);
         setFlashP(flash ?? null);
         setDirty(false);

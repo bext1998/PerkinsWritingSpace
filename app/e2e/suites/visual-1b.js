@@ -265,6 +265,43 @@ module.exports = {
             await releaseRead();
             const restoredBody = await page.textContent('.cm-content');
             check('#56 版本還原完成後顯示快照內容', restoredBody.includes('甲章再改') && !restoredBody.includes('甲章三改'), JSON.stringify(restoredBody.slice(-40)));
+            await restoreRead();
+
+            // 同章重載重疊:連續接受兩個提案,讀取立即發出但結果暫扣;較新的先回、較舊的後回,
+            // 最後畫面必須是兩個提案都套用後的內容(較舊讀取不得倒序覆蓋)
+            const srcA4 = read(raceA);
+            const mkProp = (id, original, replacement) => {
+                const at = Buffer.byteLength(srcA4.slice(0, srcA4.indexOf(original)));
+                projWrite(`.perkins/proposals/${id}.json`, JSON.stringify({
+                    id, createdAt: '2026-10-09T13:03:00+08:00', model: 'E2E', target: raceA, original, replacement,
+                    rationale: 'E2E 重載倒序測試', assumptions: [], baseHash: require('crypto').createHash('sha256').update(srcA4).digest('hex'),
+                    start: at, end: at + Buffer.byteLength(original), status: 'pending',
+                }));
+            };
+            mkProp('20261009-130300-race56d', '甲章再改。', '甲章四改。');
+            mkProp('20261009-130301-race56e', '解鎖後輸入', '解鎖後五改');
+            await page.evaluate(rel => {
+                window.__perkinsReadOrig = window.__perkinsReadOrig || window.go.main.App.ReadFile;
+                window.__perkinsHolds = [];
+                window.go.main.App.ReadFile = (r, ...rest) => {
+                    if (r !== rel) return window.__perkinsReadOrig(r, ...rest);
+                    const p = window.__perkinsReadOrig(r, ...rest); // 立即讀(取得當下磁碟內容),結果暫扣
+                    return new Promise(resolve => window.__perkinsHolds.push(() => resolve(p)));
+                };
+            }, raceA);
+            await page.click('[data-testid=chat-fab]');
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await page.click('[data-testid=proposal]:has-text("甲章四改") [data-testid=accept]');
+            await page.waitForFunction(() => window.__perkinsHolds.length === 1, null, {timeout: 5000});
+            await page.click('[data-testid=proposal]:has-text("解鎖後五改") [data-testid=accept]');
+            await page.waitForFunction(() => window.__perkinsHolds.length === 2, null, {timeout: 5000});
+            await page.evaluate(() => window.__perkinsHolds[1]()); // 較新的先回
+            await settle(80, 700);
+            await page.evaluate(() => window.__perkinsHolds[0]()); // 較舊的後回
+            await settle(80, 900);
+            const orderBody = await page.textContent('.cm-content');
+            check('#56 同章重載倒序回來:畫面是兩個提案都套用後的內容(較舊讀取不覆蓋)',
+                orderBody.includes('甲章四改') && orderBody.includes('解鎖後五改') && read(raceA).includes('解鎖後五改'), JSON.stringify(orderBody.slice(-40)));
         } finally {
             await restoreRead();
         }
