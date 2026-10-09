@@ -1,5 +1,15 @@
 # PROGRESS.md
 
+## 2026-10-10 — 段落移動、插入場景標題、編輯器內場景跳轉(Issue #46 後半)
+
+- **段落上移/下移**:`Alt+↑`/`Alt+↓`(綁定放在 defaultKeymap 前,取代 CodeMirror 的 moveLineUp/Down)。游標所在行(有選取時為選取涵蓋的所有行)與上/下最近的非空白行交換位置,中間的空白行留在原處(空行分段與不空行兩種寫法都保持段落間距不變);選取結束在下一行行首時該行不算在單位內(與視覺選取一致);已在頂/底不動作。游標與選取跟著內容走,一次 Ctrl+Z 復原(`isolateHistory.of('full')`)。
+- **插入場景標題**:`Alt+Enter` 與右鍵子選單「段落與場景」。在游標所在行後面插入 `## `,標題前後各留一個空白行:游標行或下一行已是空白行就沿用(不重複加),檔案最後一行就不再補後面那行;游標放在 `## ` 之後讓作者直接輸入場景名稱。
+- **編輯器內場景跳轉**:`Alt+PageUp`/`Alt+PageDown` 跳到上/下一個場景(`## ` 開頭且標題非空,與側欄場景清單同一套判準),游標移到該行行首並捲入可視範圍,沒有就不動作;右鍵子選單另有「上一個場景/下一個場景」。
+- **右鍵選單**:上述 5 項收在子選單「段落與場景」,標示快捷鍵,樣式與往左開規則照「插入標點」。
+- **IME 與快捷鍵衝突**:`view.composing`/`compositionStarted` 時不動作;`Alt+↑/↓` 與 PageUp/Down 在 defaultKeymap 有預設綁定,組字中要吃掉按鍵才不會落到 moveLineUp/Down(與 #46 前半「不攔截」的差別在此)。`Alt+Enter` 查過 CodeMirror 各 keymap 與前端全域 keydown 皆無綁定,不與既有快捷鍵衝突。
+- **驗證**:`tsc --noEmit`、`npm run build` 通過(工作樹 `npm ci`)。E2E `search-editor` 新增 22 項,破壞驗證 3 輪:①拿掉 5 個 keymap 綁定 → 19 項 FAIL(不空行上/下移與 CodeMirror moveLine 行為等價,此輪 PASS;右鍵選單 3 項由②驗證);②拿掉「段落與場景」子選單 → 選單 3 項 FAIL;③三個函式改成 no-op → 含不空行上/下移在內全部 FAIL。還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**433/435 passed**,略過 8 項,207s;新增 22 項全過。2 項 FAIL 是既有書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等待卡片逾時,suite 自己在 `bible.js` 註明為既有 flaky race);把本次改動 stash 掉只跑 main 的一輪同樣是這 2 項 FAIL(411/413),書櫃清空後(clean-recent.js)仍重現 → 與本次改動無關。settings.json 已逐位元組還原、書櫃無殘留、剪貼簿未覆寫。
+
 ## 2026-10-09 — PR #59 返工(codex 審查 3 項 Minor)
 
 - **插入自成一個復原步驟**:`insertPair`/`insertRaw` 的 dispatch 加 `annotations: isolateHistory.of('full')`,打字後立刻插入不再與前次輸入合併,一次 Ctrl+Z 只撤插入。E2E:打字後立刻 Alt+[ → Ctrl+Z 只撤插入、前面的字還在。

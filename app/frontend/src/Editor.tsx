@@ -85,6 +85,95 @@ const punctKeyHandler = EditorView.domEventHandlers({
     },
 });
 
+// 段落移動與場景(#46 後半)。作者有的用空行分段、有的不用,兩種都要保持段落間距不變:
+// 移動以「游標所在行(有選取時為選取涵蓋的所有行)」為單位,與上/下最近的非空白行交換位置,
+// 中間的空白行留在原處。場景 = 章節內的 `## ` 標題(§12.1,與側欄場景清單同一套判準)。
+// 都是作者自己的編輯:移動/插入是單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原。
+// IME 組字中(composing/compositionStarted)不動作;Alt+↑/↓ 與 PageUp/Down 在 defaultKeymap
+// 有預設綁定,組字中要吃掉按鍵才不會落到 moveLineUp/Down 或移動游標。
+const imeActive = (v: EditorView) => v.composing || v.compositionStarted;
+const blankText = (text: string) => text.trim() === '';
+
+// 單位外的上/下最近非空白行;沒有就回 null(已在頂/底)
+const nearestNonBlank = (v: EditorView, a: number, b: number, up: boolean): number | null => {
+    const doc = v.state.doc;
+    for (let i = up ? a - 1 : b + 1; i >= 1 && i <= doc.lines; i += up ? -1 : 1)
+        if (!blankText(doc.line(i).text)) return i;
+    return null;
+};
+
+// 段落上移/下移:單位與上/下最近的非空白行交換位置,中間的空白行留在原處;游標/選取跟著內容走
+const moveParagraph = (v: EditorView, up: boolean): boolean => {
+    if (imeActive(v)) return true;
+    const doc = v.state.doc;
+    const sel = v.state.selection.main;
+    const a = doc.lineAt(sel.from).number;
+    let b = doc.lineAt(sel.to).number;
+    if (b > a && sel.to === doc.line(b).from) b--; // 選取結束在下一行行首:該行不算在單位內
+    const t = nearestNonBlank(v, a, b, up);
+    if (t === null) return true; // 已在頂/底:不動作
+    const unit: string[] = [], blanks: string[] = [];
+    for (let i = a; i <= b; i++) unit.push(doc.line(i).text);
+    for (let i = up ? t + 1 : b + 1; i <= (up ? a - 1 : t - 1); i++) blanks.push(doc.line(i).text);
+    const target = doc.line(t).text;
+    const lines = up ? [...unit, ...blanks, target] : [target, ...blanks, ...unit];
+    const lo = Math.min(t, a), hi = Math.max(t, b);
+    const regionFrom = doc.line(lo).from;
+    // 新排列中每一行的起點:選取與游標要跟著單位到新位置(整行原樣搬,行內欄位不變)
+    const starts: number[] = [];
+    let off = 0;
+    for (const text of lines) { starts.push(off); off += text.length + 1; }
+    const unitStart = up ? lo : a + 1 + blanks.length;
+    const mapPos = (pos: number) => {
+        const line = doc.lineAt(pos);
+        const n = Math.min(line.number, b); // 選取結尾在單位下一行行首時,對應到單位最後一行行尾
+        return regionFrom + starts[unitStart + n - a - lo] + (n === line.number ? pos - line.from : doc.line(b).length);
+    };
+    v.dispatch({
+        changes: {from: regionFrom, to: doc.line(hi).to, insert: lines.join('\n')},
+        selection: EditorSelection.range(mapPos(sel.anchor), mapPos(sel.head)),
+        annotations: isolateHistory.of('full'),
+    });
+    v.focus();
+    return true;
+};
+
+// 插入場景標題:在游標所在行後面插入 `## ` 新行,游標放在 `## ` 後面讓作者直接輸入場景名稱。
+// 前後各保留一個空白行;已有空白行就沿用(不重複加),檔案到此為止就不補後面那行
+const insertSceneHeading = (v: EditorView): boolean => {
+    if (imeActive(v)) return true;
+    const doc = v.state.doc;
+    const cur = doc.lineAt(v.state.selection.main.head);
+    const next = cur.number < doc.lines ? doc.line(cur.number + 1) : null;
+    // 標題前的空白行:游標行本身是空白行就用它,否則用下一行(已是空白行),都沒有才新增
+    const reuseCur = blankText(cur.text);
+    const reuseNext = !reuseCur && !!next && blankText(next.text);
+    // 標題後的那一行:已是空白行就沿用,不是就新增一個空白行
+    const follower = reuseCur ? next : reuseNext ? (next!.number < doc.lines ? doc.line(next!.number + 1) : null) : next;
+    const at = reuseNext ? next!.to : cur.to;
+    const text = (reuseCur || reuseNext ? '\n' : '\n\n') + '## ' + (follower && !blankText(follower.text) ? '\n' : '');
+    const caret = at + (reuseCur || reuseNext ? 1 : 2) + 3; // 游標在 `## ` 之後
+    v.dispatch({changes: {from: at, to: at, insert: text}, selection: EditorSelection.cursor(caret), annotations: isolateHistory.of('full')});
+    v.focus();
+    return true;
+};
+
+// 場景跳轉:跳到上/下一個場景標題行,游標移到該行行首並捲入可視範圍;沒有就不動作
+const gotoScene = (v: EditorView, down: boolean): boolean => {
+    if (imeActive(v)) return true;
+    const doc = v.state.doc;
+    const cur = doc.lineAt(v.state.selection.main.head).number;
+    for (let i = down ? cur + 1 : cur - 1; i >= 1 && i <= doc.lines; i += down ? 1 : -1) {
+        if (doc.line(i).text.startsWith('## ') && doc.line(i).text.slice(3).trim() !== '') {
+            const from = doc.line(i).from;
+            v.dispatch({selection: EditorSelection.cursor(from), effects: EditorView.scrollIntoView(from, {y: 'nearest'})});
+            v.focus();
+            return true;
+        }
+    }
+    return true;
+};
+
 // 游標與捲動位置(§16 第 24 項第一層:切章後回到上次位置;只存記憶體,不寫檔)
 export interface EditorPos {
     anchor: number;
@@ -415,6 +504,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const [menu, setMenu] = useState<{x: number; y: number; sel: Selection | null} | null>(null);
     const [sub, setSub] = useState(false);
     const [punctSub, setPunctSub] = useState(false); // 右鍵選單的「插入標點」子選單(#46 前半)
+    const [paraSub, setParaSub] = useState(false); // 右鍵選單的「段落與場景」子選單(#46 後半)
     const [current, setCurrent] = useState<Selection | null>(null); // 最新選取(浮動列用)
     const [subBar, setSubBar] = useState(false); // 浮動列的段落指令子選單
 
@@ -493,7 +583,15 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     search({top: true, createPanel: view => (activeSearchPanel = new PerkinsSearchPanel(view))}),
                     history(),
                     drawSelection(),
-                    keymap.of([...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap]),
+                    // #46 後半的綁定要放在 defaultKeymap 前,才能取代它的 Alt+↑/↓(moveLineUp/Down)
+                    keymap.of([
+                        {key: 'Alt-ArrowUp', run: v => moveParagraph(v, true)},
+                        {key: 'Alt-ArrowDown', run: v => moveParagraph(v, false)},
+                        {key: 'Alt-Enter', run: insertSceneHeading},
+                        {key: 'Alt-PageUp', run: v => gotoScene(v, false)},
+                        {key: 'Alt-PageDown', run: v => gotoScene(v, true)},
+                        ...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap,
+                    ]),
                     searchTheme,
                     punctKeyHandler,
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
@@ -625,6 +723,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         e.preventDefault();
         setSub(false);
         setPunctSub(false);
+        setParaSub(false);
         setMenu({x: e.clientX, y: e.clientY, sel: currentSelection()});
     };
 
@@ -729,6 +828,28 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                     {id: 'dash', label: '破折號 ——', key: 'Alt+-', run: () => { const v = view.current; if (v) insertRaw(v, '——'); }},
                                 ].map(p => (
                                     <div key={p.id} className={item} data-testid={`punct-item-${p.id}`}
+                                         onClick={() => { p.run(); setMenu(null); }}>
+                                        <span>{p.label}</span>
+                                        <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 段落與場景(#46 後半):移動/插入/跳轉都在游標處動作,與插入標點同樣式、同往左開規則 */}
+                    <div className={`relative ${item}`} data-testid="para-submenu"
+                         onMouseEnter={() => setParaSub(true)} onMouseLeave={() => setParaSub(false)}>
+                        <span className="w-4"/>段落與場景<ChevronRight className="ml-auto h-4 w-4"/>
+                        {paraSub && (
+                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                                {[
+                                    {id: 'move-up', label: '段落上移', key: 'Alt+↑', run: () => { const v = view.current; if (v) moveParagraph(v, true); }},
+                                    {id: 'move-down', label: '段落下移', key: 'Alt+↓', run: () => { const v = view.current; if (v) moveParagraph(v, false); }},
+                                    {id: 'insert-scene', label: '插入場景標題', key: 'Alt+Enter', run: () => { const v = view.current; if (v) insertSceneHeading(v); }},
+                                    {id: 'scene-prev', label: '上一個場景', key: 'Alt+PageUp', run: () => { const v = view.current; if (v) gotoScene(v, false); }},
+                                    {id: 'scene-next', label: '下一個場景', key: 'Alt+PageDown', run: () => { const v = view.current; if (v) gotoScene(v, true); }},
+                                ].map(p => (
+                                    <div key={p.id} className={item} data-testid={`para-item-${p.id}`}
                                          onClick={() => { p.run(); setMenu(null); }}>
                                         <span>{p.label}</span>
                                         <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
