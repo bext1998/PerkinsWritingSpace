@@ -1063,6 +1063,19 @@ module.exports = {
         const j5 = await caretAt(), t11 = await docText();
         check('#46 場景 已是第一個場景再往上不動作(游標與文件都不變)',
             j5.line === 5 && t11 === sceneDoc, JSON.stringify({caret: j5, changed: t11 !== sceneDoc}));
+        // 程式碼區塊內的 `## ` 不是場景(與側欄 ParseScenes 同一套判準;PR #62 審查)
+        const fenceDoc = '開場\n\n```\n## 假場景\n```\n\n## 真場景';
+        const tf = await setDoc(fenceDoc);
+        await cursorToLine(1);
+        await page.keyboard.press('Alt+PageDown');
+        await settle(80, 400);
+        const f1 = await caretAt();
+        check('#46 場景 Alt+PageDown 略過程式碼區塊內的 ## 假標題',
+            tf === fenceDoc && f1.line === 7 && f1.text === '## 真場景', JSON.stringify({caret: f1, doc: tf}));
+        await page.keyboard.press('Alt+PageUp');
+        await settle(80, 400);
+        const f2 = await caretAt();
+        check('#46 場景 Alt+PageUp 也不跳進程式碼區塊', f2.line === 7, JSON.stringify(f2));
 
         // --- IME 組字中快捷鍵不動作(與 #46 前半 同一情境),組字結束後恢復 ---
         await setDoc('第一段\n\n第二段\n\n第三段');

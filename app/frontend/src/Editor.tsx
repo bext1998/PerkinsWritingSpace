@@ -1,5 +1,5 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
-import {Compartment, EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
+import {Compartment, EditorSelection, EditorState, StateEffect, StateField, Text} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
@@ -158,19 +158,29 @@ const insertSceneHeading = (v: EditorView): boolean => {
     return true;
 };
 
+// 場景行號:與側欄同一套判準(project.go ParseScenes):`## ` 開頭且標題非空,程式碼區塊(``` 圍住)內的不算
+const sceneLines = (doc: Text): number[] => {
+    const out: number[] = [];
+    let fence = false;
+    for (let i = 1; i <= doc.lines; i++) {
+        const text = doc.line(i).text;
+        if (text.trim().startsWith('```')) { fence = !fence; continue; }
+        if (!fence && text.startsWith('## ') && text.slice(3).trim() !== '') out.push(i);
+    }
+    return out;
+};
+
 // 場景跳轉:跳到上/下一個場景標題行,游標移到該行行首並捲入可視範圍;沒有就不動作
 const gotoScene = (v: EditorView, down: boolean): boolean => {
     if (imeActive(v)) return true;
     const doc = v.state.doc;
     const cur = doc.lineAt(v.state.selection.main.head).number;
-    for (let i = down ? cur + 1 : cur - 1; i >= 1 && i <= doc.lines; i += down ? 1 : -1) {
-        if (doc.line(i).text.startsWith('## ') && doc.line(i).text.slice(3).trim() !== '') {
-            const from = doc.line(i).from;
-            v.dispatch({selection: EditorSelection.cursor(from), effects: EditorView.scrollIntoView(from, {y: 'nearest'})});
-            v.focus();
-            return true;
-        }
-    }
+    const scenes = sceneLines(doc);
+    const n = down ? scenes.find(l => l > cur) : scenes.reverse().find(l => l < cur);
+    if (n === undefined) return true;
+    const from = doc.line(n).from;
+    v.dispatch({selection: EditorSelection.cursor(from), effects: EditorView.scrollIntoView(from, {y: 'nearest'})});
+    v.focus();
     return true;
 };
 

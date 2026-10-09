@@ -8,7 +8,8 @@
 - **右鍵選單**:上述 5 項收在子選單「段落與場景」,標示快捷鍵,樣式與往左開規則照「插入標點」。
 - **IME 與快捷鍵衝突**:`view.composing`/`compositionStarted` 時不動作;`Alt+↑/↓` 與 PageUp/Down 在 defaultKeymap 有預設綁定,組字中要吃掉按鍵才不會落到 moveLineUp/Down(與 #46 前半「不攔截」的差別在此)。`Alt+Enter` 查過 CodeMirror 各 keymap 與前端全域 keydown 皆無綁定,不與既有快捷鍵衝突。
 - **驗證**:`tsc --noEmit`、`npm run build` 通過(工作樹 `npm ci`)。E2E `search-editor` 新增 22 項,破壞驗證 3 輪:①拿掉 5 個 keymap 綁定 → 19 項 FAIL(不空行上/下移與 CodeMirror moveLine 行為等價,此輪 PASS;右鍵選單 3 項由②驗證);②拿掉「段落與場景」子選單 → 選單 3 項 FAIL;③三個函式改成 no-op → 含不空行上/下移在內全部 FAIL。還原後全綠。
-- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**433/435 passed**,略過 8 項,207s;新增 22 項全過。2 項 FAIL 是既有書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等待卡片逾時,suite 自己在 `bible.js` 註明為既有 flaky race);把本次改動 stash 掉只跑 main 的一輪同樣是這 2 項 FAIL(411/413),書櫃清空後(clean-recent.js)仍重現 → 與本次改動無關。settings.json 已逐位元組還原、書櫃無殘留、剪貼簿未覆寫。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**433/435 passed**,略過 8 項,207s;新增 22 項全過。2 項 FAIL 是既有書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等待卡片逾時,suite 自己在 `bible.js` 註明為既有 flaky race);把本次改動 stash 掉只跑 main 的一輪同樣是這 2 項 FAIL(411/413),書櫃清空後(clean-recent.js)仍重現 → 與本次改動無關。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
+- **返工(codex 審查 2 項 Minor,Orchestrator 直接修)**:(1)場景跳轉改用與側欄 `ParseScenes` 同一套判準,略過程式碼區塊內的 `## `;新增 2 項 E2E(fence 內假標題雙向都不跳入),破壞驗證(停用 fence 判斷 → 2 項 FAIL)後還原。(2)上方基準的剪貼簿描述改為實情。全新 fixture `--all` 447/447 passed(main 423 + 24)。
 
 ## 2026-10-09 — PR #59 返工(codex 審查 3 項 Minor)
 
