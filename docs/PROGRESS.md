@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-09 — PR #59 返工(codex 審查 3 項 Minor)
+
+- **插入自成一個復原步驟**:`insertPair`/`insertRaw` 的 dispatch 加 `annotations: isolateHistory.of('full')`,打字後立刻插入不再與前次輸入合併,一次 Ctrl+Z 只撤插入。E2E:打字後立刻 Alt+[ → Ctrl+Z 只撤插入、前面的字還在。
+- **IME 防護補組字初期**:組字開始後尚無文字變更時 `view.composing` 仍為 false;快捷鍵 handler 在 `preventDefault()` 前補查 `view.compositionStarted`(CM6 `inputState.composing >= 0`,組字結束會重置)/`event.isComposing`/`keyCode 229`,任一成立就不動作、不攔截;插入函式內層同步。E2E:模擬 `compositionstart` 後 Alt+[ 不插入,組字結束(`compositionend`)後恢復插入(確認不會永遠擋住)。
+- **選取字數過期回覆**:`Workspace.tsx` 加世代計數,取消選取或選取變更後,已發出的舊 `WordCount` 回覆不得寫入;取消選取立刻清空顯示。E2E:以受控延遲的 `WordCount` 綁定(只對選取文字「森林深處」卡住,比照 research R2)重現:放行前不顯示 → 放行顯示(管路正常)→ 取消後放行過期回覆不寫入。
+- **破壞驗證**:移除 `isolateHistory` → 合併撤銷重現 FAIL;移除 IME 防護(keydown 與插入函式兩層)→ 組字初期插入 FAIL;移除世代核對 → 過期回覆寫入 FAIL(需在取消前確保卡住的請求已過 debounce 發出,否則無過期回覆可驗)。還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)412/412 passed(基準 405 + 7),略過 8 項,158s。
+
 ## 2026-10-09 — 全形標點插入 + 選取字數(Issue #46 前半)
 
 - **標點插入**(`Editor.tsx`):作者決定打字時不做任何自動改寫,只以快捷鍵與右鍵選單「插入標點」子選單(沿用快速指令子選單樣式與往左開規則)插入:`Alt+[`「」、`Alt+Shift+[`『』(無選取游標在中間;有選取包住、選取保持在內文)、`Alt+.` `……`、`Alt+-` `——`(取代選取);IME 組字中(`view.composing`)不動作。插入為單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原。

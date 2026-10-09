@@ -420,10 +420,15 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     }, [text]);
 
     // 選取字數(#46 前半):與本章字數同一套規則(WordCount 綁定)與同樣的 250ms debounce,
-    // 不在前端另算;沒有選取時不顯示
+    // 不在前端另算;沒有選取時不顯示。世代計數(#46 返工):取消選取或選取變更後,
+    // 已發出的舊回覆不得寫入;取消選取時立刻清空顯示
+    const selCountGen = useRef(0);
     useEffect(() => {
+        const gen = ++selCountGen.current;
         if (!selection) { setSelCount(null); return; }
-        const id = setTimeout(() => WordCount(selection.text).then(setSelCount).catch(() => {}), 250);
+        const id = setTimeout(() => WordCount(selection.text)
+            .then(n => { if (gen === selCountGen.current) setSelCount(n); })
+            .catch(() => {}), 250);
         return () => clearTimeout(id);
     }, [selection]);
 

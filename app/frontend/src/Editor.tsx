@@ -1,7 +1,7 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
-import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
+import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
         getSearchQuery, findNext, findPrevious, replaceNext, replaceAll} from '@codemirror/search';
 import {markdown} from '@codemirror/lang-markdown';
@@ -43,22 +43,24 @@ const aiFlashField = StateField.define<DecorationSet>({
 
 // 全形標點插入(#46 前半,作者決定:打字時不做任何自動改寫,只以快捷鍵/右鍵選單插入;
 // 插入是作者自己的編輯:單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原;IME 組字中不動作)
+// 插入自成一個復原步驟(#46 返工):打字後立刻插入時,一次 Ctrl+Z 只撤插入,前面的字還在
 const insertPair = (v: EditorView, open: string, close: string) => {
-    if (v.composing) return true;
+    if (v.composing || v.compositionStarted) return true;
     const {from, to} = v.state.selection.main;
     v.dispatch({
         changes: {from, to, insert: open + v.state.sliceDoc(from, to) + close},
         // 無選取:游標放在中間;有選取:包住選取,選取保持在內文
         selection: from === to ? EditorSelection.cursor(from + open.length)
                                : EditorSelection.range(from + open.length, to + open.length),
+        annotations: isolateHistory.of('full'),
     });
     v.focus();
     return true;
 };
 const insertRaw = (v: EditorView, s: string) => {
-    if (v.composing) return true;
+    if (v.composing || v.compositionStarted) return true;
     const {from, to} = v.state.selection.main;
-    v.dispatch({changes: {from, to, insert: s}, selection: EditorSelection.cursor(from + s.length)});
+    v.dispatch({changes: {from, to, insert: s}, selection: EditorSelection.cursor(from + s.length), annotations: isolateHistory.of('full')});
     v.focus();
     return true;
 };
@@ -70,6 +72,9 @@ const punctKeyHandler = EditorView.domEventHandlers({
         if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey && e.code !== 'BracketLeft') return false;
         // 只在編輯器內容聚焦時處理,不攔截搜尋面板等輸入框
         if (!v.contentDOM.contains(e.target as Node)) return false;
+        // IME 組字中不動作;組字初期(compositionstart 後尚無文字變更)composing 仍為 false,
+        // 補看 compositionStarted / isComposing / keyCode 229,任一成立就不動作、不攔截(#46 返工)
+        if (v.composing || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
         if (e.code === 'BracketLeft') { e.preventDefault(); return e.shiftKey ? insertPair(v, '『', '』') : insertPair(v, '「', '」'); }
         if (e.code === 'Period') { e.preventDefault(); return insertRaw(v, '……'); }
         if (e.code === 'Minus') { e.preventDefault(); return insertRaw(v, '——'); }

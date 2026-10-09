@@ -824,5 +824,71 @@ module.exports = {
         await settle(80, 800);
         await page.keyboard.press('Control+s');
         await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
+
+        // ===== #46 返工 =====
+        // 1. 打字後立刻插入:插入自成一個復原步驟,Ctrl+Z 只撤掉插入、前面的字還在
+        await endCursor();
+        await page.keyboard.type('合併');
+        await page.keyboard.press('Alt+['); // 不等待,立刻插入
+        await settle(80, 600);
+        const r1 = await docText();
+        check('#46 返工 打字後立刻插入:「」已插入', r1.includes('合併「」'), JSON.stringify(r1.slice(-40)));
+        await undoOnce();
+        const r2 = await docText();
+        check('#46 返工 打字後立刻插入:Ctrl+Z 只撤插入,前面的字還在', r2.includes('合併') && !r2.includes('合併「」'), JSON.stringify(r2.slice(-40)));
+
+        // 2. IME 組字初期(compositionstart 後尚無文字變更)快捷鍵不動作、不攔截
+        await endCursor();
+        const r3before = await docText();
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+        });
+        await settle(80, 400);
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        check('#46 返工 IME 組字初期:Alt+[ 不插入', (await docText()) === r3before, JSON.stringify((await docText()).slice(-40)));
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: ''}));
+        });
+        await settle(80, 400);
+        // 組字結束後快捷鍵恢復(確認 compositionStarted 會重置,不會永遠擋住)
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        const r3after = await docText();
+        check('#46 返工 組字結束後 Alt+[ 恢復插入', r3after !== r3before && r3after.includes('「」'), JSON.stringify(r3after.slice(-40)));
+        await undoOnce();
+
+        // 3. 過期字數回覆:選取變更/取消後,已發出的 WordCount 回覆不得寫入;取消選取立刻清空
+        await page.click('.cm-content'); // 取消選取,顯示清空
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 3000});
+        await page.evaluate(() => {
+            window.__perkinsWCOrig = window.go.main.App.WordCount;
+            window.go.main.App.WordCount = (t, ...rest) => {
+                if (t === '森林深處') return new Promise(resolve => { window.__perkinsWCGate = resolve; });
+                return window.__perkinsWCOrig(t, ...rest);
+            };
+        });
+        await endCursor();
+        await page.keyboard.type('森林深處');
+        await settle(80, 400);
+        await selectLast(4);
+        await page.waitForTimeout(1200); // 若未卡住,不卡顯示早就出現
+        check('#46 返工 WordCount 卡住期間不顯示', !(await page.$('[data-testid=count-selection]')));
+        await page.evaluate(() => window.__perkinsWCGate(99));
+        await page.waitForSelector('[data-testid=count-selection]', {timeout: 3000});
+        const shown99 = (await page.textContent('[data-testid=count-selection]')).trim();
+        check('#46 返工 放行回覆後顯示卡住的值(管路正常)', shown99 === '已選 99 字', shown99);
+        // 取消選取:立刻清空;再重選、再取消後放行過期回覆,不得寫回
+        await page.click('.cm-content');
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 2000});
+        await endCursor();
+        await selectLast(4); // 新請求再次卡住
+        await page.waitForTimeout(400); // 確已過 250ms debounce,卡住的 WordCount 已發出
+        await page.click('.cm-content'); // 取消選取
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 2000});
+        await page.evaluate(() => window.__perkinsWCGate(99)); // 放行過期回覆
+        await page.waitForTimeout(800);
+        check('#46 返工 取消選取後過期回覆不寫入', !(await page.$('[data-testid=count-selection]')));
+        await page.evaluate(() => { window.go.main.App.WordCount = window.__perkinsWCOrig; });
     },
 };
