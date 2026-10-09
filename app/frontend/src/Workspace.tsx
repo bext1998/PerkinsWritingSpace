@@ -79,14 +79,28 @@ export interface Toast {
 
 // 提案寫入的文字在重載後全文中的位置(#45 a):後端回傳的 start 是實際寫入處的位元組偏移
 // (重新定位套用時也已更新),換成字元位置;刪除(寫入空字串)沒有可標示的範圍。
-function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
-    const written = p.authorEdited ? p.final ?? '' : p.replacement;
-    if (!written) return null;
-    const from = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text).slice(0, p.start)).length; // 保留 BOM:編輯器內容也含它
-    if (text.slice(from, from + written.length) !== written) return null; // 重載內容與寫入結果不符(期間檔案又變了):不標
+// 一段文字在編輯器中的位置:start 是後端記錄的位元組位置;內容不符時回 null
+function editorRange(text: string, start: number, s: string): {from: number; to: number} | null {
+    const from = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text).slice(0, start)).length; // 保留 BOM:編輯器內容也含它
+    if (!s || text.slice(from, from + s.length) !== s) return null;
     // 編輯器把 \r\n 當成一個換行:CRLF 檔案要扣掉前面的 \r 才是編輯器位置
     const cm = (i: number) => i - (text.slice(0, i).match(/\r\n/g)?.length ?? 0);
-    return {from: cm(from), to: cm(from + written.length)};
+    return {from: cm(from), to: cm(from + s.length)};
+}
+
+function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
+    // 重載內容與寫入結果不符(期間檔案又變了):不標
+    return editorRange(text, p.start, p.authorEdited ? p.final ?? '' : p.replacement);
+}
+
+// 待審提案的原文位置(#45 方案 A「在稿件中顯示」):先用提案記錄的位置;作者在前面打過字而位移時,
+// 改用原文在檔案中唯一的出現處(與後端接受時的放寬規則一致);找不到或不唯一就回 null,不猜位置
+function originalRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
+    const r = editorRange(text, p.start, p.original);
+    if (r) return r;
+    const i = text.indexOf(p.original);
+    if (i < 0 || text.indexOf(p.original, i + 1) >= 0) return null;
+    return editorRange(text, new TextEncoder().encode(text.slice(0, i)).length, p.original);
 }
 
 export default function Workspace({tree, setTree, onClose, onSettings, settingsVersion}: Props) {
@@ -345,6 +359,29 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             if (line) setTimeout(() => editor.current?.scrollToLine(line), 60);
         } catch (e) { fail(e); }
     }, [save, fail]);
+
+    // 審查視窗「在稿件中顯示」(#45 方案 A):目前章節直接捲到原文並短暫標示;別章先開啟,
+    // 由 Editor 掛載時套用(開發模式的 StrictMode 會建立兩次編輯器,見 .agent/memory/editor-strictmode-remount.md)
+    const [revealP, setRevealP] = useState<proposal.Proposal | null>(null);
+    const notFound = useCallback(() => notify({text: '在稿件中找不到這段原文(可能已被修改)。', kind: 'info'}), [notify]);
+    const revealProposal = (p: proposal.Proposal) => {
+        if (p.target === latest.current.current) {
+            const r = originalRange(text, p);
+            if (r) editor.current?.reveal(r.from, r.to);
+            else notFound();
+            return;
+        }
+        setRevealP(p);
+        const nav = openFile(p.target);
+        const seq = navSeq.current; // openFile 一開始就遞增;之後又有切換時序號會變,取消這次定位
+        nav.then(() => { if (navSeq.current !== seq) setRevealP(r => r === p ? null : r); });
+    };
+    useEffect(() => {
+        if (revealP && revealP.target === current) {
+            if (!originalRange(text, revealP)) notFound();
+            setRevealP(null);
+        }
+    }, [reloadKey]);
 
     // 磁碟上的檔案被系統改動(接受提案、還原)後,重新載入編輯器
     // flash:接受提案後要標示的提案,與重載內容同一次提交(#45 a)
@@ -697,7 +734,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} reveal={revealP && revealP.target === current ? originalRange(text, revealP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -750,7 +787,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} lockEdits={lockEdits} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
