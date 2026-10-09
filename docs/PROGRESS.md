@@ -17,6 +17,16 @@
 - **破壞驗證**:移除快捷鍵 handler → 12 項快捷鍵檢查 FAIL;選單項目改為不動作 → 4 項選單插入檢查 FAIL;選取字數固定值 → 同值檢查 FAIL;無條件渲染 span → 「取消選取後消失」的 detach 等待逾時(組中斷,守住存在性);還原後全綠。
 - **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)405/405 passed(基準 383 + 22),略過 8 項,153s。`tsc --noEmit`、`npm run build` 通過。後半(段落上移/下移、場景標題插入與跳轉)未做。
 
+## 2026-10-09 — reloadCurrent 讀檔期間切章競態修復(Issue #56)
+
+- `Workspace.reloadCurrent`(接受提案、版本還原後的重載)在 `await ReadFile` 後核對 `latest.current.current` 仍是發起時的檔案,已切到別章就不套用(不 setText、不 setFlashP、不清 dirty、不重掛);比照 `openFile` 的 stale 檢查與 `deleteCategory` 重讀的寫法。原本讀檔期間切章會把 A 章內容放進 B 章編輯器,之後存檔寫進 B 章檔案(資料遺失風險)。
+- **E2E(visual-1b,3 項)**:專用章節 A/B,寫入提案檔後覆寫 `ReadFile` 讓 A 章讀取卡在受控 Promise(比照 research R2),接受提案 → 卡住期間切到 B → 放行;斷言麵包屑仍是 B、編輯器仍顯示 B 內容、在 B 打字存檔後磁碟上的 B 未被寫成 A 章內容;`finally` 還原綁定與浮窗收合。
+- **破壞驗證**:拿掉核對 → 「編輯器仍顯示章節 B」與「磁碟上的 B 不變」兩項 FAIL(編輯器被寫入 A 章內容,存檔把 A 內容寫進 B 檔);放回後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)386/386 passed(基準 383 + 3),略過 8 項,148s;settings.json 逐位元組還原,書櫃無殘留,剪貼簿未覆寫。
+- **返工(codex 審查,Orchestrator 直接修)**:(1)Major:只比路徑仍會丟字——接受期間作者在同一章打字,重載回來會覆蓋;A→B→A 的過期重載也會通過。改為接受期間(存檔→套用→重載)編輯器唯讀(`Editor` 的 `readOnly` prop,CodeMirror Compartment;版本還原在對話框內,本來就無法打字),並加開檔世代 `navGen`,讀檔期間開過檔即作廢。(2)E2E 放行後明確等讀檔完成、存檔等落盤;覆寫綁定改 try/finally 還原。新增 3 項:接受期間打字不進編輯器、完成後顯示套用內容、完成後解除唯讀。破壞驗證:不上鎖 → 唯讀檢查 FAIL;不解鎖 → 後續存檔失效中斷;拿掉核對 → 切章兩項 FAIL。全新 fixture `--all`:389/389。
+- **返工 2(codex 複審 3 項 Major)**:(1)右鍵剪下/貼上直接送出修改,繞過 `readOnly` → 唯讀時再加 `EditorState.changeFilter` 擋下所有文件修改;(2)重複按接受,第二次失敗會提早解鎖 → 鎖改計數(`lockEdits` 回傳解鎖函式,全部結束才解鎖);(3)版本還原可按 Escape 關對話框繼續打字 → 還原(存檔→寫入→重載)也上同一把鎖。新增 3 項檢查;破壞驗證:計數改布林 → 重複接受檢查 FAIL;拿掉 changeFilter → 同項 FAIL;還原不上鎖 → 還原檢查 FAIL。全新 fixture `--all`:393/393。
+- **返工 3(codex 複審 1 項 Major)**:同一章的重載重疊(連續接受兩個提案、接受與還原重疊)時,較舊讀取晚回來會倒序覆蓋較新內容。加重載世代 `reloadGen`,只套用最後發起的那次。新增檢查:讀取立即發出但結果暫扣,較新先回、較舊後回,畫面須為兩個提案都套用後的內容;破壞驗證:拿掉世代核對 → FAIL。全新 fixture `--all`:394/394。
+
 ## 2026-10-09 — Bot 浮窗用量返工(PR #54 審查)
 
 - `App.PreviewContext` 在請求進行中(`a.cancel != nil`)時不再呼叫 `prepare()`,沿用執行中 Agent 的端點設定估算(背景重算不得繞過送出確認換端點;App 層回歸測試 `TestPreviewContextDoesNotTouchRunningAgent`);前端 `busy` 期間停止背景重算,`chat:done` 後再算。
