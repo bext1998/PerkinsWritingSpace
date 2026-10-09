@@ -11,3 +11,4 @@ Responsibilities:
 - 安排 Reviewer 審查，有效問題安排返工；重審只針對修補的 diff 與先前的發現
 - 整合結果、完成必要驗證，向作者用白話回報
 - 請求審查時寫明審查範圍；Worker 與 Reviewer 主動回報或直接溝通後未取得共識時，由自己裁決（見 `AGENTS.md`「審查範圍」「Agent 之間的主動溝通」）
+- 派工與審查請求用任務說明檔（開頭列寄件者、回報對象 pane ID、主旨、關聯）；Agent 參與的 PR 內文最後加「Agent 貢獻」區塊（見 `AGENTS.md`「貢獻紀錄」）

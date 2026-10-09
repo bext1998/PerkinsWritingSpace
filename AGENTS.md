@@ -50,8 +50,18 @@
   - 必須主動回報 Orchestrator 的情況：任務完成（附分支、提交與驗證結果）、遇到阻礙、發現任務說明與 SPEC 或現有程式衝突、需要擴大範圍才能完成。不得默默擴大範圍或自行改變任務。
   - Worker 與 Reviewer 可直接溝通，用來釐清審查發現或實作意圖；同一議題直接往返最多兩輪，仍未取得共識就交給 Orchestrator 裁決。範圍變更、駁回發現、新增工作等決定一律由 Orchestrator 做，直接溝通的結論也要同步給 Orchestrator。
   - **排隊送訊，避免提示詞撞在一起**：送訊前先用 Herdr 查詢對方狀態（例如 `herdr agent list`），對方正在處理工作時不送出，等它空閒再送；同一個對象一次只送一則，前一則得到回應或處理完之前不送下一則。收到訊息時若正在工作，先完成目前步驟再處理，不中斷手上的修改。
-  - 訊息開頭寫明寄件者、主旨與需要對方做什麼（回覆、決定或僅告知）。內容長的寫成檔案，訊息只附路徑。
+  - 訊息開頭寫明寄件者、主旨與需要對方做什麼（回覆、決定或僅告知）。內容長的寫成檔案，訊息只附路徑。以 `herdr agent prompt` 送訊時，對象要寫 pane ID（例如 `w12:p3`），寫 agent 名稱會找不到對象。
+  - 一般詢問與短訊息用自然語言即可。正式派工、審查請求、跨 Agent 交接與阻斷問題，在任務說明檔開頭列出：寄件者、回報對象（pane ID）、主旨、關聯（Issue／PR／分支）；正文分「任務」「限制」「交付」。Herdr 已能看出的資訊（收件 pane、時間）不必重寫。
+  - 完成、受阻或失敗的回報，開頭寫寄件者、主旨與狀態（完成／部分完成／受阻／失敗），內容依序交代：做了什麼；交付位置（分支、提交、PR，無程式修改可省略）；驗證（實際跑過的指令與結果，以及沒驗證到的部分，未執行的測試不得寫成通過）；待處理（需要其他 Agent 或作者處理的事，沒有就寫「無」）。
   - 不直接聯絡作者；需要作者決定的事交給 Orchestrator 轉達。
+- **貢獻紀錄**：Agent 參與的 PR，內文最後由 Orchestrator 加「Agent 貢獻」區塊，只列實際做過工作的角色，沒做的不列：
+  ```
+  Orchestrated-by: Max (Claude Code) | claude-opus-5-5
+  Implemented-by: Wolfe (Pi) | z-ai/glm-5.3-flash
+  Reviewed-by: Hemingway (Codex) | <模型 ID>（初版；返工未複審）
+  ```
+  - 身分用 `.agent/profile/` 的名稱與 Agent，模型 ID 另寫實際使用的模型（同一角色可能換模型）；查不到就寫「未知」，不要猜。返工由不同角色完成時各列一行並註明；審查只涵蓋部分版本時在括號註明。
+  - 提交照現有方式，不要求逐次署名。若加 `Co-authored-by`，只能用 Git 標準格式 `Co-authored-by: Name <email>`；只做審查的 Agent 不列為共同作者。
 - 團隊角色見 `.agent/profile/`（Orchestrator、Reviewer、Worker）。`.agent/profile/runtime.json` 可暫存 Herdr 的 pane／agent 名稱等執行期資訊，已被 Git 忽略；它不是真實來源，實際狀態一律以 `herdr agent list` 等查詢結果為準。
 
 ### 專案指令
