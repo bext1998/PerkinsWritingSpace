@@ -1,7 +1,7 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {Compartment, EditorSelection, EditorState, StateEffect, StateField} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
-import {defaultKeymap, history, historyKeymap} from '@codemirror/commands';
+import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
         getSearchQuery, findNext, findPrevious, replaceNext, replaceAll} from '@codemirror/search';
 import {markdown} from '@codemirror/lang-markdown';
@@ -42,6 +42,47 @@ const aiFlashField = StateField.define<DecorationSet>({
         return deco;
     },
     provide: f => EditorView.decorations.from(f),
+});
+
+// 全形標點插入(#46 前半,作者決定:打字時不做任何自動改寫,只以快捷鍵/右鍵選單插入;
+// 插入是作者自己的編輯:單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原;IME 組字中不動作)
+// 插入自成一個復原步驟(#46 返工):打字後立刻插入時,一次 Ctrl+Z 只撤插入,前面的字還在
+const insertPair = (v: EditorView, open: string, close: string) => {
+    if (v.composing || v.compositionStarted) return true;
+    const {from, to} = v.state.selection.main;
+    v.dispatch({
+        changes: {from, to, insert: open + v.state.sliceDoc(from, to) + close},
+        // 無選取:游標放在中間;有選取:包住選取,選取保持在內文
+        selection: from === to ? EditorSelection.cursor(from + open.length)
+                               : EditorSelection.range(from + open.length, to + open.length),
+        annotations: isolateHistory.of('full'),
+    });
+    v.focus();
+    return true;
+};
+const insertRaw = (v: EditorView, s: string) => {
+    if (v.composing || v.compositionStarted) return true;
+    const {from, to} = v.state.selection.main;
+    v.dispatch({changes: {from, to, insert: s}, selection: EditorSelection.cursor(from + s.length), annotations: isolateHistory.of('full')});
+    v.focus();
+    return true;
+};
+// 快捷鍵衝突檢查:defaultKeymap/historyKeymap/searchKeymap 與 CodeMirror 預設皆無 Alt+[、Alt+Shift+[、Alt+.、Alt+- 綁定。
+// 不用 keymap.of:Windows Chromium 在 Alt 組合下 event.key 不反映 Shift(Alt+Shift+[ 的 key 仍是 '['),
+// CM 的 key 名稱會把兩者視為同一鍵;改以 domEventHandlers 看實體鍵(e.code)與 shiftKey 區分。
+const punctKeyHandler = EditorView.domEventHandlers({
+    keydown(e, v) {
+        if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey && e.code !== 'BracketLeft') return false;
+        // 只在編輯器內容聚焦時處理,不攔截搜尋面板等輸入框
+        if (!v.contentDOM.contains(e.target as Node)) return false;
+        // IME 組字中不動作;組字初期(compositionstart 後尚無文字變更)composing 仍為 false,
+        // 補看 compositionStarted / isComposing / keyCode 229,任一成立就不動作、不攔截(#46 返工)
+        if (v.composing || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
+        if (e.code === 'BracketLeft') { e.preventDefault(); return e.shiftKey ? insertPair(v, '『', '』') : insertPair(v, '「', '」'); }
+        if (e.code === 'Period') { e.preventDefault(); return insertRaw(v, '……'); }
+        if (e.code === 'Minus') { e.preventDefault(); return insertRaw(v, '——'); }
+        return false;
+    },
 });
 
 // 游標與捲動位置(§16 第 24 項第一層:切章後回到上次位置;只存記憶體,不寫檔)
@@ -373,6 +414,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     onSelectRef.current = onSelect;
     const [menu, setMenu] = useState<{x: number; y: number; sel: Selection | null} | null>(null);
     const [sub, setSub] = useState(false);
+    const [punctSub, setPunctSub] = useState(false); // 右鍵選單的「插入標點」子選單(#46 前半)
     const [current, setCurrent] = useState<Selection | null>(null); // 最新選取(浮動列用)
     const [subBar, setSubBar] = useState(false); // 浮動列的段落指令子選單
 
@@ -453,6 +495,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     drawSelection(),
                     keymap.of([...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap]),
                     searchTheme,
+                    punctKeyHandler,
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
                     aiFlashField,
@@ -581,6 +624,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const onContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
         setSub(false);
+        setPunctSub(false);
         setMenu({x: e.clientX, y: e.clientY, sel: currentSelection()});
     };
 
@@ -667,6 +711,27 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                 {QUICK_ACTIONS.map(q => (
                                     <div key={q.id} className={item} onClick={() => { onAskAI(menu.sel!, q); setMenu(null); }}>
                                         {q.label}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 插入標點(#46 前半):與快速指令子選單同樣式、同往左開規則 */}
+                    <div className={`relative ${item}`} data-testid="punct-submenu"
+                         onMouseEnter={() => setPunctSub(true)} onMouseLeave={() => setPunctSub(false)}>
+                        <span className="w-4"/>插入標點<ChevronRight className="ml-auto h-4 w-4"/>
+                        {punctSub && (
+                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                                {[
+                                    {id: 'quote', label: '「」', key: 'Alt+[', run: () => { const v = view.current; if (v) insertPair(v, '「', '」'); }},
+                                    {id: 'dquote', label: '『』', key: 'Alt+Shift+[', run: () => { const v = view.current; if (v) insertPair(v, '『', '』'); }},
+                                    {id: 'ellipsis', label: '刪節號 ……', key: 'Alt+.', run: () => { const v = view.current; if (v) insertRaw(v, '……'); }},
+                                    {id: 'dash', label: '破折號 ——', key: 'Alt+-', run: () => { const v = view.current; if (v) insertRaw(v, '——'); }},
+                                ].map(p => (
+                                    <div key={p.id} className={item} data-testid={`punct-item-${p.id}`}
+                                         onClick={() => { p.run(); setMenu(null); }}>
+                                        <span>{p.label}</span>
+                                        <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
                                     </div>
                                 ))}
                             </div>

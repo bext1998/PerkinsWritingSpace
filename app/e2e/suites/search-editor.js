@@ -678,5 +678,217 @@ module.exports = {
             check('長章節量測與縮放/位置記憶檢查', false, e.message);
         }
 
+        // ===== 全形標點插入 + 選取字數(#46 前半):專用章節,不動其他組依賴的章節內容 =====
+        await page.setViewportSize({width: 1440, height: 900});
+        fs.writeFileSync(P('manuscript/標點測試.md'), '# 標點測試\n\n森林深處。\n');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=chapter-row]:has-text("標點測試")', {timeout: 15000});
+        await page.click('[data-testid=chapter-row]:has-text("標點測試")');
+        await page.waitForSelector('.cm-content:has-text("森林深處")', {timeout: 15000});
+        const docText = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n'));
+        const editorPos = () => page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
+        const endCursor = async () => { await page.click('.cm-content'); await page.keyboard.press('Control+End'); await settle(80, 400); };
+        const selectLast = async n => { for (let i = 0; i < n; i++) await page.keyboard.press('Shift+ArrowLeft'); await settle(80, 400); };
+        const undoOnce = async () => { await page.keyboard.press('Control+z'); await settle(80, 600); };
+
+        // Alt+[:無選取 → 插入「」,游標在中間;Ctrl+Z 一次復原
+        await endCursor();
+        const p0 = await editorPos();
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        const k1 = await page.evaluate(() => ({pos: window.__perkinsEditor?.pos(), txt: [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n')}));
+        check('#46 Alt+[ 無選取:插入「」且游標在中間', k1.txt.includes('「」') && k1.pos.head === p0.head + 1, JSON.stringify(k1));
+        await undoOnce();
+        const k1u = await docText();
+        check('#46 Alt+[ 插入後 Ctrl+Z 一次復原', !k1u.includes('「」'), JSON.stringify(k1u.slice(-60)));
+
+        // Alt+[:有選取 → 包住選取,選取保持在內文;Ctrl+Z 一次復原
+        await endCursor();
+        await page.keyboard.type('測試選取');
+        await settle(80, 400);
+        await selectLast(2);
+        const selBefore = await page.evaluate(() => window.getSelection().toString());
+        check('#46 前置:已選取「選取」2 字', selBefore === '選取', selBefore);
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        const k2 = await page.evaluate(() => ({txt: [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n'), sel: window.getSelection().toString()}));
+        check('#46 Alt+[ 有選取:包住選取且選取保持在內文', k2.txt.includes('測試「選取」') && k2.sel === '選取', JSON.stringify(k2));
+        await undoOnce();
+        const k2u = await docText();
+        check('#46 Alt+[ 包住後 Ctrl+Z 一次復原', k2u.includes('測試選取') && !k2u.includes('測試「'), JSON.stringify(k2u.slice(-60)));
+
+        // Alt+Shift+[:有選取 → 包住『』
+        await endCursor();
+        await page.keyboard.type('引號雙');
+        await settle(80, 400);
+        await selectLast(1);
+        await page.keyboard.press('Alt+Shift+[');
+        await settle(80, 600);
+        const k3 = await page.evaluate(() => ({txt: [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n'), sel: window.getSelection().toString()}));
+        check('#46 Alt+Shift+[ 有選取:包住『』且選取保持在內文', k3.txt.includes('引號『雙』') && k3.sel === '雙', JSON.stringify(k3));
+        await undoOnce();
+        const k3u = await docText();
+        check('#46 Alt+Shift+[ 後 Ctrl+Z 一次復原', k3u.includes('引號雙') && !k3u.includes('引號『'), JSON.stringify(k3u.slice(-60)));
+
+        // Alt+. / Alt+-:取代選取插入刪節號與破折號
+        await endCursor();
+        await page.keyboard.type('刪節');
+        await settle(80, 400);
+        await selectLast(2);
+        await page.keyboard.press('Alt+.');
+        await settle(80, 600);
+        const k4 = await docText();
+        check('#46 Alt+. 取代選取插入刪節號', k4.includes('……') && !k4.includes('刪節'), JSON.stringify(k4.slice(-60)));
+        await undoOnce();
+        const k4u = await docText();
+        check('#46 Alt+. 後 Ctrl+Z 一次復原', k4u.includes('刪節') && !k4u.includes('……'), JSON.stringify(k4u.slice(-60)));
+        await page.keyboard.press('Alt+-');
+        await settle(80, 600);
+        const k5 = await docText();
+        check('#46 Alt+- 取代選取插入破折號', k5.includes('——') && !k5.includes('刪節'), JSON.stringify(k5.slice(-60)));
+        await undoOnce();
+        const k5u = await docText();
+        check('#46 Alt+- 後 Ctrl+Z 一次復原', k5u.includes('刪節') && !k5u.includes('——'), JSON.stringify(k5u.slice(-60)));
+
+        // 右鍵選單「插入標點」:4 項可用且標示快捷鍵
+        const openMenu = async (atRight = false) => {
+            if (atRight) {
+                const box = await page.locator('.cm-content').boundingBox();
+                await page.mouse.click(box.x + box.width - 40, box.y + 100, {button: 'right'});
+            } else {
+                await page.click('.cm-content', {button: 'right', position: {x: 200, y: 120}});
+            }
+            await page.waitForSelector('.ctxmenu', {timeout: 5000});
+            await page.hover('[data-testid=punct-submenu]');
+            await page.waitForSelector('[data-testid=punct-item-quote]', {timeout: 5000});
+        };
+        await endCursor();
+        await openMenu();
+        const punctItems = await page.$$eval('[data-testid=punct-submenu] > div > div', els => els.map(e => e.textContent));
+        check('#46 右鍵選單插入標點:4 項且標示快捷鍵',
+            punctItems.length === 4 && punctItems[0].includes('「」') && punctItems[0].includes('Alt+[')
+            && punctItems[1].includes('『』') && punctItems[1].includes('Alt+Shift+[')
+            && punctItems[2].includes('刪節號') && punctItems[2].includes('Alt+.')
+            && punctItems[3].includes('破折號') && punctItems[3].includes('Alt+-'), JSON.stringify(punctItems));
+        // Windows Chromium 的右鍵會先把游標移到點擊處(原生 contenteditable 行為),
+        // 故插入落在右鍵點擊處:以累積連續片段驗證 4 項依序插入成功
+        const punctSeq = [['punct-item-quote', '「」'], ['punct-item-dquote', '『』'], ['punct-item-ellipsis', '……'], ['punct-item-dash', '——']];
+        let acc = '';
+        for (const [tid, frag] of punctSeq) {
+            await openMenu();
+            await page.click(`[data-testid=${tid}]`);
+            await settle(80, 500);
+            acc += frag;
+            const after = await docText();
+            check(`#46 右鍵選單插入 ${frag}`, after.includes(acc) && !(await page.$('.ctxmenu')),
+                JSON.stringify({tail: after.slice(-24), menu: !!(await page.$('.ctxmenu'))}));
+        }
+        check('#46 右鍵選單插入不改其他內容', (await docText()).includes('森林深處。') && (await docText()).includes('測試選取引號雙刪節'), 'skip');
+        // 靠近右緣時子選單往左開(沿用既有右鍵選單規則)
+        await endCursor();
+        await openMenu(true);
+        const flipBoxes = await page.evaluate(() => {
+            const tr = document.querySelector('[data-testid=punct-submenu]').getBoundingClientRect();
+            const sub = document.querySelector('[data-testid=punct-submenu] > div').getBoundingClientRect();
+            return {trLeft: tr.left, subRight: sub.right};
+        });
+        check('#46 靠右緣時插入標點子選單往左開', flipBoxes.subRight <= flipBoxes.trLeft + 2, JSON.stringify(flipBoxes));
+        await page.click('.cm-content'); // 關閉選單
+        await settle(80, 400);
+
+        // 選取字數:與 WordCount 綁定同值;沒選取不顯示;取消選取後消失;640 不溢出
+        check('#46 沒有選取時不顯示已選字數', !(await page.$('[data-testid=count-selection]')));
+        await endCursor();
+        await page.keyboard.type('森林深處');
+        await settle(80, 400);
+        await selectLast(4);
+        const expected = await page.evaluate(t => window.go.main.App.WordCount(t), '森林深處');
+        await page.waitForSelector('[data-testid=count-selection]', {timeout: 5000});
+        const shown = (await page.textContent('[data-testid=count-selection]')).trim();
+        check('#46 選取字數與 WordCount 同值', shown === `已選 ${expected.toLocaleString()} 字`, `shown=${shown} expected=${expected}`);
+        await page.click('.cm-content'); // 取消選取(設游標)
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 5000});
+        check('#46 取消選取後已選字數消失', !(await page.$('[data-testid=count-selection]')));
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 900);
+        await endCursor();
+        await selectLast(4);
+        await page.waitForSelector('[data-testid=count-selection]', {timeout: 5000});
+        const sb = await page.evaluate(() => { const el = document.querySelector('[data-testid=statusbar]'); return {sw: el.scrollWidth, cw: el.clientWidth}; });
+        check('#46 640 寬狀態列不溢出(含已選字數)', sb.sw <= sb.cw, JSON.stringify(sb));
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 800);
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
+
+        // ===== #46 返工 =====
+        // 1. 打字後立刻插入:插入自成一個復原步驟,Ctrl+Z 只撤掉插入、前面的字還在
+        await endCursor();
+        await page.keyboard.type('合併');
+        await page.keyboard.press('Alt+['); // 不等待,立刻插入
+        await settle(80, 600);
+        const r1 = await docText();
+        check('#46 返工 打字後立刻插入:「」已插入', r1.includes('合併「」'), JSON.stringify(r1.slice(-40)));
+        await undoOnce();
+        const r2 = await docText();
+        check('#46 返工 打字後立刻插入:Ctrl+Z 只撤插入,前面的字還在', r2.includes('合併') && !r2.includes('合併「」'), JSON.stringify(r2.slice(-40)));
+
+        // 2. IME 組字初期(compositionstart 後尚無文字變更)快捷鍵不動作、不攔截
+        await endCursor();
+        const r3before = await docText();
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+        });
+        await settle(80, 400);
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        check('#46 返工 IME 組字初期:Alt+[ 不插入', (await docText()) === r3before, JSON.stringify((await docText()).slice(-40)));
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: ''}));
+        });
+        await settle(80, 400);
+        // 組字結束後快捷鍵恢復(確認 compositionStarted 會重置,不會永遠擋住)
+        await page.keyboard.press('Alt+[');
+        await settle(80, 600);
+        const r3after = await docText();
+        check('#46 返工 組字結束後 Alt+[ 恢復插入', r3after !== r3before && r3after.includes('「」'), JSON.stringify(r3after.slice(-40)));
+        await undoOnce();
+
+        // 3. 過期字數回覆:選取變更/取消後,已發出的 WordCount 回覆不得寫入;取消選取立刻清空
+        await page.click('.cm-content'); // 取消選取,顯示清空
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 3000});
+        await page.evaluate(() => {
+            window.__perkinsWCOrig = window.go.main.App.WordCount;
+            window.go.main.App.WordCount = (t, ...rest) => {
+                if (t === '森林深處') return new Promise(resolve => { window.__perkinsWCGate = resolve; });
+                return window.__perkinsWCOrig(t, ...rest);
+            };
+        });
+        await endCursor();
+        await page.keyboard.type('森林深處');
+        await settle(80, 400);
+        await selectLast(4);
+        await page.waitForTimeout(1200); // 若未卡住,不卡顯示早就出現
+        check('#46 返工 WordCount 卡住期間不顯示', !(await page.$('[data-testid=count-selection]')));
+        await page.evaluate(() => window.__perkinsWCGate(99));
+        await page.waitForSelector('[data-testid=count-selection]', {timeout: 3000});
+        const shown99 = (await page.textContent('[data-testid=count-selection]')).trim();
+        check('#46 返工 放行回覆後顯示卡住的值(管路正常)', shown99 === '已選 99 字', shown99);
+        // 取消選取:立刻清空;再重選、再取消後放行過期回覆,不得寫回
+        await page.click('.cm-content');
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 2000});
+        await endCursor();
+        await selectLast(4); // 新請求再次卡住
+        await page.waitForTimeout(400); // 確已過 250ms debounce,卡住的 WordCount 已發出
+        await page.click('.cm-content'); // 取消選取
+        await page.waitForSelector('[data-testid=count-selection]', {state: 'detached', timeout: 2000});
+        await page.evaluate(() => window.__perkinsWCGate(99)); // 放行過期回覆
+        await page.waitForTimeout(800);
+        check('#46 返工 取消選取後過期回覆不寫入', !(await page.$('[data-testid=count-selection]')));
+        await page.evaluate(() => { window.go.main.App.WordCount = window.__perkinsWCOrig; });
     },
 };

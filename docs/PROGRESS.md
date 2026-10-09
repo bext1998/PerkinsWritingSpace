@@ -1,5 +1,22 @@
 # PROGRESS.md
 
+## 2026-10-09 — PR #59 返工(codex 審查 3 項 Minor)
+
+- **插入自成一個復原步驟**:`insertPair`/`insertRaw` 的 dispatch 加 `annotations: isolateHistory.of('full')`,打字後立刻插入不再與前次輸入合併,一次 Ctrl+Z 只撤插入。E2E:打字後立刻 Alt+[ → Ctrl+Z 只撤插入、前面的字還在。
+- **IME 防護補組字初期**:組字開始後尚無文字變更時 `view.composing` 仍為 false;快捷鍵 handler 在 `preventDefault()` 前補查 `view.compositionStarted`(CM6 `inputState.composing >= 0`,組字結束會重置)/`event.isComposing`/`keyCode 229`,任一成立就不動作、不攔截;插入函式內層同步。E2E:模擬 `compositionstart` 後 Alt+[ 不插入,組字結束(`compositionend`)後恢復插入(確認不會永遠擋住)。
+- **選取字數過期回覆**:`Workspace.tsx` 加世代計數,取消選取或選取變更後,已發出的舊 `WordCount` 回覆不得寫入;取消選取立刻清空顯示。E2E:以受控延遲的 `WordCount` 綁定(只對選取文字「森林深處」卡住,比照 research R2)重現:放行前不顯示 → 放行顯示(管路正常)→ 取消後放行過期回覆不寫入。
+- **破壞驗證**:移除 `isolateHistory` → 合併撤銷重現 FAIL;移除 IME 防護(keydown 與插入函式兩層)→ 組字初期插入 FAIL;移除世代核對 → 過期回覆寫入 FAIL(需在取消前確保卡住的請求已過 debounce 發出,否則無過期回覆可驗)。還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)412/412 passed(基準 405 + 7),略過 8 項,158s。
+
+## 2026-10-09 — 全形標點插入 + 選取字數(Issue #46 前半)
+
+- **標點插入**(`Editor.tsx`):作者決定打字時不做任何自動改寫,只以快捷鍵與右鍵選單「插入標點」子選單(沿用快速指令子選單樣式與往左開規則)插入:`Alt+[`「」、`Alt+Shift+[`『』(無選取游標在中間;有選取包住、選取保持在內文)、`Alt+.` `……`、`Alt+-` `——`(取代選取);IME 組字中(`view.composing`)不動作。插入為單一 dispatch,走正常 dirty/存檔,Ctrl+Z 一次復原。
+- **實作細節**:快捷鍵不用 `keymap.of`——Windows Chromium 在 Alt 組合下 `event.key` 不反映 Shift(`Alt+Shift+[` 的 key 仍是 `[`),CM 的 key 名會把兩者視為同一鍵(實測 `Alt+Shift+[` 被當成 `Alt-[` 插了「」);改用 `EditorView.domEventHandlers` 以實體鍵 `event.code` + `shiftKey` 區分,並只在編輯器內容聚焦時處理。衝突檢查:defaultKeymap/historyKeymap/searchKeymap 與 CM 預設無這四個 Alt 組合(既有僅 `Alt-u` redo)。
+- **選取字數**(`Workspace.tsx`):編輯器有選取時狀態列在本章字數旁顯示「已選 N 字」(`count-selection`),N 用與本章字數同一套 `WordCount` 綁定、同樣 250ms debounce,不在前端另算;沒有選取不顯示;640 寬 `shrink-0 whitespace-nowrap` 不溢出。
+- **E2E(search-editor,22 項,E2E_SKIP_AI=1)**:專用章節;4 個快捷鍵(無選取游標位置、有選取包住並保留選取)、各 Ctrl+Z 一次復原、右鍵選單 4 項與快捷鍵標示、靠右緣子選單往左開、選取字數與 `WordCount(該段)` 同值、取消選取消失、640 寬狀態列不溢出。注意:Windows Chromium 右鍵會先把游標移到點擊處(原生 contenteditable 行為),選單插入落在右鍵點擊處,以累積連續片段驗證。
+- **破壞驗證**:移除快捷鍵 handler → 12 項快捷鍵檢查 FAIL;選單項目改為不動作 → 4 項選單插入檢查 FAIL;選取字數固定值 → 同值檢查 FAIL;無條件渲染 span → 「取消選取後消失」的 detach 等待逾時(組中斷,守住存在性);還原後全綠。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)405/405 passed(基準 383 + 22),略過 8 項,153s。`tsc --noEmit`、`npm run build` 通過。後半(段落上移/下移、場景標題插入與跳轉)未做。
+
 ## 2026-10-09 — reloadCurrent 讀檔期間切章競態修復(Issue #56)
 
 - `Workspace.reloadCurrent`(接受提案、版本還原後的重載)在 `await ReadFile` 後核對 `latest.current.current` 仍是發起時的檔案,已切到別章就不套用(不 setText、不 setFlashP、不清 dirty、不重掛);比照 `openFile` 的 stale 檢查與 `deleteCategory` 重讀的寫法。原本讀檔期間切章會把 A 章內容放進 B 章編輯器,之後存檔寫進 B 章檔案(資料遺失風險)。
