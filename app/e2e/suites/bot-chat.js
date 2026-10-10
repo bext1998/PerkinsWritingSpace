@@ -70,9 +70,11 @@ module.exports = {
         check('A1 提案顯示前稿件未被改動', read(ch1) === before);
         await shot('05-proposal');
         if (hasProposal) {
-            await page.fill('[data-testid=proposal-edit]', '夜色濃得化不開。');
+            await page.click('[data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.fill('[data-testid=review-edit]', '夜色濃得化不開。');
             check('編輯後提示將寫入作者版本', (await page.textContent('[data-testid=proposal]')).includes('寫入你的版本'));
-            await page.click('[data-testid=accept]');
+            await page.click('[data-testid=review-accept]');
             await page.waitForTimeout(800);
             const disk = read(ch1);
             check('B4 接受後寫入作者編輯的版本', disk.includes('艾莉絲走進森林。夜色濃得化不開。她很害怕。'), JSON.stringify(disk.slice(0, 80)));

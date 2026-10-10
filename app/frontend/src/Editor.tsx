@@ -22,6 +22,8 @@ export interface EditorHandle {
     scrollToLine: (line: number) => void;
     selection: () => Selection | null;
     focus: () => void;
+    // 捲到某段並短暫標示(審查視窗「在稿件中顯示」,#45 方案 A);不改選取,選取不會因此變成附加內容
+    reveal: (from: number, to: number) => void;
     // 開啟搜尋面板;replace=true 時展開並聚焦「取代為」欄(全域 Ctrl+F/Ctrl+H 用,§16 第 24 項第一層)
     openSearch: (replace?: boolean) => void;
 }
@@ -203,6 +205,7 @@ interface Props {
     posStore?: Map<string, EditorPos>;
     // 接受提案後重掛時短暫標示的範圍(#45 a);只在掛載時讀取
     flash?: {from: number; to: number} | null;
+    reveal?: {from: number; to: number} | null; // 掛載時捲到此處並短暫標示(#45 方案 A「在稿件中顯示」別章時)
     // 唯讀(接受提案、版本還原期間,#56):可捲動、選取,不能修改;程式直接送出的修改(右鍵剪下/貼上)也擋下
     readOnly?: boolean;
 }
@@ -504,12 +507,15 @@ const openReplace: Command = view => {
 };
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
-const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, readOnly = false}, ref) {
+const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false}, ref) {
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
+    const revealTimer = useRef(0);
     const readOnlyComp = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const onAskAIRef = useRef(onAskAI); // 快捷鍵在掛載時建立,要呼叫最新的 onAskAI
+    onAskAIRef.current = onAskAI;
     const onSelectRef = useRef(onSelect);
     onSelectRef.current = onSelect;
     const [menu, setMenu] = useState<{x: number; y: number; sel: Selection | null} | null>(null);
@@ -518,6 +524,16 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const [paraSub, setParaSub] = useState(false); // 右鍵選單的「段落與場景」子選單(#46 後半)
     const [current, setCurrent] = useState<Selection | null>(null); // 最新選取(浮動列用)
     const [subBar, setSubBar] = useState(false); // 浮動列的段落指令子選單
+
+    // 捲到某段並短暫標示,不改選取(#45 方案 A)
+    const revealIn = (v: EditorView, from: number, to: number) => {
+        cancelRestore(); // 明確定位:位置還原不得把畫面拉回
+        const len = v.state.doc.length;
+        const r = {from: Math.min(from, len), to: Math.min(to, len)};
+        v.dispatch({effects: [EditorView.scrollIntoView(r.from, {y: 'center'}), setAiFlash.of(r)]});
+        clearTimeout(revealTimer.current);
+        revealTimer.current = window.setTimeout(() => { if (view.current === v) v.dispatch({effects: setAiFlash.of(null)}); }, AI_FLASH_MS);
+    };
 
     const currentSelection = (): Selection | null => {
         const v = view.current;
@@ -554,6 +570,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         },
         selection: currentSelection,
         focus: () => view.current?.focus(),
+        reveal: (from: number, to: number) => { if (view.current) revealIn(view.current, from, to); },
     }));
 
     // 位置記憶與還原(§16 第 24 項第一層):選取/捲動變動時寫入 posStore(只存記憶體),
@@ -599,6 +616,14 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     paperExtensions(),
                     // #46 後半的綁定要放在 defaultKeymap 前,才能取代它的 Alt+↑/↓(moveLineUp/Down)
                     keymap.of([
+                        // 選取後直接詢問 Perkins Bot(#45 c);沒有選取時不攔,交給預設綁定
+                        {key: 'Mod-Shift-Enter', run: v => {
+                            if (imeActive(v)) return true;
+                            const {from, to} = v.state.selection.main;
+                            if (from === to) return false;
+                            onAskAIRef.current({text: v.state.sliceDoc(from, to), from, to});
+                            return true;
+                        }},
                         {key: 'Alt-ArrowUp', run: v => moveParagraph(v, true)},
                         {key: 'Alt-ArrowDown', run: v => moveParagraph(v, false)},
                         {key: 'Alt-Enter', run: insertSceneHeading},
@@ -723,9 +748,11 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             v.dispatch({effects: setAiFlash.of({from: Math.min(flash.from, len), to: Math.min(flash.to, len)})});
             flashTimer = window.setTimeout(() => v.dispatch({effects: setAiFlash.of(null)}), AI_FLASH_MS);
         }
+        if (reveal) revealIn(v, reveal.from, reveal.to);
 
         return () => {
             clearTimeout(flashTimer);
+            clearTimeout(revealTimer.current);
             cancelRestore(); // 卸載時終止還原 rAF
             ro.disconnect();
             cancelAnimationFrame(scrollRaf);
@@ -799,7 +826,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             {current && (
                 <div data-testid="selection-bar"
                      className="absolute right-3 top-2 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 shadow-lg">
-                    <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask"
+                    <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask" title="詢問這段(Ctrl+Shift+Enter)"
                             onClick={() => { const s = currentSelection(); if (s) onAskAI(s); }}>
                         <Bot className="h-3.5 w-3.5 text-primary"/>詢問這段
                     </button>
@@ -827,7 +854,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                      onClick={e => e.stopPropagation()}>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} data-testid="ask-ai"
                          onClick={() => { if (menu.sel) { onAskAI(menu.sel); setMenu(null); } }}>
-                        <Bot className="h-4 w-4 text-primary"/>詢問 Perkins Bot…
+                        <Bot className="h-4 w-4 text-primary"/>詢問 Perkins Bot…<span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+Shift+Enter</span>
                     </div>
                     <div className={`relative ${item} ${menu.sel ? '' : disabled}`}
                          onMouseEnter={() => setSub(true)} onMouseLeave={() => setSub(false)}>
