@@ -230,6 +230,10 @@ export function SetChapterStatus(arg1, arg2) {
   return window['go']['main']['App']['SetChapterStatus'](arg1, arg2);
 }
 
+export function SetPaperLayout(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetPaperLayout'](arg1, arg2, arg3);
+}
+
 export function SetResearch(arg1) {
   return window['go']['main']['App']['SetResearch'](arg1);
 }

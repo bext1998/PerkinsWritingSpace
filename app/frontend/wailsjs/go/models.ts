@@ -284,6 +284,9 @@ export namespace main {
 	    active: string;
 	    platforms: publish.Platform[];
 	    theme: string;
+	    paperWidth: string;
+	    paperFontSize: string;
+	    paperParaGap: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsView(source);
@@ -295,6 +298,9 @@ export namespace main {
 	        this.active = source["active"];
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
 	        this.theme = source["theme"];
+	        this.paperWidth = source["paperWidth"];
+	        this.paperFontSize = source["paperFontSize"];
+	        this.paperParaGap = source["paperParaGap"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

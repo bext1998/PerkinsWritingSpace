@@ -1,5 +1,17 @@
 # PROGRESS.md
 
+## 2026-10-11 — 稿紙化第二階段(二):版心寬度、字級、段距可調(Issue #44)
+
+- **設定(作者全域偏好,不是作品設定)**:入口與主題(夜間書房／白紙)同一處——設定頁導覽欄底部「稿紙版面」(`data-testid=paper-layout`)三個預設檔下拉,同一種保存方式(全域 `settings.json` 的 `paperWidth`/`paperFontSize`/`paperParaGap`,綁定 `SetPaperLayout`)。預設檔:版心寬度 36/44/52rem(預設 44rem)、字級 0.95/1.08/1.25/1.45rem(預設 1.08rem)、段距 0.35/0.7/1.15em(預設 0.7em);不做任意數值輸入,Go 端 `Settings.SetPaperLayout` 只接受預設檔(任一項不是就整筆不變更),載入與存回都會把非預設檔的值(舊檔沒欄位、被手改壞)正規化回預設,其他欄位照原樣保留。
+- **套用**:前端 CSS 變數 `--paper-width`/`--paper-font-size`/`--paper-gap`(新檔 `app/frontend/src/paperLayout.ts`,App 啟動載入、變更立即套用到開著的編輯器,不需重開);`style.css` 與 `paper.ts` 以 `var()` 取用,預設值等於第一階段的畫面(作者沒動設定時外觀完全相同)。標題(1.5em/1.2em)與場景分隔 ◇◇◇ 用 `em` 等比縮放,段首縮排維持 `2em` 隨字級變;只改呈現,檔案內容、存檔、匯出與 Enter/Backspace 行為全部不變。
+- **游標穩定保護**:`Editor.tsx` 的縮放保護原本只觀察 host 尺寸,字級/段距/版心變更時內容高度變了但 host 不變,不會觸發;一併觀察 `contentDOM` 高度後,字級調大時原本可見的游標不會被推出畫面(游標已捲出畫面閱讀時仍不拉回,規則不變)。
+- **實作上發現(cm 的限制)**:`.cm-scroller` 是 flex 容器,`.cm-content` 寫 `width` 會被 flex-shrink 壓回可用寬度(實測 52rem 在 640 寬仍收成 308px,不會溢出);要破壞驗證「640 不出水平捲軸」得用 `min-width` 才造得出溢出。版心本身用 `max-width` 就是正確做法(視窗比版心窄時照常填滿可用寬度)。
+- **Go 測試 2 項**(`internal/settings`):舊設定檔沒有新欄位 → 載入預設值且 theme/recent 等其他欄位不變、存回後檔內含三個新欄位;值不是預設檔 → 回到預設;`SetPaperLayout` 拒絕任意數值且被拒時不變更。
+- **E2E(`paper` 組 +10 項)**:預設值等於第一階段畫面(計算後字級/段距/版心/縮排)、字級設定改變正文計算後字級(立即套用,不用重開)、標題與場景分隔行相對大小等比、段首縮排 2em、段距改變、版心改變、重開編輯器後三項仍保持(`page.reload` + `GetSettings` 驗存回)、640 寬(大字級+寬版心)無水平捲軸且版心填滿可用寬度、字級調大時游標穩定保護成立、回到預設值後畫面與改前一致。截圖 4 張(`44-paper-layout-dark-big`/`-settings`/`-light-big`/`-640`,深/淺各一含調大字級;另以像素取樣核對主題與設定頁內容,避免讀取順序錯覺)。
+- **破壞驗證 11 輪**(拿掉對應實作 → 對應檢查 FAIL → 還原):①預設檔改值(settings.go)→ 預設值與回到預設兩項 FAIL;②字級寫死 `1.08rem`(style.css)→ 字級改變 FAIL;③標題改固定 px(Editor.tsx/style.css)→ 等比縮放 FAIL;④縮排改 `2rem`(paper.ts)→ 縮排 2em 與預設值兩項 FAIL;⑤段距寫死 `0.7em` → 段距 FAIL;⑥版心寫死 `44rem` → 版心 FAIL;⑦`SetPaperLayout` 不存回(app.go,需重啟 wails dev)→ 重開後保持 FAIL;⑧`.cm-content` 加 `min-width: 52rem` → 640 水平捲軸與版心兩項 FAIL;⑨拿掉 `ro.observe(v.contentDOM)` → 游標穩定 FAIL;⑩回到預設值不套用(paperLayout.ts)→ 回到預設一致 FAIL;⑪Load 不設預設值 → Go 測試 FAIL。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**509/509 passed**,略過 8 項,197s(= 上一輪基準 499 + 本次 10,零 FAIL、既有組檢查數未變)。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
+- **未做(第二階段)**:名稱/別名比對提示、打字機捲動、專注模式。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。

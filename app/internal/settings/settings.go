@@ -50,15 +50,63 @@ type Settings struct {
 	Recent    []Recent          `json:"recent"`
 	Platforms []publish.Platform `json:"platforms"`
 	Theme     string            `json:"theme"` // dark | light
+
+	// 稿紙化第二階段(二)(SPEC §17.3):編輯區版面的作者全域偏好(與主題同一處),不是作品設定
+	PaperWidth    string `json:"paperWidth"`    // 版心寬度(正文欄最大寬度)
+	PaperFontSize string `json:"paperFontSize"` // 字級(正文字體大小)
+	PaperParaGap  string `json:"paperParaGap"`  // 段距(段落之間的距離)
+}
+
+// 稿紙版面只有少數幾個預設檔(不做任意數值輸入),值就是前端套用的 CSS 值;
+// 預設值等於稿紙化第一階段的畫面(44rem、1.08rem、0.7em)。允許值與前端
+// app/frontend/src/paperLayout.ts 的選項一致。
+const (
+	PaperWidthDefault    = "44rem"
+	PaperFontSizeDefault = "1.08rem"
+	PaperParaGapDefault  = "0.7em"
+)
+
+var (
+	PaperWidths    = []string{"36rem", PaperWidthDefault, "52rem"}
+	PaperFontSizes = []string{"0.95rem", PaperFontSizeDefault, "1.25rem", "1.45rem"}
+	PaperParaGaps  = []string{"0.35em", PaperParaGapDefault, "1.15em"}
+)
+
+// paperPreset 只接受預設檔;不是預設檔(舊檔、被手改壞的值)一律回到預設。
+func paperPreset(v string, allowed []string, def string) string {
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	return def
+}
+
+// SetPaperLayout 由前端的「稿紙版面」設定呼叫;三項都只接受預設檔,任一不是就整筆不變更。
+func (v *Settings) SetPaperLayout(width, fontSize, paraGap string) error {
+	if paperPreset(width, PaperWidths, "") == "" {
+		return fmt.Errorf("未知的版心寬度")
+	}
+	if paperPreset(fontSize, PaperFontSizes, "") == "" {
+		return fmt.Errorf("未知的字級")
+	}
+	if paperPreset(paraGap, PaperParaGaps, "") == "" {
+		return fmt.Errorf("未知的段距")
+	}
+	v.PaperWidth, v.PaperFontSize, v.PaperParaGap = width, fontSize, paraGap
+	return nil
 }
 
 func defaults() Settings {
 	return Settings{
-		Profiles:  []Profile{{ID: "default", Name: "本機 LM Studio", BaseURL: "http://localhost:1234/v1", ContextTokens: DefaultContextTokens}},
-		Active:    "default",
-		Recent:    []Recent{},
-		Platforms: publish.Presets(),
-		Theme:     "dark",
+		Profiles:      []Profile{{ID: "default", Name: "本機 LM Studio", BaseURL: "http://localhost:1234/v1", ContextTokens: DefaultContextTokens}},
+		Active:        "default",
+		Recent:        []Recent{},
+		Platforms:     publish.Presets(),
+		Theme:         "dark",
+		PaperWidth:    PaperWidthDefault,
+		PaperFontSize: PaperFontSizeDefault,
+		PaperParaGap:  PaperParaGapDefault,
 	}
 }
 
@@ -109,6 +157,10 @@ func (s *Store) Load() Settings {
 	if raw.Theme == "" {
 		raw.Theme = out.Theme
 	}
+	// 舊設定檔沒有這三個欄位(或值不是預設檔)時回到預設,其他欄位照原樣保留
+	raw.PaperWidth = paperPreset(raw.PaperWidth, PaperWidths, out.PaperWidth)
+	raw.PaperFontSize = paperPreset(raw.PaperFontSize, PaperFontSizes, out.PaperFontSize)
+	raw.PaperParaGap = paperPreset(raw.PaperParaGap, PaperParaGaps, out.PaperParaGap)
 	return raw
 }
 
@@ -117,6 +169,10 @@ func (s *Store) Save(v Settings) error {
 		return err
 	}
 	v.BaseURL, v.Model = "", ""
+	// 存回時正規化稿紙版面:設定檔裡永遠是有效的預設檔(直接呼叫 Save 的測試與舊資料也一樣)
+	v.PaperWidth = paperPreset(v.PaperWidth, PaperWidths, PaperWidthDefault)
+	v.PaperFontSize = paperPreset(v.PaperFontSize, PaperFontSizes, PaperFontSizeDefault)
+	v.PaperParaGap = paperPreset(v.PaperParaGap, PaperParaGaps, PaperParaGapDefault)
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return os.WriteFile(filepath.Join(s.Dir, "settings.json"), b, 0o600)
 }

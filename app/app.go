@@ -793,11 +793,16 @@ type SettingsView struct {
 	Active    string            `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
 	Theme     string            `json:"theme"`
+	// 稿紙版面(SPEC §17.3):版心寬度、字級、段距的預設檔值
+	PaperWidth    string `json:"paperWidth"`
+	PaperFontSize string `json:"paperFontSize"`
+	PaperParaGap  string `json:"paperParaGap"`
 }
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Profiles: []ProfileView{}}
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Profiles: []ProfileView{},
+		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL)})
@@ -879,6 +884,16 @@ func (a *App) SetTheme(theme string) error {
 	}
 	s := a.store.Load()
 	s.Theme = theme
+	return a.store.Save(s)
+}
+
+// SetPaperLayout 稿紙版面(版心寬度、字級、段距,只接受預設檔):與主題同一種保存方式,
+// 前端收到變更立即套用到開著的編輯器,不需重開。
+func (a *App) SetPaperLayout(width, fontSize, paraGap string) error {
+	s := a.store.Load()
+	if err := s.SetPaperLayout(width, fontSize, paraGap); err != nil {
+		return err
+	}
 	return a.store.Save(s)
 }
 

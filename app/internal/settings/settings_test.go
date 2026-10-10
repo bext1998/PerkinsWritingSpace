@@ -160,3 +160,68 @@ func TestValidProfileID(t *testing.T) {
 		t.Error("應接受")
 	}
 }
+
+// 意圖(稿紙化第二階段(二),SPEC §17.3):舊設定檔沒有稿紙版面欄位時載入預設值,
+// 且載入與存回都不會清掉其他欄位;不是預設檔的值(被手改壞)一律回到預設。
+func TestPaperLayoutDefaultsAndLegacyFile(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st.Dir, 0o755)
+	const legacy = `{
+  "profiles": [{"id": "default", "name": "本機", "baseUrl": "http://localhost:1234/v1", "model": "qwen", "contextTokens": 8192}],
+  "active": "default",
+  "recent": [{"path": "D:/novels/長夜", "name": "長夜", "openedAt": "2026-10-10T00:00:00Z"}],
+  "theme": "light"
+}`
+	if err := os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v := st.Load()
+	if v.PaperWidth != PaperWidthDefault || v.PaperFontSize != PaperFontSizeDefault || v.PaperParaGap != PaperParaGapDefault {
+		t.Fatalf("舊設定檔應載入稿紙版面預設值: %q %q %q", v.PaperWidth, v.PaperFontSize, v.PaperParaGap)
+	}
+	if v.Theme != "light" || len(v.Recent) != 1 || v.Recent[0].Path != "D:/novels/長夜" {
+		t.Fatalf("其他欄位不得被清掉或改寫: %+v", v)
+	}
+
+	// 存回:稿紙版面欄位要寫進設定檔,其他欄位照舊
+	if err := st.Save(v); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(st.Dir, "settings.json"))
+	for _, want := range []string{`"paperWidth": "44rem"`, `"paperFontSize": "1.08rem"`, `"paperParaGap": "0.7em"`, `"theme": "light"`, "D:/novels/長夜"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("settings.json 應含 %s:\n%s", want, b)
+		}
+	}
+	if got := st.Load(); got.PaperWidth != PaperWidthDefault || got.Theme != "light" || len(got.Recent) != 1 {
+		t.Fatalf("存回後載入應一致: %+v", got)
+	}
+
+	// 值不是預設檔(被手改壞)時回到預設,而不是照單全收
+	os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(`{"paperWidth":"99cm","paperFontSize":"huge","paperParaGap":""}`), 0o600)
+	got := st.Load()
+	if got.PaperWidth != PaperWidthDefault || got.PaperFontSize != PaperFontSizeDefault || got.PaperParaGap != PaperParaGapDefault {
+		t.Fatalf("非預設檔的值應回到預設: %q %q %q", got.PaperWidth, got.PaperFontSize, got.PaperParaGap)
+	}
+}
+
+// 意圖:稿紙版面不做任意數值輸入——setter 只接受預設檔,任一項不是就整筆不變更。
+func TestSetPaperLayoutOnlyAcceptsPresets(t *testing.T) {
+	var v Settings
+	v.PaperWidth, v.PaperFontSize, v.PaperParaGap = PaperWidthDefault, PaperFontSizeDefault, PaperParaGapDefault
+	if err := v.SetPaperLayout("36rem", "1.25rem", "1.15em"); err != nil {
+		t.Fatalf("預設檔應可設定: %v", err)
+	}
+	if v.PaperWidth != "36rem" || v.PaperFontSize != "1.25rem" || v.PaperParaGap != "1.15em" {
+		t.Fatalf("應寫入預設檔值: %+v", v)
+	}
+	for _, bad := range [][]string{{"99rem", "1.25rem", "1.15em"}, {"36rem", "16px", "1.15em"}, {"36rem", "1.25rem", "2"}} {
+		if err := v.SetPaperLayout(bad[0], bad[1], bad[2]); err == nil {
+			t.Errorf("應拒絕任意數值 %v", bad)
+		}
+		if v.PaperWidth != "36rem" || v.PaperFontSize != "1.25rem" || v.PaperParaGap != "1.15em" {
+			t.Fatalf("被拒絕時不得變更: %+v", v)
+		}
+	}
+}

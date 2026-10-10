@@ -336,6 +336,143 @@ module.exports = {
         await page.click('[data-testid=close-settings]');
         await settle(120, 800);
 
+        // ---- 第二階段(二):版心寬度、字級、段距可調(Issue #44,SPEC §17.3) ----
+        // 作者的全域偏好(與主題同一處設定、同一種保存方式,不是作品設定);量測 computed style 與實際幾何。
+        // 預設值必須等於第一階段的畫面;標題/場景分隔行用 em 等比縮放;段首縮排維持兩個全形字寬。
+        const LDOC = '# 版面測試\n\n第一段內容。\n\n***\n\n第二段內容。\n\n第三段內容。\n';
+        const layout = () => page.evaluate(() => {
+            const sc = document.querySelector('.cm-scroller');
+            const content = document.querySelector('.cm-content');
+            const lines = [...document.querySelectorAll('.cm-content .cm-line')];
+            const para = lines.find(l => l.classList.contains('cm-paper-para'));
+            const h1 = lines.find(l => l.classList.contains('cm-paper-h1'));
+            const mark = document.querySelector('.cm-paper-break-mark');
+            const g = e => e && getComputedStyle(e);
+            const maxIn = e => e ? Math.max(...[e, ...e.querySelectorAll('*')].map(x => parseFloat(getComputedStyle(x).fontSize))) : null;
+            return {
+                rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+                body: parseFloat(g(sc).fontSize),
+                gap: parseFloat(g(para).paddingTop),
+                indent: parseFloat(g(para).textIndent),
+                maxW: parseFloat(g(content).maxWidth),
+                w: Math.round(content.getBoundingClientRect().width),
+                h1: maxIn(h1), // 標題(含內部 span)的最大字級:1.5em → 要跟著正文等比縮放
+                mark: mark ? parseFloat(g(mark).fontSize) : null, // 場景分隔 ◇◇◇:與正文同大小
+            };
+        });
+        const near = (a, b, eps = 0.05) => typeof a === 'number' && Math.abs(a - b) <= eps;
+        // 設定頁導覽欄底部的三個預設檔下拉(選項有穩定的 data-testid,不靠顯示文字)
+        const pickPaper = async (testid, value) => {
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click(`[data-testid="${testid}"]`);
+            await page.click(`[data-testid="${testid}-opt-${value}"]`);
+            await page.click('[data-testid=close-settings]');
+            await settle(120, 900);
+        };
+
+        await setDoc(LDOC);
+        const m0 = await layout();
+        check('#44 稿紙版面預設值等於第一階段畫面(字級 1.08rem、段距 0.7em、版心 44rem)',
+            near(m0.body, 1.08 * m0.rem, 0.1) && near(m0.gap / m0.body, 0.7, 0.01) && near(m0.maxW, 44 * m0.rem, 1) &&
+            near(m0.indent, 2 * m0.body, 0.5) && near(m0.h1 / m0.body, 1.5, 0.02) && near(m0.mark / m0.body, 1, 0.02),
+            JSON.stringify(m0));
+
+        // 字級:立即套用到開著的編輯器(不用重開);標題與場景分隔行等比縮放;段首縮排維持 2em
+        await pickPaper('paper-font-size', '1.45rem');
+        const m1 = await layout();
+        check('#44 字級設定改變正文計算後字級(立即套用,不用重開)',
+            m1.body > m0.body + 3 && near(m1.body, 1.45 * m1.rem, 0.1), JSON.stringify({m0, m1}));
+        check('#44 標題與場景分隔行的相對大小跟著字級等比縮放',
+            near(m1.h1 / m1.body, 1.5, 0.02) && near(m1.mark / m1.body, 1, 0.02) &&
+            near(m1.h1 / m1.body, m0.h1 / m0.body, 0.01) && near(m1.mark / m1.body, m0.mark / m0.body, 0.01),
+            JSON.stringify({m0, m1}));
+        check('#44 字級調大時段首縮排維持兩個全形字寬(2em)',
+            near(m1.indent, 2 * m1.body, 0.5), JSON.stringify(m1));
+
+        // 段距:段落之間的距離(cm-paper-para 的 padding-top)
+        await pickPaper('paper-gap', '1.15em');
+        const m2 = await layout();
+        check('#44 段距設定改變段落之間的距離',
+            m2.gap > m1.gap + 1 && near(m2.gap / m2.body, 1.15, 0.01), JSON.stringify({m1, m2}));
+
+        // 版心寬度:正文欄的最大寬度(cm-content 的 max-width)
+        await pickPaper('paper-width', '52rem');
+        const m3 = await layout();
+        check('#44 版心寬度設定改變正文欄最大寬度',
+            near(m3.maxW, 52 * m3.rem, 1) && m3.w > m1.w + 40, JSON.stringify({m1, m3}));
+
+        // 重開編輯器(reload 整個前端)後仍保持:設定已存回 settings.json,啟動時重新載入
+        await page.reload();
+        await settle(250, 2500);
+        await ensureProject('第一章', 'manuscript');
+        await openTestFile(LDOC);
+        const m4 = await layout();
+        const saved = await page.evaluate(() => window.go.main.App.GetSettings().then(s => ({w: s.paperWidth, f: s.paperFontSize, g: s.paperParaGap})));
+        check('#44 重開編輯器後版心寬度、字級、段距仍保持(設定已存回)',
+            near(m4.body, m3.body, 0.1) && near(m4.gap, m3.gap, 0.5) && near(m4.maxW, m3.maxW, 1) &&
+            saved.w === '52rem' && saved.f === '1.45rem' && saved.g === '1.15em', JSON.stringify({m4, saved}));
+
+        // 640 寬(半螢幕)在大字級+寬版心下也不出水平捲軸:版心比視窗寬時照常填滿可用寬度
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(250, 1500);
+        check('#44 640 寬(大字級、寬版心)不出現水平捲軸,版心填滿可用寬度',
+            await page.evaluate(() => {
+                const s = document.querySelector('.cm-scroller');
+                const c = document.querySelector('.cm-content');
+                const r = c.getBoundingClientRect();
+                return s.scrollWidth <= s.clientWidth + 1 && r.right <= window.innerWidth + 1 && r.width < parseFloat(getComputedStyle(c).maxWidth);
+            }), JSON.stringify(await layout()));
+        await shot('44-paper-layout-640');
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(250, 1200);
+
+        // 字級調大時游標穩定保護仍成立(Editor.tsx 的縮放保護):長文捲到結尾、游標可見,
+        // 字級調大後游標不得被推出畫面
+        await setDoc(Array.from({length: 120}, (_, i) => `第${i + 1}段長度測試內容,用來把版面擑長。`).join('\n\n') + '\n');
+        await pickPaper('paper-font-size', '0.95rem');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await settle(120, 800);
+        const visBefore = await page.evaluate(() => window.__perkinsEditor.cursorVisible());
+        await pickPaper('paper-font-size', '1.45rem');
+        await settle(200, 1000);
+        const visAfter = await page.evaluate(() => window.__perkinsEditor.cursorVisible());
+        check('#44 字級調大時游標穩定保護仍成立(原本可見的游標不得被推出畫面)',
+            visBefore === true && visAfter === true, JSON.stringify({visBefore, visAfter}));
+
+        // 回到預設值:畫面與改前完全一致(作者沒動設定時外觀與第一階段相同)
+        await pickPaper('paper-font-size', '1.08rem');
+        await pickPaper('paper-gap', '0.7em');
+        await pickPaper('paper-width', '44rem');
+        await setDoc(LDOC);
+        const m6 = await layout();
+        check('#44 回到預設值後畫面與改前一致(字級/段距/版心/縮排)',
+            near(m6.body, 1.08 * m6.rem, 0.1) && near(m6.gap / m6.body, 0.7, 0.01) && near(m6.maxW, 44 * m6.rem, 1) &&
+            near(m6.body, m0.body, 0.1) && near(m6.gap, m0.gap, 0.5) &&
+            near(m6.indent, m0.indent, 0.5) && near(m6.h1, m0.h1, 0.5) && near(m6.mark, m0.mark, 0.5),
+            JSON.stringify({m0, m6}));
+
+        // 截圖:深/淺各一(含調大字級的樣子)與設定入口
+        await pickPaper('paper-font-size', '1.25rem');
+        await pickPaper('paper-gap', '1.15em');
+        await shot('44-paper-layout-dark-big');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await shot('44-paper-layout-settings');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await settle(120, 900);
+        await shot('44-paper-layout-light-big');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await settle(120, 800);
+        // 還原預設(後面的組與量測不受影響)
+        await pickPaper('paper-font-size', '1.08rem');
+        await pickPaper('paper-gap', '0.7em');
+
         // 清理:刪掉專用檔並把章節列還原(後面的組會數章節數量)
         await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
         await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});
