@@ -5,6 +5,7 @@
 package health
 
 import (
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -45,7 +46,8 @@ type Report struct {
 	CheckedAt string  `json:"checkedAt"` // RFC3339;介面顯示檢查時間
 }
 
-// Check 讀過整個作品後回報問題(依類型分組順序、同類型依路徑排序)。讀不到的檔案略過,不當成作品問題。
+// Check 讀過整個作品後回報問題(依類型分組順序、同類型依路徑排序)。
+// 任何一個檔案讀不到(被其他程式鎖住、沒有權限)就整體失敗並帶出路徑:沒讀到的檔案不能冒充「沒有問題」。
 func Check(p *project.Project) (Report, error) {
 	files, err := p.AllFiles()
 	if err != nil {
@@ -57,7 +59,7 @@ func Check(p *project.Project) (Report, error) {
 	for _, rel := range files {
 		text, err := p.ReadFile(rel)
 		if err != nil {
-			continue
+			return Report{}, fmt.Errorf("無法讀取 %s,檢查未完成:%w", rel, err)
 		}
 		texts[rel] = text
 		whole = append(whole, rel)
@@ -147,8 +149,9 @@ func summarySource(text string) string {
 
 // ---- 連結 ----
 
-// linkRe 抓 Markdown 的行內連結與圖片:[文字](目標)、![說明](目標)。參考式連結([文字][id])不在範圍內。
-var linkRe = regexp.MustCompile(`!?\[[^\]]*\]\(([^)]*)\)`)
+// linkOpenRe 找 Markdown 行內連結與圖片的開頭 [文字](、![說明](;目標由 linkDest 讀出
+// (括號可成對出現在目標內、可用 \( \) 跳脫)。參考式連結([文字][id])不在範圍內。
+var linkOpenRe = regexp.MustCompile(`!?\[[^\]]*\]\(`)
 
 // schemeRe 判斷帶 scheme 的目標(http:、https:、mailto:、data:…):不是作品內的檔案。
 var schemeRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
@@ -181,8 +184,9 @@ func linkTargets(text string) []string {
 		if fence {
 			continue
 		}
-		for _, m := range linkRe.FindAllStringSubmatch(line, -1) {
-			if t := cleanTarget(m[1]); t != "" {
+		line = stripCodeSpans(line)
+		for _, m := range linkOpenRe.FindAllStringIndex(line, -1) {
+			if t := linkDest(line[m[1]:]); t != "" {
 				out = append(out, t)
 			}
 		}
@@ -190,18 +194,82 @@ func linkTargets(text string) []string {
 	return out
 }
 
-// cleanTarget 去掉目標兩側空白、尖括號(<路徑 有空白> 的寫法)與 Markdown 的標題([x](路徑 "標題"))。
-func cleanTarget(raw string) string {
-	t := strings.TrimSpace(raw)
-	if strings.HasPrefix(t, "<") {
-		if i := strings.Index(t, ">"); i > 0 {
-			return strings.TrimSpace(t[1:i])
+// stripCodeSpans 拿掉行內程式碼(`…`、“…“):裡面的 [x](y) 只是文字範例,不是連結。
+// 開頭的反引號串要有等長的反引號串收尾才算;沒有收尾就照原樣保留。
+func stripCodeSpans(line string) string {
+	run := func(i int) int {
+		j := i
+		for j < len(line) && line[j] == '`' {
+			j++
+		}
+		return j - i
+	}
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		if line[i] != '`' {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		n, end := run(i), -1
+		for j := i + n; j < len(line); {
+			if line[j] != '`' {
+				j++
+				continue
+			}
+			m := run(j)
+			if m == n {
+				end = j + m
+				break
+			}
+			j += m
+		}
+		if end < 0 {
+			b.WriteString(line[i : i+n])
+			i += n
+			continue
+		}
+		i = end
+	}
+	return b.String()
+}
+
+// linkDest 讀出連結目標(s 從「](」之後開始):<路徑 有空白> 取尖括號內;否則讀到空白(後面是標題)
+// 或沒有成對的「)」為止,目標內成對的括號保留,\( \) 取括號字面。其餘的 \ 不當跳脫:
+// 作者在 Windows 上寫的 ..\章節.md 是路徑分隔(由 resolveLink 處理),照 CommonMark 把 \. 當跳脫會把路徑讀壞。
+// 沒有收尾的「)」就不是連結,回空字串。
+func linkDest(s string) string {
+	s = strings.TrimLeft(s, " \t")
+	if strings.HasPrefix(s, "<") {
+		if i := strings.IndexByte(s, '>'); i > 0 {
+			return strings.TrimSpace(s[1:i])
+		}
+		return ""
+	}
+	var b strings.Builder
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\\' && i+1 < len(s) && (s[i+1] == '(' || s[i+1] == ')'):
+			i++
+			b.WriteByte(s[i])
+		case c == ' ' || c == '\t':
+			return b.String()
+		case c == '(':
+			depth++
+			b.WriteByte(c)
+		case c == ')':
+			if depth == 0 {
+				return b.String()
+			}
+			depth--
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
 		}
 	}
-	if i := strings.IndexAny(t, " \t"); i >= 0 {
-		t = t[:i]
-	}
-	return strings.TrimSpace(t)
+	return ""
 }
 
 // resolveLink 把連結目標換成作品內的相對路徑;不是作品內的檔案時回 ok=false。
@@ -220,6 +288,8 @@ func resolveLink(rel, target string) (string, bool) {
 	if err != nil {
 		return "", false // 解不開的百分比序列:不猜
 	}
+	// Windows 把 \ 當路徑分隔(含 %5C 解碼出的):先換成 /,下面的 .. 邊界判斷才看得到它
+	dec = strings.ReplaceAll(dec, `\`, "/")
 	var dest string
 	if strings.HasPrefix(dec, "/") {
 		dest = path.Clean(strings.TrimPrefix(dec, "/"))

@@ -119,6 +119,7 @@ func TestBrokenLinkReportedAndOthersIgnored(t *testing.T) {
 	write("manuscript/第一章.md", "# 第一章\n\n正文。\n")
 	write("canon/好.md", "# 好\n")
 	write("manuscript/pic.png", "not really a png")
+	write("notes/好(1).md", "# 括號\n")
 	write("notes/連結.md", strings.Join([]string{
 		"# 連結",
 		"[好](../canon/好.md)",
@@ -131,6 +132,12 @@ func TestBrokenLinkReportedAndOthersIgnored(t *testing.T) {
 		"[壞](不存在.md)",
 		"[圖壞](沒有這張.png)",
 		"[標題](不存在2.md \"標題\")",
+		"[括號成對](好(1).md)", // PR #67 審查:目標內成對的括號是路徑的一部分
+		`[跳脫括號](好\(1\).md)`,
+		"範例 `[行內程式碼](行內不存在.md)` 只是文字", // 行內程式碼裡的不是連結
+		"範例 ``[雙反引號](雙不存在.md)`` 也是",
+		"[反斜線逃出](..%5C..%5Coutside.md)", // %5C 解碼成 Windows 分隔,不得繞過作品根判斷
+		`[反斜線逃出2](..\..\outside2.md)`,
 		"",
 		"```",
 		"[程式碼區塊裡](也不存在.md)",
@@ -140,6 +147,11 @@ func TestBrokenLinkReportedAndOthersIgnored(t *testing.T) {
 
 	rep := run(t, p)
 	wantPaths(t, rep, CheckBrokenLink, "notes/連結.md", "notes/連結.md", "notes/連結.md")
+	for _, target := range []string{"..%5C..%5Coutside.md", `..\..\outside.md`} {
+		if dest, ok := resolveLink("notes/連結.md", target); ok {
+			t.Fatalf("%s 逃出作品根卻被接受:%q", target, dest)
+		}
+	}
 	msgs := []string{}
 	for _, is := range rep.Issues {
 		if is.Check == CheckBrokenLink {
