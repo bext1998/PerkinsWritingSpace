@@ -105,7 +105,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 | `propose_patch(...)` | 建立 Proposal(不寫入稿件) |
 
 沒有寫檔、刪除、網路、shell 工具。任何不在名單的呼叫 → 拒絕並寫入 `audit.jsonl`。
-單次對話工具迭代上限預設 8,超過即停止並告知作者。
+單次對話工具迭代上限預設 8。到達上限即停止工具迴圈(硬上限):寫入 `iter_limit` 審計、發一則 notice 告知作者,再送一次**不提供任何工具**的收尾請求,告訴模型已達工具呼叫上限,請它就目前已知的內容回答作者,並說明停在哪裡、還缺什麼。收尾回覆當正常回覆處理(寫入對話歷史與研究記錄);收尾請求本身失敗(含取消)照錯誤路徑處理,不重試;模型仍回傳工具呼叫時忽略呼叫、只取文字內容。
 
 **上下文組裝**(確定性程式,不交給模型判斷):目前文件 + 選取範圍 + 作者勾選的 Canon 檔;送出前可預覽,雲端端點首次使用需顯示外流警告。
 
@@ -127,7 +127,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 | A2 | 檔案在提案後有變動時:原文仍原封不動且唯一 → 重新定位套用,作者在別處的編輯完整保留;原文被改動或不再唯一 → 標 `conflict`、不寫入 | 作者新寫的字被 AI 舊提案蓋掉 / 作者在別處打字就讓所有提案失效 |
 | A3 | `pending`/`rejected` Proposal 的內容不出現在後續請求的上下文中 | 未批准內容變成事實 |
 | A4 | 每次接受都先產生快照;還原後檔案雜湊與接受前一致 | 出錯後無法回復 |
-| A5 | 白名單外工具呼叫被拒並出現在 `audit.jsonl`;超過迭代上限即停止 | 越權與無限循環無痕跡 |
+| A5 | 白名單外工具呼叫被拒並出現在 `audit.jsonl`;超過迭代上限即停止工具迴圈,只回一次不帶工具的收尾回覆 | 越權與無限循環無痕跡 |
 | A6 | 送往模型的內容與預覽顯示的一致(不含未勾選的 Canon 檔) | 使用者以為沒送出的稿件外流 |
 | A7 | 金鑰不出現在專案資料夾任何檔案 | 金鑰隨稿件外洩 |
 | A8 | 以 LM Studio 本機模型完成:開檔 → 選取段落詢問 → 收到 Proposal → 接受 → 還原,全程可用 | MVP 的核心迴圈跑不通 |
@@ -232,7 +232,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **目的**:記錄作者的操作與 AI 的行為,作為研究資料。粒度「中等」:記錄作者的操作事件、送給 AI 的完整內容、AI 的回覆與工具呼叫、耗時;**不**記錄逐次打字的稿件變化。
 - **開關與預設**:**預設關閉**。作者在設定頁(作品分頁)手動開啟;開關存在 `perkins.json` 的 `research` 欄位,隨作品走。
 - **檔案位置與格式**:開啟後以 JSON Lines 逐行 append 到作品資料夾內的 `.perkins/research.jsonl`;**另開新檔**,`audit.jsonl`、`provenance.jsonl` 完全不動。每筆共同欄位:`ts`(RFC3339 含毫秒)、`event`、`session`(App 啟動時產生的隨機 id,區分不同使用時段),其餘欄位依事件而定。關閉時不建立任何檔案。
-- **記錄的事件**:`ask`(model、profile 是否 remote、mode、doc、selection 字數、attachments、summaries、sent(前置失敗未送出時 false)、requests(依序列出每次**實際送出**的請求快照與該次回覆,含 ask 與 compact 兩種用途;compact 請求另記 `ok` 表示壓縮是否成功套用,失敗也記錄但標 `ok:false`),AI 最終回覆、工具呼叫清單、本次建立的 proposalIds、耗時、結果 ok/error/cancelled;§16 第 21 項:問題來自快速指令(右鍵選單、選取浮動列、檢查面板)時另記 `quickId`(快速指令 id)與 `quickEdited`(布林,作者送出前改過快速指令帶入的問題文字;不記改前全文,沿 §12.8 不額外記錄原則),非快速指令來源不寫這兩個欄位);`proposal_accept`(proposal id、target、是否作者修改、原 replacement,作者修改時另記 final、耗時)與 `proposal_reject`(proposal id、target、耗時)分開記錄;`save`(path、存檔前後字數以 CountText 計算,不記內文;失敗時記 ok=false 與 error,不記 afterCount);`snapshot`/`restore`(label/id、檔案清單);`summary_draft`(chapter、耗時)/`summary_save`(chapter);`copy_chapter`/`export_volume`(章節/卷、平台 id);`open_file`(path)。
+- **記錄的事件**:`ask`(model、profile 是否 remote、mode、doc、selection 字數、attachments、summaries、sent(前置失敗未送出時 false)、requests(依序列出每次**實際送出**的請求快照與該次回覆,含 ask 與 compact 兩種用途;達迭代上限後的收尾請求(不帶工具)也是一筆 ask;compact 請求另記 `ok` 表示壓縮是否成功套用,失敗也記錄但標 `ok:false`),AI 最終回覆、工具呼叫清單、本次建立的 proposalIds、耗時、結果 ok/error/cancelled/iter_limit(iter_limit = 到達工具迭代上限、但已由收尾請求回覆;收尾請求本身失敗則照一般錯誤記 error/cancelled);§16 第 21 項:問題來自快速指令(右鍵選單、選取浮動列、檢查面板)時另記 `quickId`(快速指令 id)與 `quickEdited`(布林,作者送出前改過快速指令帶入的問題文字;不記改前全文,沿 §12.8 不額外記錄原則),非快速指令來源不寫這兩個欄位);`proposal_accept`(proposal id、target、是否作者修改、原 replacement,作者修改時另記 final、耗時)與 `proposal_reject`(proposal id、target、耗時)分開記錄;`save`(path、存檔前後字數以 CountText 計算,不記內文;失敗時記 ok=false 與 error,不記 afterCount);`snapshot`/`restore`(label/id、檔案清單);`summary_draft`(chapter、耗時)/`summary_save`(chapter);`copy_chapter`/`export_volume`(章節/卷、平台 id);`open_file`(path)。
 - **不記錄**:逐次打字的稿件變化;`save` 與 `open_file` 只記路徑與字數,不記內文(ask 例外:作者主動送出的內容本來就會送給 AI,故記錄完整 messages)。
 - **與 audit/provenance 的關係**:完全獨立。`audit.jsonl`(工具呼叫審計,G4)與 `provenance.jsonl`(接受/還原溯源)照舊,研究記錄不擴充也不取代它們。
 - **隱私**:只存這台電腦;開啟後檔案會含送給 AI 的稿件片段與 AI 回覆,研究記錄不在 AI 的上下文中,AI 工具也讀不到 `.perkins/`。研究記錄的寫入失敗不中斷作者的操作。
