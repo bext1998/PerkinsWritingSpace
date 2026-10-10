@@ -91,15 +91,15 @@ module.exports = {
         check('#44 Enter 段尾:游標移到下一段開頭,內容不變(不多出空行)',
             (await doc()) === '甲段。\n\n乙段。' && e2.line === 3 && e2.col === 0, JSON.stringify({doc: await doc(), cur: e2}));
 
-        // Shift+Enter 保留單一換行(同一段內的軟換行,不縮排)
+        // Shift+Enter 保留單一換行;畫面上第二行也是一段(與複製為平台格式「每個非空行一段」一致,PR #69 審查)
         await setDoc('甲段。乙段。');
         await home();
         await press('ArrowRight', 3);
         await page.keyboard.press('Shift+Enter');
         await settle(80, 500);
         const s1 = await rows();
-        check('#44 Shift+Enter 是單一換行(不分段、第二行不當成新段落)',
-            (await doc()) === '甲段。\n乙段。' && !s1[1].para && !s1[0].blank, JSON.stringify({doc: await doc(), rows: s1.map(r => ({t: r.t, para: r.para}))}));
+        check('#44 Shift+Enter 是單一換行(檔案不補空行),畫面上兩行各是一段(與發文結果一致)',
+            (await doc()) === '甲段。\n乙段。' && s1[0].para && s1[1].para && !s1[0].blank, JSON.stringify({doc: await doc(), rows: s1.map(r => ({t: r.t, para: r.para}))}));
         // 一次 Ctrl+Z 復原一次 Shift+Enter
         await page.keyboard.press('Control+z');
         await settle(80, 500);
@@ -125,6 +125,24 @@ module.exports = {
         await settle(80, 500);
         check('#44 frontmatter 內 Enter 仍是單一換行(段落化不套用)',
             (await doc()) === '---\n\ntitle: x\n---\n\n正文。', JSON.stringify(await doc()));
+
+        // 程式碼區塊/frontmatter 內行首 Backspace 照舊只刪一個換行,不跨過可見空行合併(PR #69 審查)
+        await setDoc('```\nA\n\nB\n```');
+        await home();
+        await press('ArrowDown', 3);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Backspace');
+        await settle(80, 500);
+        check('#44 程式碼區塊內行首 Backspace 只刪一個換行(不合併成 AB)',
+            (await doc()) === '```\nA\nB\n```', JSON.stringify(await doc()));
+        await setDoc('---\na: x\n\nb: y\n---\n\n正文。');
+        await home();
+        await press('ArrowDown', 3);
+        await page.keyboard.press('Home');
+        await page.keyboard.press('Backspace');
+        await settle(80, 500);
+        check('#44 frontmatter 內行首 Backspace 只刪一個換行(不把兩個欄位串成一行)',
+            (await doc()) === '---\na: x\nb: y\n---\n\n正文。', JSON.stringify(await doc()));
 
         // IME 組字中 Enter 不分段(CDP 發真實 composition 事件;無頭環境無真實 IME,實機見 #47)
         await setDoc('甲段。乙段。');

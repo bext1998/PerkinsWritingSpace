@@ -245,10 +245,9 @@ const computePaper = (view: EditorView): DecorationSet => {
         const touching = onCursor(line.from, line.to);
         const heading = HEADING.exec(text);
         const isBreak = SCENE_BREAK.test(text.trim());
-        // 段落樣式:非空白,而且不是接在同一段後面(上一行是空白行、標題或分隔行,或檔案開頭)
-        const prevText = i > 1 ? doc.line(i - 1).text : '';
-        if (!BLANK(text) && !heading && !isBreak && (i === 1 || BLANK(prevText) || isHeadingOrBreak(prevText)))
-            list.push(paraDeco.range(line.from));
+        // 段落樣式:每一個非空白的一般行都是一段——與「複製為平台格式」(publish.Convert 每個非空行一段)一致,
+        // 作者以單一換行分段的既有稿件看起來才和發文結果相同(PR #69 審查)
+        if (!BLANK(text) && !heading && !isBreak) list.push(paraDeco.range(line.from));
         if (heading) {
             const level = heading[1].length;
             list.push((level === 1 ? h1Deco : level === 2 ? h2Deco : h3Deco).range(line.from));
@@ -352,6 +351,8 @@ const mergeBackward = (v: EditorView): boolean => {
     if (sel.head !== line.from || BLANK(line.text)) return false;
     const prev = nonBlankLine(doc, line.number, -1);
     if (prev === null) return false;
+    // 程式碼區塊/frontmatter 的空行照原文顯示,不是段落分隔:預設行為(只刪一個換行),不跨區塊合併(PR #69 審查)
+    if (blockedLineAt(v, line.number) || blockedLineAt(v, prev)) return false;
     const at = doc.line(prev).to;
     if (at === sel.head - 1) return false; // 只隔一個換行:預設行為即可
     if (isHeadingOrBreak(doc.line(prev).text)) return false; // 不把段落黏進標題或分隔行
@@ -370,6 +371,7 @@ const mergeForward = (v: EditorView): boolean => {
     if (sel.head !== line.to || BLANK(line.text)) return false;
     const next = nonBlankLine(doc, line.number, 1);
     if (next === null) return false;
+    if (blockedLineAt(v, line.number) || blockedLineAt(v, next)) return false;
     const at = doc.line(next).from;
     if (at === sel.head + 1) return false;
     if (isHeadingOrBreak(doc.line(next).text)) return false;
