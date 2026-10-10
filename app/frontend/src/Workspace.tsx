@@ -246,11 +246,14 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 手動存檔、切章、關閉等呼叫者一加入就改回「全部落盤才結束」(PR #65 審查)
     const saveAll = useRef(false);
     const save = useCallback((opts?: {auto?: boolean}): Promise<void> => {
-        if (!opts?.auto) saveAll.current = true;
-        if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
+        if (saveInFlight.current) { // 已在存:回傳同一個 Promise;非自動的呼叫者加入就要全部落盤
+            if (!opts?.auto) saveAll.current = true;
+            return saveInFlight.current;
+        }
         // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
         // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
         if (!(latest.current.current && latest.current.dirty)) return Promise.resolve();
+        saveAll.current = !opts?.auto; // 只在真的開始一輪時設定;無事可存就返回時不得留下旗標(PR #65 複審)
         let run!: Promise<void>; // 閉包 finally 要比對自身;前置檢查保證 IIFE 先在 await 掛起,賦值必在 finally 前
         run = (async () => {
             setSaving(true);

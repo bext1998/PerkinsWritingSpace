@@ -243,8 +243,11 @@ module.exports = {
 
             // (c2) 自動存檔已經在寫的途中才開始組字(PR #65 審查 Major):存完第一輪後,
             // 不得接著把組字中的字寫進磁碟;組字結束後才存
-            await page.evaluate(() => window.__perkinsSaveDelay(1200));
+            // 前置:乾淨狀態下先按一次 Ctrl+S(無事可存的手動存檔),不得讓之後的自動存檔變成「全部落盤」(PR #65 複審)
             await page.click('.cm-content');
+            await page.keyboard.press('Control+s');
+            await settle(80, 300);
+            await page.evaluate(() => window.__perkinsSaveDelay(1200));
             await page.keyboard.press('Control+End');
             await page.keyboard.type('inflightA');
             await page.waitForSelector('[data-testid=save-button][aria-label="儲存中…"]', {timeout: 6000}); // 自動存檔第一輪已開始(卡在延遲)
