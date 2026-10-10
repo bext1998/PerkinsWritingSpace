@@ -1,7 +1,7 @@
 import {useState} from 'react';
-import {Bot, EyeOff, Loader2, SpellCheck} from 'lucide-react';
-import {FindVariants, IgnoreVariant, ReadFile, SuggestAttachments} from '../../wailsjs/go/main/App';
-import {bible} from '../../wailsjs/go/models';
+import {Bot, EyeOff, HeartPulse, Loader2, SpellCheck} from 'lucide-react';
+import {FindVariants, HealthCheck, IgnoreVariant, ReadFile, SuggestAttachments} from '../../wailsjs/go/main/App';
+import {bible, health} from '../../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {baseName} from '@/lib/utils';
 import {CHECKS} from '../quick';
@@ -11,9 +11,26 @@ interface Props extends PanelProps {
     chapter: string | null;
 }
 
+// 作品健康檢查(SPEC §0 第 4 條):後端回報的類型 → 介面分組標題。
+const HEALTH_LABEL: Record<string, string> = {
+    'frontmatter': 'frontmatter 無法解析',
+    'orphan-summary': '摘要對應的章節已不存在',
+    'stale-summary': '摘要可能過期',
+    'broken-link': '連結指向不存在的檔案',
+    'missing-chapter': '卷中列出但不存在的章節',
+};
+// missing-chapter 的路徑是「不存在的章節」,沒有檔案可以開;其餘都是問題所在的檔案。
+const HEALTH_OPENABLE: Record<string, boolean> = {'missing-chapter': false};
+
+const checkedText = (at: string) => {
+    const d = new Date(at);
+    return isNaN(d.getTime()) ? at : d.toLocaleTimeString('zh-TW', {hour12: false});
+};
+
 export default function ChecksPanel({index, openFile, fail, ask, save, chapter}: Props) {
     const [variants, setVariants] = useState<bible.Variant[] | null>(null);
     const [busy, setBusy] = useState(false);
+    const [report, setReport] = useState<health.Report | null>(null);
 
     const run = async () => {
         setBusy(true);
@@ -23,6 +40,24 @@ export default function ChecksPanel({index, openFile, fail, ask, save, chapter}:
         } catch (e) { fail(e); }
         setBusy(false);
     };
+
+    // 作品健康檢查:只在作者按下時跑。先存檔(檢查的是磁碟上的內容),錯誤照既有提示顯示。
+    const runHealth = async () => {
+        setBusy(true);
+        try {
+            await save();
+            setReport(await HealthCheck());
+        } catch (e) { fail(e); }
+        setBusy(false);
+    };
+
+    // 後端的問題清單已依類型排好,連續同類型的一起呈現
+    const groups: {check: string; items: health.Issue[]}[] = [];
+    for (const is of report?.issues ?? []) {
+        const last = groups[groups.length - 1];
+        if (last && last.check === is.check) last.items.push(is);
+        else groups.push({check: is.check, items: [is]});
+    }
 
     const ignore = async (v: bible.Variant) => {
         try {
@@ -56,6 +91,43 @@ export default function ChecksPanel({index, openFile, fail, ask, save, chapter}:
 
     return (
         <div className="space-y-6 p-3">
+            <section>
+                <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wider text-muted-foreground">
+                    <HeartPulse className="h-3.5 w-3.5"/>作品健康檢查
+                </h3>
+                <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
+                    由程式檢查作品檔案(設定、摘要、連結),只列出問題、不自動修改,也不經過 AI。檢查前會先存檔。
+                </p>
+                <Button size="sm" variant="secondary" className="w-full" onClick={runHealth} disabled={busy} data-testid="run-health">
+                    {busy ? <Loader2 className="animate-spin"/> : <HeartPulse/>}開始檢查
+                </Button>
+                {report && (
+                    <div className="mt-3 space-y-2" data-testid="health-report">
+                        {report.issues.length === 0 && <p className="text-xs text-success">沒有發現問題。</p>}
+                        {groups.map(g => (
+                            <div key={g.check} data-testid="health-group" data-check={g.check} className="rounded-md border bg-card p-2">
+                                <p className="text-xs font-medium text-warning">{HEALTH_LABEL[g.check] ?? g.check}({g.items.length})</p>
+                                <div className="mt-1 space-y-1">
+                                    {g.items.map((is, i) => {
+                                        const body = (
+                                            <>
+                                                <span className="block truncate" title={is.path}>{is.path}</span>
+                                                <span className="mt-0.5 block break-words text-muted-foreground">{is.message}</span>
+                                            </>
+                                        );
+                                        return HEALTH_OPENABLE[is.check] === false
+                                            ? <div key={i} data-testid="health-issue" className="text-xs">{body}</div>
+                                            : <button key={i} data-testid="health-issue" className="block w-full text-left text-xs hover:text-foreground"
+                                                      onClick={() => openFile(is.path)}>{body}</button>;
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                        <p className="text-xs text-muted-foreground" data-testid="health-time">檢查時間 {checkedText(report.checkedAt)}</p>
+                    </div>
+                )}
+            </section>
+
             <section>
                 <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wider text-muted-foreground">
                     <SpellCheck className="h-3.5 w-3.5"/>名稱寫法檢查
