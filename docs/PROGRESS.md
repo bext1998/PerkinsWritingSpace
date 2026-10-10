@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-11 — Perkins Bot 三態回應規則與模糊要求評測情境(Issue #34 第 4 項)
+
+- **系統提示**(`app/internal/agent/agent.go` 的 `systemPrompt`):依《AI Agent 與人類協同創意寫作…》§6 不確定性協定與《Agentic Writing 與 Harness Engineering…》護欄 8、10,在「作者故意留白不補完」之後新增三條:意圖明確時直接做、不為保險而提問;意圖不明且不同理解會改變故事方向時先問最多 1–3 個具體問題再提案;多個合理方向列條件式選項、不標示「最佳」。既有「推測要標示」「留白不補完」與 G1–G4 相關句子未動;`reportPrompt`、`summaryPrompt` 未動。
+- **關鍵句單元測試**:新增 `TestSystemPromptUncertaintyRules`(`agent_test.go`),檢查三條規則的關鍵句存在於系統提示。既有測試原先只檢查「檢查報告」一句(`TestReportModeHasNoProposeTool`),未檢查推測/留白句,故新規則各補一個關鍵句檢查。
+- **實機評測新情境「模糊要求應先澄清」**(`live_eval_test.go`):大綱明確標示後續方向未定(當面質問或暗中調查)＋作者只說「這段改好一點」。硬判定:不得建立提案、檔案未被改動(`ForbidProposalTool`,非報告模式下工具是提供的,驗證模型沒有直接挑一個方向改寫);澄清問題的提出與品質、條件式選項未標「最佳」列人工檢查。`eval_test.go` 的 `ForbidProposalTool` 註解更新為涵蓋兩類情境。
+- **破壞驗證**:逐條拿掉系統提示中的三條新規則 → `TestSystemPromptUncertaintyRules` 對應 FAIL(三輪各 FAIL 一項)→ 還原後通過。
+- **驗證**:`go test ./internal/...`(不帶實機標記)全部通過,新情境可編譯(`go vet` + `go test -run TestLiveEvalCases` 未設 `PERKINS_LIVE_MODEL` 時 skip 路徑執行)。實機評測需要本機模型,未執行。
+- 文件:`docs/SPEC.md` §12.3 新增「不確定時的三態回應」、`docs/LIVE_EVAL.md` 硬判定說明與情境表各加一項、本檔。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
