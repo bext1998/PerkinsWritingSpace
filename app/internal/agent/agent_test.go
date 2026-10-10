@@ -1178,3 +1178,18 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
 	}
 }
+
+// Issue #34 第 4 項意圖:系統提示含不確定性協定的三態回應——
+// 意圖明確直接做;意圖不明且影響故事方向先問 1–3 個問題;多個合理方向列條件式選項、不標「最佳」。
+// 只檢查關鍵句存在(提示詞是常數),行為效果由實機評測的「模糊要求應先澄清」情境人工比對。
+func TestSystemPromptUncertaintyRules(t *testing.T) {
+	for _, s := range []string{
+		"意圖明確時直接做,不要為了保險而提問",
+		"先問最多 1–3 個具體問題,再提案",
+		"不要標示哪個是「最佳」",
+	} {
+		if !strings.Contains(systemPrompt, s) {
+			t.Errorf("系統提示缺少不確定性規則關鍵句:%s", s)
+		}
+	}
+}

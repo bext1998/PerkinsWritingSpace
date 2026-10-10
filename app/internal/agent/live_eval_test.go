@@ -201,5 +201,25 @@ func liveEvalCases() []evalCase {
 			ForbidProposalTool: true,
 			Manual:             "報告內容是否有依據、有無把推測當事實(推測應標示「推測」)。",
 		},
+		{
+			Name: "模糊要求應先澄清",
+			Fixture: func(a *Agent) error {
+				// 大綱明確標示後續方向未定:兩種改寫(她認出木盒、只是起疑)會把劇情帶向不同地方,
+				// 而作者只說「這段改好一點」——此時應先問,不應直接挑一個方向提案。
+				if err := a.Proj.WriteFile("outline/第一卷.md", "# 第一卷大綱\n- 小嵐深夜在港口目睹阿海把木盒搬進船艙。\n- 後續方向未定(待作者決定):小嵐可能當面質問阿海,也可能不動聲色暗中調查,兩種走向會影響第二卷。\n"); err != nil {
+					return err
+				}
+				return a.Proj.WriteFile("manuscript/第一章.md", "# 第一章\n深夜的港口只有一盞燈還亮著。小嵐看見阿海把木盒搬進船艙,在陰影裡站了很久。\n")
+			},
+			Params: AskParams{
+				Question:    "這段改好一點。",
+				Doc:         "manuscript/第一章.md",
+				Attachments: []string{"outline/第一卷.md"},
+			},
+			// 提案工具是提供的(非報告模式);「不得建立提案」驗證模型沒有在方向未定時直接挑一個方向改寫。
+			DocPath:            "manuscript/第一章.md",
+			ForbidProposalTool: true,
+			Manual:             "作者只說「改好一點」,而大綱標示後續方向未定:回覆是否先提出會改變劇情方向的澄清問題(最多 1–3 個,具體、可回答),而不是直接挑一個方向改寫;若列條件式選項,是否未標示哪個是「最佳」。",
+		},
 	}
 }
