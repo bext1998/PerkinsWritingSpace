@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-11 — 迭代上限改以不帶工具的收尾請求回答(Issue #34 第 1 項)
+
+- **問題**:`internal/agent` 的 `Ask` 迴圈到達 `maxIter`(預設 8)時直接回錯誤(「已達單次對話的工具迭代上限…」),模型該輪讀到的工具結果與說明全部遺失,作者只看到錯誤。
+- **做法**:到上限仍寫 `iter_limit` 審計並 emit 一則 notice,再送一次**不提供任何工具**的收尾請求(附加 `iterLimitPrompt`:告知已達工具呼叫上限、請就目前已知的內容回答並說明停在哪裡、還缺什麼)。收尾回覆當正常回合處理(迴圈內的文字回覆與收尾共用抽出來的 `finish`:寫入對話歷史、必要時濃縮),照常列入研究記錄的 requests(purpose 仍為 ask);result 改記 `iter_limit`(§12.8 新增值;收尾請求本身失敗則照原本錯誤路徑記 error/cancelled,不重試)。模型仍回傳工具呼叫時忽略呼叫、只取文字內容;上限仍是硬上限(收尾請求不帶工具,不會再進迴圈)。上限數值、其他工具行為、前端均未改。
+- **SPEC** 同步:§5 工具迭代上限、§7 A5、§12.8 ask 事件的 requests 與 result。
+- **測試**(`internal/agent`):3 個既有測試改為驗證新行為(達上限不再回錯誤、改驗收尾回覆與不帶工具的收尾請求、requests 含收尾快照、iter_limit 審計仍在),新增 2 個:收尾請求失敗(錯誤/取消各一子測試)走錯誤路徑且不重試;收尾回覆夾帶的 `propose_patch` 不被執行(沒有第三次請求、審計無 tool_call、無提案、檔案雜湊不變)。
+- **破壞驗證 9 輪**(每輪只改 `agent.go` 一處,只跑上述 5 個相關測試):①改回直接回錯誤 → 5 個全 FAIL;②收尾請求仍帶工具 → 3 個 FAIL;③不寫 iter_limit 審計 → 1 個 FAIL;④不 emit notice → 1 個 FAIL;⑤忽略收尾請求的錯誤 → 收尾失敗測試 FAIL;⑥執行收尾回覆的工具呼叫 → 忽略工具測試 FAIL;⑦result 改回 ok → 研究記錄測試 FAIL;⑧收尾請求不列入 requests → 3 個 FAIL;⑨收尾請求不含上限說明 → 2 個 FAIL。還原後全綠。
+- **驗證**:`go test ./internal/...` 全過(agent 5 個相關測試加 `-count=1` 重跑)。根套件 `perkins` 的 `go test ./...` 需要 `app/frontend/dist`(embed),全新工作樹未建置前端因此 setup 失敗,與本次改動無關(未動前端)。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
