@@ -175,8 +175,8 @@ module.exports = {
         }
 
         // ===== 作者指示 AGENTS.md(Issue #38):作品層進 system 訊息、超上限不送出且有原因 =====
-        // 本段自己寫/刪作品根目錄的 AGENTS.md,不污染 fixture 原始內容;全域層(%APPDATA%)不動,
-        // 斷言只針對作品層,不依賴全域是否存在。
+        // 本段自己寫/刪作品根目錄的 AGENTS.md,不污染 fixture 原始內容。真實全域層(%APPDATA%)由 run.js
+        // 開跑前改名移開、結束還原,所以這裡也斷言預覽不含全域層,隔離失效時會立刻 FAIL。
         const agFile = path.join(PROJ, 'AGENTS.md');
         fs.writeFileSync(agFile, '作者指示E2E:回覆請一律用繁體中文,提到森林時稱「紫斑蝶E2E森林」。');
         await page.fill('[data-testid=question]', 'q');
@@ -185,6 +185,8 @@ module.exports = {
         let pvAg = await page.textContent('[data-testid=preview]');
         check('作品 AGENTS.md 以標題進入 system 訊息',
             pvAg.includes('【作者指示:作品 AGENTS.md】') && pvAg.includes('紫斑蝶E2E森林'),
+            pvAg.slice(0, 80));
+        check('全域 AGENTS.md 已隔離,未進入預覽', !pvAg.includes('【作者指示:全域 AGENTS.md】'),
             pvAg.slice(0, 80));
         check('預覽可看出兩層衝突時以作品層為準', pvAg.includes('以作品層為準'));
         await page.keyboard.press('Escape');

@@ -1369,11 +1369,12 @@ func TestAuthorInstructionsBudgetReportAndPreviewMatchesSend(t *testing.T) {
 	for i := 0; i < compactKeep+2; i++ {
 		a.History = append(a.History, llm.Message{Role: "user", Content: fmt.Sprintf("第 %d 則較早對話", i)})
 	}
+	nReqs := len(s.reqs) // 先前的 DraftSummary 也累積在 s.reqs;濃縮請求是 compact 產生的下一筆
 	s.replies = []llm.Message{{Role: "assistant", Content: "濃縮摘要"}}
 	if err := a.compact(context.Background(), func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(s.reqs[0].Messages[0].Content, "【作者指示") {
+	if strings.Contains(s.reqs[nReqs].Messages[0].Content, "【作者指示") {
 		t.Fatal("對話濃縮請求不應套用作者指示")
 	}
 	// 預覽 = 實際送出(A6)
