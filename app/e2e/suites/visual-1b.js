@@ -369,6 +369,8 @@ module.exports = {
             '#45 在稿件中顯示:從其他章節切回目標章節並標示原文',
             '#45 在稿件中顯示:原文因前面打字而位移時仍找得到',
             '#45 Ctrl+Shift+Enter:選取後開啟 Perkins Bot 並帶入選取',
+            '#45 返工 CRLF 多行原文:直接顯示與在原文外打字後都能標示',
+            '#45 返工 640 寬已修改狀態:頁尾按鈕都在視窗內且可點',
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
@@ -448,6 +450,24 @@ module.exports = {
                 JSON.stringify({b640, clickable640}));
             revCheck(REV_CHECKS[5], b640.o.bottom <= b640.e.top + 1 && b640.o.right > b640.e.left,
                 JSON.stringify({o: b640.o, e: b640.e}));
+            await page.fill('[data-testid=review-edit]', '春日照進了院子,640 寬的已修改狀態。');
+            await settle(80, 400);
+            const foot640 = await page.evaluate(() => {
+                const box = document.querySelector('[data-testid=proposal-review]').getBoundingClientRect();
+                const probe = sel => {
+                    const el = document.querySelector(sel);
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return {inBox: r.left >= box.left - 1 && r.right <= box.right + 1 && r.bottom <= box.bottom + 1 && r.top >= box.top - 1,
+                            hits: !!at && (el.contains(at) || at.contains(el))};
+                };
+                return {reveal: probe('[data-testid=review-reveal]'), reset: probe('[data-testid=review-reset]'),
+                        reject: probe('[data-testid=review-reject]'), accept: probe('[data-testid=review-accept]')};
+            });
+            revCheck(REV_CHECKS[21], ['reveal', 'reset', 'reject', 'accept'].every(k => foot640[k]?.inBox && foot640[k]?.hits), JSON.stringify(foot640));
+            await page.click('[data-testid=review-reset]');
+            await settle(80, 300);
             await shot('80-proposal-review-640');
             // --- 1280×800:內容左右並排 ---
             await page.setViewportSize({width: 1280, height: 800});
@@ -658,6 +678,47 @@ module.exports = {
             const askChips = await page.textContent('[data-testid=chips]');
             const askFocus = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
             revCheck(REV_CHECKS[19], /選取 \d+ 字/.test(askChips) && askFocus === 'question', JSON.stringify({askChips, askFocus}));
+            // --- 返工(PR #66 審查):\r\n 稿件的多行原文;作者在原文外打字後,編輯器全文換成 LF,仍要找得到 ---
+            const crRel = 'manuscript/換行測試.md';
+            const crSrc = '\ufeff# 換行測試\r\n\r\n甲行\r\n乙行\r\n\r\n末\r\n';
+            const crOrig = '甲行\r\n乙行';
+            projWrite(crRel, crSrc);
+            const crAt = Buffer.byteLength(crSrc.slice(0, crSrc.indexOf(crOrig)));
+            projWrite('.perkins/proposals/20261010-170000-crlf.json', JSON.stringify({
+                id: '20261010-170000-crlf', createdAt: '2026-10-10T17:00:00+08:00', model: 'E2E審查', target: crRel, original: crOrig, replacement: '甲乙合一',
+                rationale: 'E2E \r\n', assumptions: [],
+                baseHash: require('crypto').createHash('sha256').update(crSrc).digest('hex'),
+                start: crAt, end: crAt + Buffer.byteLength(crOrig), status: 'pending',
+            }, null, 2));
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await settle(80, 600);
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            const revealCr = async () => {
+                await page.click('[data-testid=proposal]:has-text("甲行") [data-testid=review-open]');
+                await page.waitForSelector('[data-testid=proposal-review]');
+                await page.click('[data-testid=review-reveal]');
+                await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('換行測試'), null, {timeout: 15000});
+                await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
+                const t = await flashText();
+                await page.click('[data-testid=review-close]');
+                await page.waitForSelector('.cm-ai-flash', {state: 'detached', timeout: 6000});
+                return t;
+            };
+            const cr1 = await revealCr();
+            await page.click('.cm-line >> nth=0');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('！');
+            await settle(80, 400);
+            const crTyped = await page.evaluate(() => document.querySelector('.cm-content').innerText.includes('！'));
+            const cr2 = await revealCr();
+            revCheck(REV_CHECKS[20], cr1 === '甲行乙行' && crTyped && cr2 === '甲行乙行', JSON.stringify({cr1, crTyped, cr2}));
+            await page.click('.cm-line >> nth=0');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.press('Backspace');
+            await page.keyboard.press('Control+s');
+            await settle(80, 600);
+            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-170000-crlf').then(() => window.__perkinsRefreshProposals()));
+            await settle(80, 500);
         } catch (e) {
             for (const n of REV_CHECKS) if (!revDone.has(n)) check(n, false, e.message);
             await page.keyboard.press('Escape').catch(() => {});

@@ -95,12 +95,16 @@ function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: n
 
 // 待審提案的原文位置(#45 方案 A「在稿件中顯示」):先用提案記錄的位置;作者在前面打過字而位移時,
 // 改用原文在檔案中唯一的出現處(與後端接受時的放寬規則一致);找不到或不唯一就回 null,不猜位置
+// 退回搜尋時以編輯器的換行表示比對:作者一編輯,編輯器回傳的全文就把 \r\n 換成 \n,
+// 而提案原文仍是磁碟上的 CRLF(PR #66 審查);兩邊都把 \r\n 視為一個換行,索引即是編輯器位置
 function originalRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
     const r = editorRange(text, p.start, p.original);
     if (r) return r;
-    const i = text.indexOf(p.original);
-    if (i < 0 || text.indexOf(p.original, i + 1) >= 0) return null;
-    return editorRange(text, new TextEncoder().encode(text.slice(0, i)).length, p.original);
+    const lf = (s: string) => s.replace(/\r\n/g, '\n');
+    const t = lf(text), o = lf(p.original);
+    const i = t.indexOf(o);
+    if (!o || i < 0 || t.indexOf(o, i + 1) >= 0) return null;
+    return {from: i, to: i + o.length};
 }
 
 export default function Workspace({tree, setTree, onClose, onSettings, settingsVersion}: Props) {
