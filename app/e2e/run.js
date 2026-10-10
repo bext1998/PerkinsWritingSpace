@@ -94,13 +94,20 @@ if (agentsIsolated) {
     fs.renameSync(APPDATA_AGENTS, APPDATA_AGENTS_BAK);
     console.log(`已隔離全域 AGENTS.md → ${APPDATA_AGENTS_BAK}(結束時自動還原)`);
 }
-let agentsRestored = false;
+let agentsRestored = !agentsIsolated;
 const restoreAgents = () => {
     if (agentsRestored) return;
+    // 測試期間作者在原路徑重建了檔案:改名會覆蓋它,兩份都保留交給作者處理(PR #75 複審)
+    if (fs.existsSync(APPDATA_AGENTS)) {
+        console.error(`未還原全域 AGENTS.md:測試期間 ${APPDATA_AGENTS} 被重建,原檔保留在 ${APPDATA_AGENTS_BAK},請手動合併兩份`);
+        return;
+    }
+    fs.renameSync(APPDATA_AGENTS_BAK, APPDATA_AGENTS);
     agentsRestored = true;
-    if (agentsIsolated) fs.renameSync(APPDATA_AGENTS_BAK, APPDATA_AGENTS);
 };
 process.on('exit', restoreAgents);
+// Ctrl+C、Ctrl+Break、關閉終端不會觸發 'exit',要攔截訊號才能還原(強制結束仍會留下 .e2e-bak,開跑時會擋下)
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, () => process.exit(130));
 
 (async () => {
   try {

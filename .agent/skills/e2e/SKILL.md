@@ -12,7 +12,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 ## 副作用(執行前必讀)
 
 - `wails dev` 讀寫**使用者真實的** `%APPDATA%\Perkins\settings.json`(最近專案清單、目前模型)。執行前先備份到暫存區,結束後逐位元組還原。
-- 後端會從同一目錄讀**全域作者指示** `%APPDATA%\Perkins\AGENTS.md`。`run.js` 開跑時自動把它改名成 `AGENTS.md.e2e-bak` 移出讀取路徑,結束(含 process.exit)自動改名還原;原本不存在就保持不存在。若看到殘留 `.e2e-bak`(上次 run.js 異常結束),先手動改回原名再執行。
+- 後端會從同一目錄讀**全域作者指示** `%APPDATA%\Perkins\AGENTS.md`。`run.js` 開跑時自動把它改名成 `AGENTS.md.e2e-bak` 移出讀取路徑,結束(含 process.exit、Ctrl+C)自動改名還原;原本不存在就保持不存在。測試期間原路徑被重建時不覆蓋,兩份都保留並印出警告。看到殘留 `.e2e-bak`(上次 run.js 被強制結束)時:原路徑沒有 `AGENTS.md` 就把備份改回原名;兩份並存就由作者比對合併,不要直接覆蓋。
 - 「複製到平台」步驟會覆寫**系統剪貼簿**,無法還原;回報時要說明。
 - 提案步驟會呼叫本機 LM Studio(`http://localhost:1234/v1`)上設定中選定的模型,一次約 40–120 秒。LM Studio 未啟動時該步驟會失敗(平常開發用 `E2E_SKIP_AI=1` 跳過)。
 
