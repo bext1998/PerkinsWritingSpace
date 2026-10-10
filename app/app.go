@@ -13,7 +13,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"

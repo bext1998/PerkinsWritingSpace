@@ -138,6 +138,7 @@ var toolDefs = []llm.ToolDef{
 	{
 		Name:        "list_files",
 		Description: "列出作品的檔案清單(唯讀、不需參數):依卷與章節順序列出稿件(含章名、路徑、字數)、可用的章節摘要,以及作者本次附加的 canon/、outline/、notes/ 檔案。",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 	},
 	{
 		Name:        "propose_patch",
