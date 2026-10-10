@@ -4,7 +4,7 @@ module.exports = {
     name: 'layout-visual',
     desc: '書櫃 1B 視覺(H4 長書名封面)與重新開啟',
     run: async ctx => {
-        const {page, check, skip, maybe, shot, read, hash, P, PROJ, errors, cfgHash, ch1, SKIP_AI, NOTION_SRC, ensureProject, ensureChapter, ensureBookshelf, settle, SHOTS} = ctx;
+        const {page, check, skip, maybe, shot, read, hash, P, PROJ, errors, cfgHash, ch1, SKIP_AI, NOTION_SRC, ensureProject, ensureChapter, ensureBookshelf, projectCard, settle, SHOTS} = ctx;
         const fs = require('fs');
         const path = require('path');
         const os = require('os');
@@ -22,7 +22,7 @@ module.exports = {
         }, PROJ);
         // 此時已在書櫃(13 之後);先開任意真實作品進編輯器,再回書櫃讓 Bookshelf 重新
         // mount,以覆寫後的 ListRecent render 受控卡片
-        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
+        await (await projectCard(PROJ)).click();
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
@@ -85,7 +85,7 @@ module.exports = {
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         // 從書櫃重新開啟作品(受控清單中的真實卡路徑 = 當輪 PROJ)
-        await page.click('button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]');
+        await (await projectCard(PROJ)).click();
         await page.waitForSelector('[data-testid=chapter-row]', {timeout: 30000});
         if (!(await page.$('.cm-content'))) await page.click('[data-testid=chapter-row]:has-text("第一章")');
         check('從書櫃重新開啟作品', !!(await page.$('[data-testid=chapter-row]')));

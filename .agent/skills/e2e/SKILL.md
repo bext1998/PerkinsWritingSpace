@@ -61,6 +61,8 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 
 ## 已知陷阱
 
+- **別把 Windows 路徑直接放進 CSS 屬性選擇器**(Issue #63):反斜線會被 CSS 轉義規則吃掉(`\U`、`\8334f1` 不是合法轉義),`button[title="C:\...\e2e-proj"]` 永遠匹配不到(實測 0 匹配)。書櫃卡片的 `title` 是啟動時 `PERKINS_OPEN` 的字串形式:POSIX `"$S/e2e-proj"` 會被 MSYS 轉成 `C:/...`(正斜線),Windows 形式 `'C:\...\e2e-proj'` 原樣保留(反斜線);`PROJ` 同理。所以「只給一種斜線形式」的選擇器只在某種啟動方式下會過 — 表現成某幾輪 `bible`/`layout-visual` 的「回書櫃重開作品」等不到卡片。等書櫃卡片一律用 `lib.projectCard(page, 路徑)`(正/反斜線雙變體 + 忽略大小寫,等到卡片 render 才回傳,回傳的 locator 自動重試);要判斷卡片是不是測試專案,用 `clickProjectCard` 那種 JS 正規化比對,不要寫死一種斜線。
+
 - **重建測試專案後必須重啟 `wails dev`**:後端把 `perkins.json` 留在記憶體,不重啟會用舊結構覆寫新檔(曾造成「第3卷」這類假失敗)。
 - **等模型回覆**:送出後先等對話框出現「停止」按鈕,再等「送出」按鈕回來;直接等「送出」會在請求開始前就判定結束。
 - **會呼叫 Go 的 UI 操作**(例如設定欄位「套用」)要等畫面出現結果後再按下一個鍵,否則測試比非同步回應快。
