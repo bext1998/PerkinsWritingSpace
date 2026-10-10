@@ -96,9 +96,9 @@ func (s *Store) Create(model, target, original, replacement, rationale string, a
 	}
 	switch n := strings.Count(content, original); {
 	case n == 0:
-		return nil, errors.New("在目標檔中找不到 original,請逐字複製原文")
+		return nil, errors.New("在目標檔中找不到 original,請逐字複製原文;先用 read_document 讀取該檔確認原文")
 	case n > 1:
-		return nil, fmt.Errorf("original 在檔案中出現 %d 次,請提供更長、唯一的片段", n)
+		return nil, fmt.Errorf("original 在檔案中出現 %d 次,請提供更長、唯一的片段;先用 read_document 讀取該檔確認原文", n)
 	}
 	start := strings.Index(content, original)
 	now := time.Now()
