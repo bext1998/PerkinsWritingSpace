@@ -78,6 +78,14 @@ const REUSE = args.includes('--reuse');
 const argv = args.filter(a => a !== '--reuse');
 const only = argv[0] === '--all' ? SUITES.map(s => s[0])
     : argv.flatMap(a => a === '--smoke' ? ['__smoke'] : [a]);
+// 只寫 --reuse 沒寫組名:不能重建 fixture 後回報成功(PR #68 審查)
+if (only.length === 0) { printUsage(); process.exit(1); }
+// 會呼叫模型的執行被中斷時,後端舊請求(含研究記錄)可能還在跑,重新開啟作品不會等它結束,
+// 會跨輪寫進新 fixture。只有不呼叫模型時才可 reuse;要跑模型就冷啟動(PR #68 審查)
+if (REUSE && process.env.E2E_SKIP_AI !== '1') {
+    console.error('--reuse 只能搭配 E2E_SKIP_AI=1:會呼叫模型的執行請冷啟動(taskkill + 重建 fixture + 重啟 wails dev)');
+    process.exit(1);
+}
 if (only.includes('__smoke')) console.log('含冒煙組(不重建 fixture;建議先重建 + 重啟 wails dev 再跑)');
 
 const loader = n => n === '__smoke' ? require('./suites/smoke') : require(`./suites/${n}.js`);

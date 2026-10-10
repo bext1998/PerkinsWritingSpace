@@ -39,6 +39,8 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 
 **可以 reuse**:這次沒改任何 Go 程式(`wails dev -noreload` 不會重編譯 Go)、沒改 `wails.json`/`main.go`、沒有增減綁定;只是重複跑測試組,或只改了前端。
 
+**只能搭配 `E2E_SKIP_AI=1`**(run.js 會拒絕):會呼叫模型的執行若被中斷,後端舊請求與研究記錄可能還在跑,重新開啟作品不會等它結束,會寫進下一輪的新 fixture;跑模型一律冷啟動。
+
 **一定要冷啟動**:任何 `.go` 變更(含 `internal/`)、`wails.json`/`app/main.go` 變更、新增或移除綁定、前端建置設定變更。有疑問就冷啟動。
 
 怎麼確定測到的是新程式:
