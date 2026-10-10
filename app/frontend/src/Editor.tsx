@@ -10,6 +10,7 @@ import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
 import {tags} from '@lezer/highlight';
 import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'lucide-react';
 import {QUICK_ACTIONS, Quick} from './quick';
+import {paperExtensions} from './paper';
 
 export interface Selection {
     text: string;
@@ -596,6 +597,9 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     search({top: true, createPanel: view => (activeSearchPanel = new PerkinsSearchPanel(view))}),
                     history(),
                     drawSelection(),
+                    // 稿紙化(#44 第一階段):Enter 一個 Enter 一段、隱藏段落間的空行與 Markdown 標記。
+                    // 內含 keymap,必須排在下面的 defaultKeymap 之前才會取代 Enter/Backspace/Delete 預設行為
+                    paperExtensions(),
                     // #46 後半的綁定要放在 defaultKeymap 前,才能取代它的 Alt+↑/↓(moveLineUp/Down)
                     keymap.of([
                         {key: 'Alt-ArrowUp', run: v => moveParagraph(v, true)},
@@ -690,6 +694,19 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         // (DEV)E2E 檢視位置與游標可見性用
         if (import.meta.env.DEV) {
             (window as any).__perkinsEditor = {
+                // 文件內容與游標位置(稿紙化後畫面不再等於檔案:E2E 要驗的是文件本身)
+                doc: () => v.state.doc.toString(),
+                cursor: () => {
+                    const head = v.state.selection.main.head;
+                    const line = v.state.doc.lineAt(head);
+                    return {line: line.number, col: head - line.from, text: line.text, head};
+                },
+                // 稿紙化後畫面行不再等於文件行,E2E 直接用文件座標定位(方向鍵的真實行為另在 paper 組驗)
+                setCursor: (line: number, col = 0) => {
+                    const l = v.state.doc.line(Math.min(Math.max(line, 1), v.state.doc.lines));
+                    v.dispatch({selection: EditorSelection.cursor(Math.min(l.from + col, l.to))});
+                    v.focus();
+                },
                 pos: () => ({anchor: v.state.selection.main.anchor, head: v.state.selection.main.head, lines: v.state.doc.lines,
                              scrollTop: v.scrollDOM.scrollTop, maxScroll: Math.max(0, v.scrollDOM.scrollHeight - v.scrollDOM.clientHeight)}),
                 cursorVisible: () => {
