@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-11 — Perkins Bot 讀取兩層作者指示 AGENTS.md(Issue #38 作者已定案部分)
+
+- **後端 `app/internal/agent/agent.go`**:`BuildMessages` 拆成內部 `buildMessages`(回傳訊息 + 未送出原因),每次組裝都重讀兩層 `AGENTS.md`:全域 `%APPDATA%\Perkins\AGENTS.md`(`Agent.GlobalAgentsPath`,由 `app.go` 的 `setProject` 從 settings store 目錄接線,空 = 不讀,測試可注入)與作品根目錄 `AGENTS.md`。兩層以「【作者指示:全域/作品 AGENTS.md】」標題放進 system 訊息、在既有規則之後(既有文字不動),並附說明:衝突時作品層為準、不能改變系統規則(G1–G4)。檔案不存在略過;讀取失敗回錯不吞。單份超過 `agentsLimit`(4000,`EstimateTokens` 估算)整份不送出,原因進 `Preview.Notices` 與 Ask 的 `notice` 事件(同 B7 通知機制)。計入上下文預算(system 訊息自然被 `EstimateTokens`/`Preview` 計算)。報告模式套用;章節摘要(`summaryPrompt`)與對話濃縮(`compactPrompt`)不經 `BuildMessages`,不套用。
+- **前端**:`ChatWindow.tsx` 預覽視窗新增 notices 顯示(`data-testid=agents-notice`,同 preview-over 警告樣式);`wailsjs/go/models.ts` 補 `notices` 欄位。未動系統提示既有文字、未做設定頁介面、未做子資料夾 AGENTS.md。
+- **測試(Go,9 個新測試)**:兩層都有(順序/標題/說明)、都没有 system 不變(含報告模式)、只有一層、每次重讀、超上限不送出且預覽與 Ask 通知都有原因、讀取失敗回錯、預算計入+報告模式套用+摘要/濃縮不套用+預覽=實際送出(A6)、工具(讀/搜尋/提案)與附加都碰不到作品根目錄 AGENTS.md(既有 `project.resolve` 只允許五個內容資料夾,確認+測試,未新增功能)。
+- **破壞驗證(Go,6 輪)**:①停用 `authorInstructions` → 6 測 FAIL;②拿掉上限檢查 → 超上限測試 FAIL;③吞掉讀取錯誤 → 讀取失敗測試 FAIL;④Ask 不 emit notice → 超上限測試 FAIL;⑤Preview 不填 Notices → 超上限測試 FAIL;⑥`project.resolve` 同時拿掉兩層根目錄限制(先拿掉 `isDir` 白名單再拿掉 `rel == top` 排除;只拿前者仍被後者擋住,雙層防護)→ 工具碰不到測試 FAIL。全部還原後 `go test ./...` 全綠。
+- **E2E(bot-chat 新增 4 項)**:作品 AGENTS.md 以標題進入 system 訊息、預覽可看出衝突時以作品層為準、超上限不送出且預覽顯示原因、送出時對話出現 notice(照 research R3 的死端點模式;切端點後要開關設定頁讓 Workspace 重讀,否則沿用舊雲端端點會被送出前確認擋住——本次實際踩到,已照 R3 同樣處理)。本段自己寫/刪 fixture 的 AGENTS.md,不污染其他組;全域層原本就不存在,未動。破壞驗證 2 輪:①後端停用 `authorInstructions`(重啟 wails dev)→ 4 項全 FAIL;②前端不 render notices(vite 熱重載)→ 只有預覽原因項 FAIL。還原後 `bot-chat --smoke research` **36/36 passed**(略過 8,E2E_SKIP_AI=1)。settings.json 逐位元組還原、無殘留程序、書櫃無垃圾(fixture 已刪)。
+- **未做(依任務限制)**:設定頁編輯介面、子資料夾 AGENTS.md、系統提示既有文字調整(#38 其餘部分)。
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。

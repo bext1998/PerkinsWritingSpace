@@ -109,6 +109,9 @@ func (a *App) setProject(p *project.Project) {
 	a.proj = p
 	a.research = research.New(p, a.session)
 	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}, Research: a.research}
+	if a.store != nil { // 全域作者指示(%APPDATA%\Perkins\AGENTS.md,與 settings.json 同目錄)
+		a.agent.GlobalAgentsPath = filepath.Join(a.store.Dir, "AGENTS.md")
+	}
 	a.mu.Unlock()
 	if p != nil && a.store != nil {
 		s := a.store.Load()

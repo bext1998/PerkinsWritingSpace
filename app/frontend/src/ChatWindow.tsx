@@ -679,6 +679,12 @@ export default function ChatWindow(props: Props) {
                             超過模型可用的上下文。送出時會先濃縮較早的對話;如果仍然太長會拒絕送出,請減少附加的檔案。
                         </p>
                     )}
+                    {/* 作者指示(AGENTS.md)超過長度上限等原因:預覽也要看得到,不能靜默略過(Issue #38) */}
+                    {preview?.notices?.map((n, i) => (
+                        <p key={i} className="rounded-md bg-warning/10 p-2 text-xs text-warning" data-testid="agents-notice">
+                            {n}。
+                        </p>
+                    ))}
                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto" data-testid="preview">
                         {/* 兩區分列(§16 第 1 項 07):本次直接送出 vs AI 工具可讀取範圍 */}
                         <div className="rounded-md border" data-testid="preview-direct">
