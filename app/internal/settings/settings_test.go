@@ -150,6 +150,38 @@ func TestRecentDedupAndCap(t *testing.T) {
 	}
 }
 
+// 意圖(SPEC §17.3):自動存檔預設開啟;舊設定檔沒有 autosave 欄位時要維持開啟,
+// 只有作者在設定頁明確關閉才是關閉(用 *bool 才分得出這兩者)。
+func TestAutosaveDefaultOnUnlessExplicitlyOff(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	if !st.Load().AutosaveOn() {
+		t.Fatal("沒有設定檔時應預設開啟")
+	}
+	os.MkdirAll(st.Dir, 0o755)
+	os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(`{"theme":"light"}`), 0o600)
+	if !st.Load().AutosaveOn() {
+		t.Fatal("舊設定檔沒有 autosave 欄位時應視為開啟")
+	}
+	off := false
+	if err := st.Save(Settings{Autosave: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if st.Load().AutosaveOn() {
+		t.Fatal("作者關閉後應維持關閉")
+	}
+	b, _ := os.ReadFile(filepath.Join(st.Dir, "settings.json"))
+	if !strings.Contains(string(b), `"autosave": false`) {
+		t.Fatalf("關閉要寫進設定檔: %s", b)
+	}
+	on := true
+	if err := st.Save(Settings{Autosave: &on}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.Load().AutosaveOn() {
+		t.Fatal("重新開啟後應為開啟")
+	}
+}
+
 func TestValidProfileID(t *testing.T) {
 	for _, bad := range []string{"", "A", "a:b", "a/b", strings.Repeat("a", 41)} {
 		if ValidProfileID(bad) == nil {

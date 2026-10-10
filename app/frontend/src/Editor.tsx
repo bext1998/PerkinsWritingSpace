@@ -22,6 +22,8 @@ export interface EditorHandle {
     scrollToLine: (line: number) => void;
     selection: () => Selection | null;
     focus: () => void;
+    // IME 組字中(SPEC §17.3):自動存檔要避開組字,由編輯器本身的狀態回答(元件外的狀態可能漏事件)
+    composing: () => boolean;
     // 開啟搜尋面板;replace=true 時展開並聚焦「取代為」欄(全域 Ctrl+F/Ctrl+H 用,§16 第 24 項第一層)
     openSearch: (replace?: boolean) => void;
 }
@@ -553,6 +555,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             setTimeout(() => row?.classList.remove("cm-flash"), 1300);
         },
         selection: currentSelection,
+        composing: () => !!(view.current?.composing || view.current?.compositionStarted),
         focus: () => view.current?.focus(),
     }));
 

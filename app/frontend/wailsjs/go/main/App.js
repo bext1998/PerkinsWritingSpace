@@ -226,6 +226,10 @@ export function SetActiveModel(arg1, arg2) {
   return window['go']['main']['App']['SetActiveModel'](arg1, arg2);
 }
 
+export function SetAutosave(arg1) {
+  return window['go']['main']['App']['SetAutosave'](arg1);
+}
+
 export function SetChapterStatus(arg1, arg2) {
   return window['go']['main']['App']['SetChapterStatus'](arg1, arg2);
 }
