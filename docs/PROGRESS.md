@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-11 — Perkins Bot 提案前先確認原文(Issue #34 第 6 項)
+
+- **系統提示**(`app/internal/agent/agent.go` 的 `systemPrompt`)在 propose_patch 那條後新增一條:提案前先用 `read_document` 讀取目標檔,或確認作者本次附加、目前文件的內容;`original` 從讀到的內容逐字複製,不要憑記憶或摘要改寫。G1–G4 相關句子一字未動。
+- **`propose_patch` 失敗訊息**(`app/internal/proposal/proposal.go` 的 `Create`,由 `agent.go` 的 `runTool` 原樣回給模型):「在目標檔中找不到 original」與「original 在檔案中出現 N 次」兩則補上「先用 read_document 讀取該檔確認原文」。只改訊息文字:判定規則(`n == 0` / `n > 1`)與既有子字串(「找不到」、「N 次」)不變,既有測試斷言不需修改。
+- **測試**:新增 `agent_test.go` 的 `TestSystemPromptTellsModelToReadOriginalBeforeProposing`(系統提示含 `read_document`、逐字複製、不要憑記憶)與 `proposal_test.go` 的 `TestCreateErrorTellsModelToReadDocumentFirst`(兩則失敗訊息都含 `read_document` 提示)。**破壞驗證 3 輪**:①拿掉系統提示新增那條 → FAIL;②拿掉「找不到」訊息的提示 → FAIL(報找不到那個 case);③拿掉「出現 N 次」訊息的提示 → FAIL(報出現多次那個 case)。還原後 `go test -count=1 ./internal/...` 全部通過,`go vet ./internal/...` 無訊息。
+- **SPEC**:沒有描述提案工具錯誤訊息或系統提示原則的段落,未改動。
+- **未做**:不改提案判定、套用、儲存邏輯,不改其他工具;本任務未涉及介面,E2E 不適用。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。

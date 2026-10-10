@@ -329,6 +329,21 @@ func TestReportModeHasNoProposeTool(t *testing.T) {
 	}
 }
 
+// 意圖:模型憑記憶或摘要寫 original 會「找不到原文/出現多次」來回重試;系統提示要它先讀原文再逐字複製。
+func TestSystemPromptTellsModelToReadOriginalBeforeProposing(t *testing.T) {
+	a, _, _ := setup(t)
+	msgs, err := a.BuildMessages(AskParams{Question: "q", Doc: "manuscript/第一章.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := msgs[0].Content
+	for _, want := range []string{"read_document", "逐字複製", "不要憑記憶"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("系統提示缺少 %q:\n%s", want, sys)
+		}
+	}
+}
+
 // B6 意圖:AI 草擬的摘要在作者儲存前不存在於任何檔案或上下文;儲存後章節被改,摘要要標示可能過期。
 func TestSummaryDraftNotUsedUntilSavedAndStaleAfterEdit(t *testing.T) {
 	a, s, dir := setup(t)
