@@ -206,6 +206,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         const all = [...tree.manuscript, ...tree.canon, ...tree.outline, ...tree.notes];
         for (const k of [...posMemo.current.keys()]) if (!all.some(e => e.path === k)) posMemo.current.delete(k);
         if (!current) return;
+        // 摘要檔(summaries/)不在樹上,但作品健康檢查會從問題清單點開它們:不當成已被刪除
+        if (current.startsWith('summaries/')) return;
         if (!all.some(e => e.path === current)) {
             loaded.current = null;
             setCurrent(null);

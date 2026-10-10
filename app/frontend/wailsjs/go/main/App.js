@@ -98,6 +98,10 @@ export function GetTree() {
   return window['go']['main']['App']['GetTree']();
 }
 
+export function HealthCheck() {
+  return window['go']['main']['App']['HealthCheck']();
+}
+
 export function IgnoreVariant(arg1) {
   return window['go']['main']['App']['IgnoreVariant'](arg1);
 }
