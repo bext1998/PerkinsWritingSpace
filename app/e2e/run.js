@@ -38,6 +38,7 @@ const SUITES = [
     ['close-guard', '關閉前存檔保護、對話框關閉鈕、聊天浮窗拖曳'],
     ['layout-half', '半螢幕 640 互斥、窄寬度工具列與更多選單'],
     ['search-editor', '搜尋/取代面板、IME 組字防護、編輯器手感(位置記憶/縮放/貼上)'],
+    ['paper', '稿紙化:一個 Enter 一段、隱藏段落空行與 Markdown 標記'],
 ];
 
 const printUsage = () => {
@@ -53,6 +54,7 @@ const printUsage = () => {
     console.log('  改章節/書櫃/平台輸出/摘要 → shelf layout-visual');
     console.log('  改研究記錄                → research');
     console.log('  改存檔流程                → save-flow error-guard close-guard');
+    console.log('  改編輯器呈現/Enter 行為    → paper search-editor');
     console.log('  改錯誤防護/關閉保護       → error-guard close-guard');
     console.log('  改設定頁版面              → settings-layout');
     console.log('  改半螢幕/窄寬度版面       → layout-half layout-visual');
