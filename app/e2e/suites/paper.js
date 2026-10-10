@@ -371,6 +371,12 @@ module.exports = {
             await settle(120, 900);
         };
 
+        // 受控起點:作者的真實設定可能在任何檔位(例如字級已選特大),先用同一個設定入口把三項
+        // 設成預設值並等待套用,再量 m0(否則預設外觀與變更幅度斷言會假失敗);作者的偏好由
+        // E2E 外層的 settings.json 備份還原契約負責還原,不在此另存另還。
+        await pickPaper('paper-width', '44rem');
+        await pickPaper('paper-font-size', '1.08rem');
+        await pickPaper('paper-gap', '0.7em');
         await setDoc(LDOC);
         const m0 = await layout();
         check('#44 稿紙版面預設值等於第一階段畫面(字級 1.08rem、段距 0.7em、版心 44rem)',
