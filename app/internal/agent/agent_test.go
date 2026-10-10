@@ -302,6 +302,84 @@ func TestOutlineAndNotesProtectedLikeCanon(t *testing.T) {
 	}
 }
 
+// writeMatches 在 path 寫入 n 行都含 keyword 的內容(測試搜尋筆數用)。
+func writeMatches(t *testing.T, a *Agent, path, keyword string, n int) {
+	t.Helper()
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "第 %d 行提到%s。\n", i, keyword)
+	}
+	if err := a.Proj.WriteFile(path, b.String()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 意圖:搜尋結果被截斷時,模型必須知道總筆數,不能以為符合的只有 30 筆;
+// 但片段仍只回傳 30 筆(不得為了計數而多回片段)。
+func TestSearchOverLimitReportsTotalCount(t *testing.T) {
+	a, _, _ := setup(t)
+	writeMatches(t, a, "manuscript/第一章.md", "龍", 45)
+	out, err := a.search("龍", gate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != searchMaxHits+1 {
+		t.Fatalf("應只回傳 %d 筆片段再加一行說明, got %d 行:\n%s", searchMaxHits, len(lines), out)
+	}
+	if n := strings.Count(out, "提到龍。"); n != searchMaxHits {
+		t.Errorf("片段數應為 %d, got %d", searchMaxHits, n)
+	}
+	hint := lines[len(lines)-1]
+	for _, want := range []string{"共 45 筆", "只列出前 30 筆", "更精確的關鍵字"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("截斷說明應包含 %q, got %q", want, hint)
+		}
+	}
+}
+
+// 意圖:沒有被截斷時輸出照舊,不多一行雜訊。
+func TestSearchAtOrUnderLimitHasNoNotice(t *testing.T) {
+	for _, n := range []int{searchMaxHits, searchMaxHits - 1, 1} {
+		a, _, _ := setup(t)
+		writeMatches(t, a, "manuscript/第一章.md", "龍", n)
+		out, err := a.search("龍", gate{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "只列出前") || strings.Contains(out, "共 ") {
+			t.Errorf("%d 筆不應出現截斷說明:\n%s", n, out)
+		}
+		if got := len(strings.Split(out, "\n")); got != n {
+			t.Errorf("%d 筆應回傳 %d 行, got %d", n, n, got)
+		}
+	}
+}
+
+// G2 意圖:計數同樣只看作者附加的受保護檔案,不能因為計數而讓未附加檔案的內容或檔名曝光。
+func TestSearchTotalCountsOnlyVisibleFiles(t *testing.T) {
+	a, _, _ := setup(t)
+	writeMatches(t, a, "manuscript/第一章.md", "龍", searchMaxHits)
+	writeMatches(t, a, "notes/伏筆.md", "龍", 5)
+	out, err := a.search("龍", gate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "共 ") {
+		t.Errorf("未附加的受保護檔案不應計入總數:\n%s", out)
+	}
+	if strings.Contains(out, "伏筆") {
+		t.Errorf("未附加的受保護檔案不應出現在結果:\n%s", out)
+	}
+	out, err = a.search("龍", gate{"notes/伏筆.md": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "共 35 筆") {
+		t.Errorf("附加後的受保護檔案應計入總數(30+5):\n%s", out)
+	}
+}
+
 // B5 意圖:「只檢查」的請求不能變成偷改——不提供提案工具,模型硬要呼叫也會被拒絕並記錄。
 func TestReportModeHasNoProposeTool(t *testing.T) {
 	a, s, dir := setup(t)

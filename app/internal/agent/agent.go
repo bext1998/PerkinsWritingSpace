@@ -235,12 +235,18 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 	return "", "", fmt.Errorf("未實作的工具 %s", name)
 }
 
+// searchMaxHits 是 search_project 一次回傳的片段上限(不變;超過只多附一行總筆數)。
+const searchMaxHits = 30
+
+// search 只回傳前 searchMaxHits 筆片段,但會計數全部符合的行數;
+// 超過上限時在最後附一行總筆數,讓模型知道結果被截斷(不再累積多餘的片段字串)。
 func (a *Agent) search(q string, g gate) (string, error) {
 	files, err := a.Proj.AllFiles()
 	if err != nil {
 		return "", err
 	}
 	var hits []string
+	total := 0
 	for _, f := range files {
 		if !g.ok(f) {
 			continue
@@ -250,21 +256,27 @@ func (a *Agent) search(q string, g gate) (string, error) {
 			continue
 		}
 		for _, line := range strings.Split(text, "\n") {
-			if strings.Contains(line, q) {
-				if r := []rune(line); len(r) > 120 {
-					line = string(r[:120]) + "…"
-				}
-				hits = append(hits, f+": "+strings.TrimSpace(line))
-				if len(hits) >= 30 {
-					return strings.Join(hits, "\n"), nil
-				}
+			if !strings.Contains(line, q) {
+				continue
 			}
+			total++
+			if len(hits) >= searchMaxHits {
+				continue
+			}
+			if r := []rune(line); len(r) > 120 {
+				line = string(r[:120]) + "…"
+			}
+			hits = append(hits, f+": "+strings.TrimSpace(line))
 		}
 	}
-	if len(hits) == 0 {
+	if total == 0 {
 		return "沒有找到符合的內容。", nil
 	}
-	return strings.Join(hits, "\n"), nil
+	out := strings.Join(hits, "\n")
+	if total > searchMaxHits {
+		out += fmt.Sprintf("\n共 %d 筆,只列出前 %d 筆;請改用更精確的關鍵字。", total, searchMaxHits)
+	}
+	return out, nil
 }
 
 func gateFor(p AskParams) gate {
