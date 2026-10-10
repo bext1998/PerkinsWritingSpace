@@ -10,7 +10,8 @@ module.exports = {
         const os = require('os');
         await ctx.ensureProject('第一章', 'manuscript');
         // ===== 搜尋/取代(SPEC §16 第 24 項第一層;返工:安靜精簡兩列面板)=====
-        const editorTxt = () => page.$$eval('.cm-content .cm-line', els => els.map(e => e.textContent).join('\n'));
+        // 稿紙化後畫面行不再等於文件行、也不等於檔案文字:讀 CodeMirror state(DEV hook)
+        const editorTxt = () => page.evaluate(() => window.__perkinsEditor.doc());
         const openPanel = async key => { await page.keyboard.press(key); await page.waitForSelector('.perkins-search', {timeout: 5000}); };
         await page.setViewportSize({width: 1440, height: 900});
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
@@ -351,7 +352,7 @@ module.exports = {
             await page.setViewportSize({width: 1440, height: 900});
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
-            const docText = () => page.evaluate(() => document.querySelector('.cm-content').innerText);
+            const docText = () => page.evaluate(() => window.__perkinsEditor.doc());
             await page.evaluate(() => {
                 const dt = new DataTransfer();
                 dt.setData('text/plain', '甲乙\r\n丙丁\r');
@@ -689,7 +690,7 @@ module.exports = {
         await page.waitForSelector('[data-testid=chapter-row]:has-text("標點測試")', {timeout: 15000});
         await page.click('[data-testid=chapter-row]:has-text("標點測試")');
         await page.waitForSelector('.cm-content:has-text("森林深處")', {timeout: 15000});
-        const docText = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent).join('\n'));
+        const docText = () => page.evaluate(() => window.__perkinsEditor.doc());
         const editorPos = () => page.evaluate(() => window.__perkinsEditor?.pos() ?? null);
         const endCursor = async () => { await page.click('.cm-content'); await page.keyboard.press('Control+End'); await settle(80, 400); };
         const selectLast = async n => { for (let i = 0; i < n; i++) await page.keyboard.press('Shift+ArrowLeft'); await settle(80, 400); };
@@ -760,7 +761,21 @@ module.exports = {
                 const box = await page.locator('.cm-content').boundingBox();
                 await page.mouse.click(box.x + box.width - 40, box.y + 100, {button: 'right'});
             } else {
-                await page.click('.cm-content', {button: 'right', position: {x: 200, y: 120}});
+                // 稿紙化後文字位置會變(段首縮排、段距、隱藏空行),固定像素會落到不同字元上:
+                // 改以「森林深處」那一行的文字框算位置(最後一個字的右側、行的垂直中心),
+                // 四次插入才會像原本一樣依序累積在同一處
+                const at = await page.evaluate(() => {
+                    const line = [...document.querySelectorAll('.cm-content .cm-line')].find(l => l.textContent.includes('森林深處'));
+                    const box = line.getBoundingClientRect();
+                    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+                    let last = null;
+                    for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.trim()) last = n;
+                    const range = document.createRange();
+                    range.selectNodeContents(last);
+                    const tr = range.getBoundingClientRect();
+                    return {x: Math.round(tr.right - 2), y: Math.round(box.top + box.height / 2)};
+                });
+                await page.mouse.click(at.x, at.y, {button: 'right'});
             }
             await page.waitForSelector('.ctxmenu', {timeout: 5000});
             await page.hover('[data-testid=punct-submenu]');
@@ -904,13 +919,8 @@ module.exports = {
         await page.waitForSelector('.cm-content:has-text("開場文字")', {timeout: 15000});
         await settle(80, 800);
         // 游標所在行(1 起算)、行內欄位與該行文字
-        const caretAt = () => page.evaluate(() => {
-            const p = window.__perkinsEditor?.pos();
-            const lines = [...document.querySelectorAll('.cm-content .cm-line')].map(e => e.textContent);
-            const before = lines.join('\n').slice(0, p.head);
-            const line = before.split('\n').length;
-            return {line, col: before.length - (before.lastIndexOf('\n') + 1), text: lines[line - 1], head: p.head};
-        });
+        // 行號/欄位一律以文件行為準(稿紙化前畫面行 = 文件行,語意不變),直接讀 state
+        const caretAt = () => page.evaluate(() => window.__perkinsEditor.cursor());
         // 換掉章節內容:全選後走 CM 的貼上路徑(與作者操作同一條路徑,也比逐行打字快)
         const setDoc = async text => {
             await page.click('.cm-content');
@@ -923,10 +933,11 @@ module.exports = {
             await settle(80, 600);
             return docText();
         };
+        // 用 state 直接定位到第 n 個文件行行首(稿紙化後方向鍵會跳過隱藏空行,按鍵次數不再等於行數;
+        // 方向鍵本身的真實行為在 paper 組驗)
         const cursorToLine = async n => {
             await page.click('.cm-content');
-            await page.keyboard.press('Control+Home');
-            for (let i = 1; i < n; i++) await page.keyboard.press('ArrowDown');
+            await page.evaluate(n => window.__perkinsEditor.setCursor(n), n);
             await settle(80, 300);
         };
 

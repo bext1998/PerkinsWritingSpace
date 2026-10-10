@@ -9,6 +9,26 @@
 - **返工(codex 審查 3 Major,Orchestrator 直接修)**:(1)讀檔失敗不再略過:任何一檔讀不到(被其他程式獨占、沒有權限)整次檢查失敗並帶出路徑,走既有錯誤提示,不顯示「沒有發現問題」。(2)連結目標改為逐字讀出:目標內成對的括號是路徑的一部分(`好(1).md`)、`\(`/`\)` 取字面;行內程式碼(`…`、``…``)內的不算。(3)URL 解碼後把 `\` 換成 `/` 再做作品根邊界判斷,`..%5C..%5Coutside.md`、`..\..\outside.md` 不再繞過。新增 Go 回歸(Windows 專用:share mode 0 獨占檔案);破壞驗證 4 輪(吞掉讀檔錯誤、不去行內程式碼、不認成對括號、不換反斜線)各讓對應測試 FAIL,還原後通過。E2E `bible` 34/34。
 - **複審返工(codex 複審 1 項,Orchestrator 直接修)**:行內程式碼改在整段(空行/圍欄之間)上辨識,可跨行;辨識到的換成佔位字元而不是刪掉,`[說明]`+行內程式碼+`(x.md)` 不會拼成假連結。新增 2 個回歸;破壞驗證(改回刪除、改回逐行)各讓測試 FAIL,還原後通過。
 
+## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
+
+- **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
+- **三個實作上的坑(都實測過,註解寫在 `paper.ts`)**:
+  1. **block decoration 不能由 ViewPlugin 提供**(CM 會拋 「Block decorations may not be specified via plugins」):藏段落空行只能放 `StateField`,那份整份文件算一次空行;行內標記與行樣式仍然只算可見範圍前後各 60 行。
+  2. **語法高亮的 mark 會蓋掉同範圍的 replace decoration**(CM 在 `openStart` 分支不建立 widget):`# ` 前綴用 replace 藏不掉,畫面照樣出現 `#`;改用 `mark` + `display:none`。
+  3. **`atomicRanges` 只移動「嚴格落在範圍內」的位置**:只蓋那一個換行的原子範圍,左右方向鍵會停在隱藏空行的邊界上;原子範圍改成比 decoration 前後各寬一格。
+- **實作期間發現並修掉的漏**:Enter 的 guard 原本只判斷程式碼區塊、沒判斷 frontmatter。行尾按 Enter 的結果剛好與預設相同,舊檢查看不出來;改成「在行首按 Enter」(段落化會補 `
+
+`、預設只補一個 `
+`)才暴露,已修。
+- **E2E**:新增 `app/e2e/suites/paper.js`(29 項檢查,另加共用的「頁面沒有 JavaScript 錯誤」):段落化 Enter(段中/段尾/軟換行/程式碼區塊/frontmatter/IME 組字)、一次 Ctrl+Z、段首 Backspace 與段尾 Delete 合併(含多個空行的間隔)、(箭頭)/(左右)方向鍵與點擊不落在隱藏空行、多空行只藏分隔那一個、標記隱藏與游標回到該行時還原、◇◇◇、註解弱化、段距與段首縮排(computed style)、既有稿件開檔存檔逐位元組不變、640 寬不出水平捲軸、專用檔清理;附深/淺色與 640 寬截圖。
+- **既有測試的觀察方式(經 Orchestrator 裁決)**:`search-editor.js` 的 `editorTxt`/兩處 `docText`/`caretAt`/`cursorToLine` 改讀 CodeMirror state(`__perkinsEditor.doc()/cursor()`),check() 名稱、比較條件、期望值一字未改,`caretAt` 行號以文件行為準。原因是稿紙化後「作者看到的畫面」不再等於檔案文字,而 `cursorToLine` 用 ArrowDown 次數定位會被隱藏空行跳過。`openMenu` 的右鍵位置改依「森林深處」那一行的文字框(固定像素在版面改變後會落到不同字元)。三階段:改前 **87/97** → helper 改後 **95/97** → openMenu 改後 **97/97**。`Editor.tsx` 的 DEV hook 另加 `doc()`/`cursor()`/`setCursor()`(只在 `import.meta.env.DEV` 下,正式建置不含)。
+- **破壞驗證 18 輪**(拿掉對應實作 → 該項必須 FAIL → 還原):R1 Enter 綁定、R2 插入拆成兩次 dispatch、R2b Shift+Enter 接到段落化、R3 程式碼區塊/frontmatter 判斷、R4 IME 防護、R5 不藏空行、R6 原子範圍+行盒不收起、R7 Backspace/Delete 綁定、R8 標記隱藏、R9 忽略 touching、R10 ◇◇◇ widget、R11 註解弱化、R12 段落樣式、R13 置中、R14 區塊內也套用、R15 存檔時正規化(錯誤寫法)、R16 段落不換行(版面溢出)、R17 清理;18 輪都讓對應檢查 FAIL。
+- **`--all`(全新 fixture,冷啟動)**:497/497 passed(略過 8,184 秒)= main 基準 468 項 + paper 組新增 29 項、零 FAIL;既有 15 組的檢查數與基準逐一相同(沒有退步)。
+- **效能(實測)**:約 7.6 萬字章節(2212 行),按鍵到畫面更新中位數 **13.2ms**、最大 **20.1ms**(40 次),捲到中段 149ms——不低於 SPEC §17.3 的既有基準(中位數約 20ms、最大約 30ms)。
+- **未做(第二階段)**:名稱/別名比對提示、可調版心寬度、字級/段距設定、打字機捲動、專注模式。
+- **待作者實機**:真實注音/倉頡組字下的 Enter 與 decoration 不會跳動(#47;無頭環境只能用合成/CDP 組字事件驗)。
+- **返工(codex 審查 2 Major,Orchestrator 直接修)**:(1)段首 Backspace/段尾 Delete 的合併沒排除程式碼區塊與 frontmatter,會跨過可見空行把兩行接起來(`a: x`+`b: y` → `a: xb: y`)→ 兩端任一在區塊內就走預設行為。(2)呈現契約:原本單一換行後的行畫成同段續行,與「複製為平台格式」每個非空行一段不一致(以單一換行分段的既有稿件會看成一大段)→ 每個非空白的一般行都套段落樣式;檔案格式、Enter 雙換行、匯出規則不變。新增 2 項 E2E(區塊內行首 Backspace),Shift+Enter 檢查改為兩行各是一段。破壞驗證:拿掉區塊判斷 → 2 項 FAIL;改回續行判斷 → Shift+Enter 項 FAIL(第一次執行被書櫃 race 中斷,重跑得到結果);還原後 `paper` 32/32,全新 fixture `--all` 499/499 passed,略過 8 項,184s。
+
 ## 2026-10-10 — 提案審查改為可調整大小的懸浮視窗(Issue #35)
 
 - **新元件 `ProposalReview.tsx`**:`fixed` 懸浮、標題列可拖曳、CSS `resize: both` 可調整大小,預設 `min(900px,92vw)`×`min(640px,85vh)` 置中;開啟與視窗縮放時限制回可見範圍(照 #55 ChatWindow 的 effect)。層級 `z-50` 在聊天浮窗(`z-40`)之上。
