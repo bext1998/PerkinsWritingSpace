@@ -173,47 +173,64 @@ func linkIssues(p *project.Project, files []string, texts map[string]string) []I
 	return out
 }
 
+// linkTargets 以段落(空行或程式碼區塊圍欄之間的連續行)為單位找連結:行內程式碼可以跨行,
+// 要在整段上辨識才不會把跨行範例裡的 [x](y) 當成連結。
 func linkTargets(text string) []string {
 	var out []string
+	var para []string
+	flush := func() {
+		if len(para) == 0 {
+			return
+		}
+		s := maskCodeSpans(strings.Join(para, "\n"))
+		para = para[:0]
+		for _, m := range linkOpenRe.FindAllStringIndex(s, -1) {
+			if t := linkDest(s[m[1]:]); t != "" {
+				out = append(out, t)
+			}
+		}
+	}
 	fence := false
 	for _, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			flush()
 			fence = !fence
 			continue
 		}
 		if fence {
 			continue
 		}
-		line = stripCodeSpans(line)
-		for _, m := range linkOpenRe.FindAllStringIndex(line, -1) {
-			if t := linkDest(line[m[1]:]); t != "" {
-				out = append(out, t)
-			}
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
 		}
+		para = append(para, line)
 	}
+	flush()
 	return out
 }
 
-// stripCodeSpans 拿掉行內程式碼(`…`、“…“):裡面的 [x](y) 只是文字範例,不是連結。
+// maskCodeSpans 把行內程式碼(`…`、“…“,可跨行)換成一個佔位字元:裡面的 [x](y) 只是文字範例,不是連結;
+// 用佔位而不是刪掉,免得 [說明]`範例`(x.md) 兩側被拼成假連結。
 // 開頭的反引號串要有等長的反引號串收尾才算;沒有收尾就照原樣保留。
-func stripCodeSpans(line string) string {
+func maskCodeSpans(s string) string {
 	run := func(i int) int {
 		j := i
-		for j < len(line) && line[j] == '`' {
+		for j < len(s) && s[j] == '`' {
 			j++
 		}
 		return j - i
 	}
 	var b strings.Builder
-	for i := 0; i < len(line); {
-		if line[i] != '`' {
-			b.WriteByte(line[i])
+	for i := 0; i < len(s); {
+		if s[i] != '`' {
+			b.WriteByte(s[i])
 			i++
 			continue
 		}
 		n, end := run(i), -1
-		for j := i + n; j < len(line); {
-			if line[j] != '`' {
+		for j := i + n; j < len(s); {
+			if s[j] != '`' {
 				j++
 				continue
 			}
@@ -225,10 +242,11 @@ func stripCodeSpans(line string) string {
 			j += m
 		}
 		if end < 0 {
-			b.WriteString(line[i : i+n])
+			b.WriteString(s[i : i+n])
 			i += n
 			continue
 		}
+		b.WriteByte(0)
 		i = end
 	}
 	return b.String()
@@ -254,7 +272,7 @@ func linkDest(s string) string {
 		case c == '\\' && i+1 < len(s) && (s[i+1] == '(' || s[i+1] == ')'):
 			i++
 			b.WriteByte(s[i])
-		case c == ' ' || c == '\t':
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
 			return b.String()
 		case c == '(':
 			depth++
