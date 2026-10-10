@@ -174,6 +174,65 @@ module.exports = {
             await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
         }
 
+        // ===== 作者指示 AGENTS.md(Issue #38):作品層進 system 訊息、超上限不送出且有原因 =====
+        // 本段自己寫/刪作品根目錄的 AGENTS.md,不污染 fixture 原始內容;全域層(%APPDATA%)不動,
+        // 斷言只針對作品層,不依賴全域是否存在。
+        const agFile = path.join(PROJ, 'AGENTS.md');
+        fs.writeFileSync(agFile, '作者指示E2E:回覆請一律用繁體中文,提到森林時稱「紫斑蝶E2E森林」。');
+        await page.fill('[data-testid=question]', 'q');
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview]');
+        let pvAg = await page.textContent('[data-testid=preview]');
+        check('作品 AGENTS.md 以標題進入 system 訊息',
+            pvAg.includes('【作者指示:作品 AGENTS.md】') && pvAg.includes('紫斑蝶E2E森林'),
+            pvAg.slice(0, 80));
+        check('預覽可看出兩層衝突時以作品層為準', pvAg.includes('以作品層為準'));
+        await page.keyboard.press('Escape');
+        // 超過 4000 估算 tokens:整份不送出,預覽與對話都要看得到原因(不靜默截斷)
+        fs.writeFileSync(agFile, '超長指示。'.repeat(2100)); // 10500 字 → 約 10504 tokens > 4000
+        await page.click('[data-testid=preview-btn]');
+        await page.waitForSelector('[data-testid=preview]');
+        pvAg = await page.textContent('[data-testid=preview]');
+        const noticeEl = await page.$('[data-testid=agents-notice]');
+        check('超上限的作品 AGENTS.md 不送出且預覽顯示原因',
+            !!noticeEl && (await noticeEl.textContent()).includes('作品 AGENTS.md 超過長度上限') && !pvAg.includes('超長指示'),
+            noticeEl ? await noticeEl.textContent() : '(無 notice)');
+        await page.keyboard.press('Escape');
+        // 送出時對話也要有通知:照 research R3,暫時切到死端點走完整 Ask 路徑(不呼叫真模型)。
+        // 切端點後要開關設定頁讓 Workspace 重讀設定,否則對話框沿用舊(雲端)端點會被送出前確認擋住。
+        const origAg = await page.evaluate(() => window.go.main.App.GetSettings());
+        const origAgModel = origAg.profiles.find(p => p.id === origAg.active).model;
+        const DEADAG = 'e2e-dead-agents';
+        let deadAgCreated = false;
+        try {
+            await page.evaluate(id => window.go.main.App.SaveProfile(
+                {id, name: 'E2E 死端點(AGENTS 通知)', baseUrl: 'http://127.0.0.1:9/v1', model: 'e2e', contextTokens: 16384}, null), DEADAG);
+            deadAgCreated = true;
+            await page.evaluate(id => window.go.main.App.SetActiveModel(id, 'e2e'), DEADAG);
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=close-settings]');
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            await page.waitForSelector('[data-testid=chat-window]:visible');
+            // 模型鈕顯示 e2e 才代表設定已重讀
+            await page.waitForFunction(() => document.querySelector('[data-testid=model-btn]')?.textContent.trim() === 'e2e', null, {timeout: 5000});
+            await page.fill('[data-testid=question]', 'q');
+            await page.click('[data-testid=send]');
+            await page.waitForSelector('[data-testid=notice]', {timeout: 10000});
+            const notices = await page.$$eval('[data-testid=notice]', els => els.map(e => e.textContent).join('\n'));
+            check('送出時對話出現未送出原因的 notice', notices.includes('作品 AGENTS.md 超過長度上限'));
+            await page.waitForSelector('[data-testid=send]', {timeout: 30000}); // 等請求結束(連線失敗)
+        } finally {
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origAg.active, origAgModel]);
+            if (deadAgCreated) await page.evaluate(id => window.go.main.App.DeleteProfile(id), DEADAG);
+            await page.click('[data-testid=open-settings]'); // 重讀設定,還原成原端點
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=close-settings]');
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)'); // 清掉問題與錯誤狀態
+        }
+        fs.rmSync(agFile, {force: true});
+
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
 
         // 版本

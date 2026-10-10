@@ -1178,3 +1178,261 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
 	}
 }
+
+// ---- 作者指示 AGENTS.md(Issue #38):全域 + 作品兩層,進 system 訊息 ----
+
+// writeAgents 寫入一份作者指示檔,回傳其路徑。
+func writeAgents(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func sysOf(t *testing.T, msgs []llm.Message) string {
+	t.Helper()
+	if len(msgs) == 0 || msgs[0].Role != "system" {
+		t.Fatalf("第一則應是 system 訊息, got %+v", msgs[0])
+	}
+	return msgs[0].Content
+}
+
+// 意圖:兩層都有時,以「全域 → 作品」順序放在既有系統規則之後,標題可辨識來源,並說明衝突時作品層優先、不得改變 G1–G4。
+func TestAuthorInstructionsBothLayersAfterSystemRules(t *testing.T) {
+	a, _, dir := setup(t)
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), "作品層指示:稱呼作者為「老師」。")
+	g := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeAgents(t, g, "全域層指示:回覆結尾加上一句鼓勵。")
+	a.GlobalAgentsPath = g
+	sys := sysOf(t, mustMsgs(t, a, AskParams{Question: "q"}))
+	// 既有系統規則在最前(不變),其後才是作者指示
+	if !strings.HasPrefix(sys, systemPrompt) {
+		t.Fatal("系統提示既有文字應保持在前、不被改動")
+	}
+	gi, wi := strings.Index(sys, "【作者指示:全域 AGENTS.md】"), strings.Index(sys, "【作者指示:作品 AGENTS.md】")
+	if gi < 0 || wi < 0 || gi > wi {
+		t.Fatalf("應先全域再作品, got 全域@%d 作品@%d", gi, wi)
+	}
+	if gi < len(systemPrompt) {
+		t.Fatal("作者指示應放在既有系統規則之後")
+	}
+	if !strings.Contains(sys, "回覆結尾加上一句鼓勵") || !strings.Contains(sys, "稱呼作者為「老師」") {
+		t.Fatal("兩層內容都應在 system 訊息中")
+	}
+	if !strings.Contains(sys, "以作品層為準") || !strings.Contains(sys, "不能改變前面的系統規則") {
+		t.Fatal("應說明衝突時作品層優先、且作者指示不能改變系統規則")
+	}
+}
+
+// 意圖:兩份都沒有時 system 訊息與原本完全相同(不混入說明文字)。
+func TestAuthorInstructionsNoneKeepsSystemPrompt(t *testing.T) {
+	a, _, _ := setup(t)
+	if got := sysOf(t, mustMsgs(t, a, AskParams{Question: "q"})); got != systemPrompt {
+		t.Fatalf("沒有作者指示時 system 訊息應不變, got %q", got)
+	}
+	if got := sysOf(t, mustMsgs(t, a, AskParams{Question: "q", Mode: ModeReport})); got != systemPrompt+reportPrompt {
+		t.Fatalf("報告模式沒有作者指示時 system 訊息應不變, got %q", got)
+	}
+}
+
+// 意圖:只有一層時只出現該層,仍附上不得改變規則的說明。
+func TestAuthorInstructionsSingleLayer(t *testing.T) {
+	a, _, dir := setup(t)
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), "作品層指示")
+	sys := sysOf(t, mustMsgs(t, a, AskParams{Question: "q"}))
+	if !strings.Contains(sys, "【作者指示:作品 AGENTS.md】") || strings.Contains(sys, "【作者指示:全域 AGENTS.md】") {
+		t.Fatalf("應只有作品層: %q", sys)
+	}
+	g := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeAgents(t, g, "全域層指示")
+	os.Remove(filepath.Join(dir, "AGENTS.md")) // 換成只剩全域層
+	a.GlobalAgentsPath = g
+	sys = sysOf(t, mustMsgs(t, a, AskParams{Question: "q"}))
+	if !strings.Contains(sys, "【作者指示:全域 AGENTS.md】") || strings.Contains(sys, "【作者指示:作品 AGENTS.md】") {
+		t.Fatalf("應只有全域層: %q", sys)
+	}
+}
+
+// 意圖:每次組裝都重讀,作者改檔後不必重啟。
+func TestAuthorInstructionsRereadEachBuild(t *testing.T) {
+	a, _, dir := setup(t)
+	f := filepath.Join(dir, "AGENTS.md")
+	writeAgents(t, f, "第一版指示")
+	if !strings.Contains(sysOf(t, mustMsgs(t, a, AskParams{Question: "q"})), "第一版指示") {
+		t.Fatal("第一版應在上下文")
+	}
+	writeAgents(t, f, "第二版指示")
+	sys := sysOf(t, mustMsgs(t, a, AskParams{Question: "q"}))
+	if strings.Contains(sys, "第一版指示") || !strings.Contains(sys, "第二版指示") {
+		t.Fatal("應重讀檔案內容")
+	}
+}
+
+// 意圖:單份超過 4000 估算 tokens 時整份不送出(不靜默截斷),原因出現在預覽與對話通知;另一層不受影響。
+func TestAuthorInstructionsOverLimitNotSentWithNotice(t *testing.T) {
+	a, s, dir := setup(t)
+	big := strings.Repeat("字", agentsLimit+100) // 4204 估算 tokens > 4000
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), big)
+	g := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeAgents(t, g, "全域層指示")
+	a.GlobalAgentsPath = g
+
+	pv, err := a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := sysOf(t, pv.Messages)
+	if strings.Contains(sys, "字字") {
+		t.Fatal("超過上限的作品層不應送出")
+	}
+	if !strings.Contains(sys, "全域層指示") {
+		t.Fatal("另一層不受影響,仍應送出")
+	}
+	n := EstimateTokens([]llm.Message{{Content: strings.TrimSpace(big)}})
+	if len(pv.Notices) != 1 || !strings.Contains(pv.Notices[0], fmt.Sprintf("作品 AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", n, agentsLimit)) {
+		t.Fatalf("預覽應附上明確原因, got %+v", pv.Notices)
+	}
+
+	var events []Event
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatal(err)
+	}
+	var noticed bool
+	for _, e := range events {
+		if e.Kind == "notice" && strings.Contains(e.Text, "作品 AGENTS.md 超過長度上限") {
+			noticed = true
+		}
+	}
+	if !noticed {
+		t.Fatal("對話中應出現 notice 事件說明未送出原因")
+	}
+	if strings.Contains(sysOf(t, s.reqs[0].Messages), "字字") {
+		t.Fatal("實際送出也不應包含超過上限的作品層")
+	}
+}
+
+// 意圖:讀取失敗(非不存在)要讓錯誤浮上來,不吞掉。
+func TestAuthorInstructionsReadFailureSurfaces(t *testing.T) {
+	a, _, dir := setup(t)
+	if err := os.MkdirAll(filepath.Join(dir, "AGENTS.md"), 0o755); err != nil { // 目錄:讀取必然失敗
+		t.Fatal(err)
+	}
+	if _, err := a.BuildMessages(AskParams{Question: "q"}); err == nil || !strings.Contains(err.Error(), "AGENTS.md") {
+		t.Fatalf("讀取失敗應回錯, got %v", err)
+	}
+	g := filepath.Join(t.TempDir(), "AGENTS.md")
+	os.MkdirAll(g, 0o755)
+	a.GlobalAgentsPath = g
+	if _, err := a.BuildMessages(AskParams{Question: "q"}); err == nil {
+		t.Fatal("全域層讀取失敗也應回錯")
+	}
+}
+
+// 意圖:作者指示放進 system 訊息,自然計入上下文預算(既有 EstimateTokens/Preview);報告模式套用、摘要與濃縮不套用;預覽 = 實際送出(A6)。
+func TestAuthorInstructionsBudgetReportAndPreviewMatchesSend(t *testing.T) {
+	a, s, dir := setup(t)
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), strings.Repeat("指", 500)) // 500 估算 tokens
+	base, err := a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 拿掉作品層再估一次,證明有算進預算
+	os.Remove(filepath.Join(dir, "AGENTS.md"))
+	plain, err := a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := base.Tokens - plain.Tokens; d < 500 {
+		t.Fatalf("作者指示應計入上下文預算, 差 %d tokens", d)
+	}
+
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), strings.Repeat("指", 500))
+	// 報告模式也套用
+	sys := sysOf(t, mustMsgs(t, a, AskParams{Question: "q", Mode: ModeReport}))
+	if !strings.Contains(sys, reportPrompt) || !strings.Contains(sys, "【作者指示:作品 AGENTS.md】") {
+		t.Fatal("報告模式應同時有報告規則與作者指示")
+	}
+	// 章節摘要(summaryPrompt)不套用
+	s.replies = []llm.Message{{Role: "assistant", Content: "摘要內容"}}
+	if _, err := a.DraftSummary(context.Background(), "manuscript/第一章.md", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(s.reqs[0].Messages[0].Content, "【作者指示") {
+		t.Fatal("章節摘要請求不應套用作者指示")
+	}
+	// 對話濃縮(compactPrompt)不套用
+	a.History = []llm.Message{}
+	for i := 0; i < compactKeep+2; i++ {
+		a.History = append(a.History, llm.Message{Role: "user", Content: fmt.Sprintf("第 %d 則較早對話", i)})
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "濃縮摘要"}}
+	if err := a.compact(context.Background(), func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(s.reqs[0].Messages[0].Content, "【作者指示") {
+		t.Fatal("對話濃縮請求不應套用作者指示")
+	}
+	// 預覽 = 實際送出(A6)
+	p := AskParams{Question: "q", Doc: "manuscript/第一章.md", Attachments: []string{"canon/characters.md"}}
+	preview := mustMsgs(t, a, p)
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), p, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sent := s.reqs[len(s.reqs)-1].Messages // 先前的 DraftSummary/compact 也占 s.reqs,取本次 ask 的請求
+	if len(sent) != len(preview) {
+		t.Fatalf("預覽 %d 則,實際送出 %d 則", len(preview), len(sent))
+	}
+	for i := range sent {
+		if sent[i].Content != preview[i].Content || sent[i].Role != preview[i].Role {
+			t.Errorf("第 %d 則訊息預覽與實際送出不一致", i)
+		}
+	}
+}
+
+// 意圖:作品根目錄的 AGENTS.md 只進 system 訊息;Bot 的工具(讀取/搜尋/提案)與附加都碰不到它,也不能被附加(Issue #38 第 6 項)。
+func TestToolsCannotReachWorkspaceAgentsFile(t *testing.T) {
+	a, s, dir := setup(t)
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), "獨家暗號:紫斑蝴蝶")
+	if _, _, err := a.runTool("read_document", `{"path":"AGENTS.md"}`, gate{}); err == nil {
+		t.Error("read_document 不應能讀取作品根目錄的 AGENTS.md")
+	}
+	if _, _, err := a.runTool("read_document", `{"path":"./AGENTS.md"}`, gate{}); err == nil {
+		t.Error("相對路徑寫法也不應繞過限制")
+	}
+	if _, prID, err := a.runTool("propose_patch", `{"path":"AGENTS.md","original":"x","replacement":"y","rationale":"r"}`, gate{}); err == nil || prID != "" {
+		t.Error("propose_patch 不應能對作品根目錄的 AGENTS.md 提案")
+	}
+	if r, _, err := a.runTool("search_project", `{"query":"紫斑蝴蝶"}`, gate{}); err != nil || strings.Contains(r, "紫斑蝴蝶") {
+		t.Errorf("search_project 不應搜到作品根目錄的 AGENTS.md: %q err=%v", r, err)
+	}
+	if _, err := a.BuildMessages(AskParams{Question: "q", Attachments: []string{"AGENTS.md"}}); err == nil {
+		t.Error("AGENTS.md 不應能被附加")
+	}
+	// 內容只出現在 system 訊息一次,不會因工具或附加再進上下文
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	for i, m := range s.reqs[0].Messages {
+		if i == 0 {
+			continue // system 訊息本來就該有
+		}
+		if strings.Contains(m.Content, "紫斑蝴蝶") {
+			t.Errorf("AGENTS.md 內容不應出現在第 %d 則(%s)訊息", i, m.Role)
+		}
+	}
+}
+
+func mustMsgs(t *testing.T, a *Agent, p AskParams) []llm.Message {
+	t.Helper()
+	msgs, err := a.BuildMessages(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return msgs
+}
