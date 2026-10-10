@@ -1,5 +1,16 @@
 # PROGRESS.md
 
+## 2026-10-10 — E2E 重用開發伺服器(Issue #48 B)
+
+- **做法(不加任何 Go 入口)**:新增 `--reuse` 模式(`app/e2e/run.js` + `lib.js`):偵測 34115 上已有的 `wails dev`,重建 fixture → 呼叫既有產品綁定 `OpenProjectAt(測試專案)` → 重載頁面。後端的作品狀態由 `setProject` 整個換掉:`proj`(含記憶體中的 perkins.json)、`agent`(對話與提案快取)、`research`、在途 `cancel`;`session`(研究記錄的 app-run id)與 `quitConfirmed` 是應用層狀態不是作品狀態,不換。前端重載頁面即回到冷啟動的起始畫面。
+- **為何不改用 dev-only 綁定**:`wails dev` 每次啟動都會重新產生 `frontend/wailsjs` 綁定(本次實測:內容相同、只有行尾差異),若新增 `//go:build dev` 的 `DevReloadProject`,這兩份已進版控的綁定檔會在 dev/build 之間反覆來回(作者跑 `wails dev` 就會看到 dirty);而 `OpenProjectAt` 本來就是作者從書櫃換作品在用的同一條路徑,重用不必新增入口,正式建置的綁定集合與 main 完全相同。
+- **`--reuse` 不自己啟動伺服器**:沒有 34115 時直接報錯並提示啟動指令;`--reuse` 可放任意位置(`node run.js --reuse --all`)。
+- **耗時(實測,同一台機器)**:`wails dev` 第一次編譯 41.4 秒、之後冷啟動 20.8 秒;`bible` 一組冷啟動一輪 56.4 秒(0.1 重建 + 41.4 啟動 + 14.9 測試)對 `--reuse` 15.0 秒;重載本身 619 ms。
+- **驗證**:(b) 冷啟動 `--all` 468/468 passed(略過 8)176.1 秒;(a) 同一台 dev server 上 `--reuse --all` 連跑兩輪各 468/468(175.6 / 175.1 秒),檢查數與冷啟動逐組相同。(c) 破壞驗證:把重載改成不重新開啟作品(模擬漏掉 perkins.json 快取),先用 `RenameProject` 造出「記憶體與磁碟不一致」,`--reuse titlebar-zen` → 「標題欄 作品畫面標題為作品名」FAIL(28/29,記憶體還留著舊名字);把重載放回去,同情境 29/29 通過。(d) 正式建置:`go build -tags production ./...` 與 `wails build` 都成功,`perkins.exe` 內沒有任何 dev/E2E 專用符號,建置後 `wailsjs`/`go.mod` 無內容差異;本次只改 `app/e2e/{run,lib}.js` 與文件,沒有新增綁定。
+- **文件**:`.agent/skills/e2e/SKILL.md` 新增「重用同一個 wails dev(`--reuse`)」一節(何時可以 reuse、何時一定要冷啟動、如何確定測到新程式、等價性實測數字),並改寫原本「重建測試專案後必須重啟 `wails dev`」與「部分組假設全新 fixture」兩條陷阱(改為:冷啟動或 `--reuse` 二選一)。
+- **返工(codex 審查 1 Major + 1 Minor,Orchestrator 直接修)**:(1)會呼叫模型的執行被中斷時,後端舊請求與研究記錄可能還在跑,重新開啟作品不會等它結束,會寫進下一輪的新 fixture → `--reuse` 只能搭配 `E2E_SKIP_AI=1`(否則 run.js 報錯退出),跑模型一律冷啟動;不改產品的請求生命週期。(2)只寫 `--reuse` 沒寫組名時印用法並非零退出(原本會重建 fixture 後回報成功)。兩個防護各實測非零退出;`--reuse bible` 23/23。
+- **複審(codex)**:零組已解;run.js 只看得到本輪環境變數,「前輪跑過模型、本輪 skip-AI 再 reuse」仍可能撞到舊請求 → SKILL.md 明訂:跑過模型或中途中斷的 `wails dev` 一律先冷啟動,不得 reuse。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
