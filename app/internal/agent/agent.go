@@ -17,7 +17,16 @@ import (
 	"perkins/internal/proposal"
 	"perkins/internal/research"
 	"perkins/internal/summary"
+	"perkins/internal/wordcount"
 )
+
+// baseTitle 回傳路徑的檔名(去 .md),作為沒有一級標題時的章名。
+func baseTitle(rel string) string {
+	return strings.TrimSuffix(filepath.Base(filepath.FromSlash(rel)), ".md")
+}
+
+// CountText 字數計算與狀態列同一套(SPEC §15)。
+func CountText(s string) int { return wordcount.CountText(s) }
 
 const DefaultMaxIter = 8
 
@@ -39,12 +48,12 @@ const ModeReport = "report"
 // AskParams 是一次提問的輸入。
 type AskParams struct {
 	Question       string   `json:"question"`
-	Doc            string   `json:"doc"`            // 目前開啟的檔案(相對路徑),可空
-	Selection      string   `json:"selection"`      // 選取的文字,可空
-	Attachments    []string `json:"attachments"`    // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
-	Mode           string   `json:"mode"`           // "" = 一般;report = 檢查報告(不提供提案工具,B5)
-	PriorSummaries bool     `json:"priorSummaries"` // 附上本章之前已確認的章節摘要
-	QuickID        string   `json:"quickId,omitempty"` // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
+	Doc            string   `json:"doc"`                   // 目前開啟的檔案(相對路徑),可空
+	Selection      string   `json:"selection"`             // 選取的文字,可空
+	Attachments    []string `json:"attachments"`           // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
+	Mode           string   `json:"mode"`                  // "" = 一般;report = 檢查報告(不提供提案工具,B5)
+	PriorSummaries bool     `json:"priorSummaries"`        // 附上本章之前已確認的章節摘要
+	QuickID        string   `json:"quickId,omitempty"`     // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
 	QuickEdited    bool     `json:"quickEdited,omitempty"` // 作者送出前改過快速指令帶入的問題文字(只記布林,不記改前全文)
 	// DocDraft 只供 Preview 使用的目前文件編輯器草稿(PR #54 返工):背景用量預覽在作者未存檔時也以草稿估算;
 	// Ask 路徑不用(送出前已存檔,磁碟內容與草稿相同,AskAI 會清除它)。nil = 未提供;空字串 = 作者清空了全文,不是未提供。
@@ -127,6 +136,11 @@ var toolDefs = []llm.ToolDef{
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
 	},
 	{
+		Name:        "list_files",
+		Description: "列出作品的檔案清單(唯讀、不需參數):依卷與章節順序列出稿件(含章名、路徑、字數)、可用的章節摘要,以及作者本次附加的 canon/、outline/、notes/ 檔案。",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+	},
+	{
 		Name:        "propose_patch",
 		Description: "對某檔案提出一項修改提案(不會直接修改檔案,需作者審核接受)。original 須逐字複製原文且在檔案中唯一。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"original":{"type":"string","description":"要被替換的原文,逐字且唯一"},"replacement":{"type":"string"},"rationale":{"type":"string","description":"為什麼這樣改"},"assumptions":{"type":"array","items":{"type":"string"},"description":"你做了哪些假設或推測"}},"required":["path","original","replacement","rationale"]}`),
@@ -206,6 +220,9 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		}
 		r, err := a.search(p.Query, g)
 		return r, "", err
+	case "list_files":
+		r, err := a.listFiles(g)
+		return r, "", err
 	case "propose_patch":
 		var p struct {
 			Path        string   `json:"path"`
@@ -265,6 +282,74 @@ func (a *Agent) search(q string, g gate) (string, error) {
 		return "沒有找到符合的內容。", nil
 	}
 	return strings.Join(hits, "\n"), nil
+}
+
+// listFiles 組出給模型讀的檔案清單(唯讀):
+// 稿件依 perkins.json 的卷與章節順序(與側欄一致,沿用 project 的卷章解析),
+// 另列 summaries/ 中存在的摘要;canon/、outline/、notes/ 只列作者本次附加的檔案(G2,沿用同一個 gate)。
+func (a *Agent) listFiles(g gate) (string, error) {
+	tree, err := a.Proj.Tree()
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("【稿件】(依卷與章節順序)\n")
+	for _, v := range tree.Volumes {
+		if v.Title != "" {
+			fmt.Fprintf(&b, "◆ %s\n", v.Title)
+		}
+		for _, e := range v.Chapters {
+			title := baseTitle(e.Path)
+			words := ""
+			if text, err := a.Proj.ReadFile(e.Path); err == nil {
+				if h := firstHeading(text); h != "" {
+					title = h
+				}
+				words = fmt.Sprintf(" %d字", CountText(text))
+			}
+			fmt.Fprintf(&b, "- %s %s%s\n", e.Path, title, words)
+		}
+	}
+	files, err := a.Proj.AllFiles()
+	if err != nil {
+		return "", err
+	}
+	var sums, prot []string
+	for _, f := range files {
+		switch project.KindOf(f) {
+		case project.SummariesDir:
+			sums = append(sums, f)
+		case project.CanonDir, project.OutlineDir, project.NotesDir:
+			if g.ok(f) { // 未附加的受保護檔案不出現(B2/G2)
+				prot = append(prot, f)
+			}
+		}
+	}
+	b.WriteString("【摘要】(summaries/,作者確認過的章節摘要)\n")
+	if len(sums) == 0 {
+		b.WriteString("(無)\n")
+	}
+	for _, s := range sums {
+		fmt.Fprintf(&b, "- %s\n", s)
+	}
+	if len(prot) > 0 {
+		b.WriteString("【作者本次附加】\n")
+		for _, f := range prot {
+			fmt.Fprintf(&b, "- %s\n", f)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// firstHeading 回傳文件第一個 `# ` 一級標題的文字;沒有則空字串。
+func firstHeading(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(t, "# "))
+		}
+	}
+	return ""
 }
 
 func gateFor(p AskParams) gate {
@@ -462,10 +547,10 @@ func (a *Agent) historyTokens() int {
 func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string, error) {
 	start := time.Now()
 	var ( // 本次 ask 的研究記錄資料
-		requests    []researchRequest // 依序列出每次實際送出的請求
-		toolCalls   []researchToolCall
-		pIDs        []string // 本次建立的提案 id
-		replyText   string
+		requests       []researchRequest // 依序列出每次實際送出的請求
+		toolCalls      []researchToolCall
+		pIDs           []string // 本次建立的提案 id
+		replyText      string
 		result, errMsg string
 	)
 	result = "ok"
@@ -590,7 +675,7 @@ func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText strin
 	d := map[string]any{
 		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
 		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
-		"sent": len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
+		"sent":     len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
 		"requests": requests, "reply": replyText, "toolCalls": tcs,
 		"proposalIds": pIDs, "elapsedMs": time.Since(start).Milliseconds(),
 		"result": result, "error": errMsg,

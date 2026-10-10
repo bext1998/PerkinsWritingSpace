@@ -13,19 +13,19 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"
-	"perkins/internal/publish"
 	"perkins/internal/llm"
 	"perkins/internal/notion"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/publish"
 	"perkins/internal/research"
 	"perkins/internal/settings"
 	"perkins/internal/snapshot"
 	"perkins/internal/summary"
+	"perkins/internal/wordcount"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -416,35 +416,8 @@ func (a *App) TrashFile(rel string) (*project.Tree, error) {
 	return a.proj.Tree()
 }
 
-// CountText 計算字數:不含空白、Markdown 記號(標題 #、強調 *_~、引用 >、程式碼 `)與 HTML 註解(作者筆記)。
-// 以程式計算,讓狀態列與各章字數用同一套規則。
-func CountText(s string) int {
-	for {
-		i := strings.Index(s, "<!--")
-		if i < 0 {
-			break
-		}
-		j := strings.Index(s[i:], "-->")
-		if j < 0 {
-			s = s[:i]
-			break
-		}
-		s = s[:i] + s[i+j+3:]
-	}
-	n := 0
-	for _, line := range strings.Split(s, "\n") {
-		if t := strings.TrimLeft(line, " \t"); strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "+ ") {
-			line = t[2:] // 清單記號
-		}
-		for _, r := range line {
-			if unicode.IsSpace(r) || strings.ContainsRune("*_~`#>|", r) {
-				continue
-			}
-			n++
-		}
-	}
-	return n
-}
+// CountText 計算字數(規則見 internal/wordcount;狀態列與 Perkins Bot 的 list_files 用同一套)。
+func CountText(s string) int { return wordcount.CountText(s) }
 
 func (a *App) WordCount(text string) int { return CountText(text) }
 
@@ -789,10 +762,10 @@ type ProfileView struct {
 }
 
 type SettingsView struct {
-	Profiles  []ProfileView     `json:"profiles"`
-	Active    string            `json:"active"`
+	Profiles  []ProfileView      `json:"profiles"`
+	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string            `json:"theme"`
+	Theme     string             `json:"theme"`
 }
 
 func (a *App) GetSettings() SettingsView {
@@ -1027,7 +1000,9 @@ func (a *App) DraftSummary(chapter string) (string, error) {
 		return "", err
 	}
 	start := time.Now()
-	defer func() { _ = a.research.Log("summary_draft", map[string]any{"chapter": chapter, "elapsedMs": time.Since(start).Milliseconds()}) }()
+	defer func() {
+		_ = a.research.Log("summary_draft", map[string]any{"chapter": chapter, "elapsedMs": time.Since(start).Milliseconds()})
+	}()
 	defer a.end(cancel)
 	return ag.DraftSummary(ctx, chapter, func(e agent.Event) { runtime.EventsEmit(a.ctx, "summary:delta", e.Text) })
 }

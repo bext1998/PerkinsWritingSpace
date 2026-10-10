@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-11 — Perkins Bot 新增唯讀工具 list_files(Issue #34 第 2 項)
+
+- **新工具 `list_files`**(`app/internal/agent/agent.go`):不需參數、唯讀;輸出給模型讀的純文字。稿件依 `perkins.json` 卷章順序(與側欄一致,沿用 `project.Tree()` 的 `ResolveVolumes` 解析,未列入卷的檔案照既有規則排最後)、章名取檔內第一個 `# ` 標題(沒有就用檔名)、字數用與狀態列同一套的 `CountText`;另列 `summaries/` 存在的摘要。受保護資料夾(`canon/`、`outline/`、`notes/`)沿用同一個 `gate`(`gateFor`/`g.ok`)過濾,只列作者本次附加的檔案(G2/B2);報告模式可用(`toolsFor` 只排除 `propose_patch`,唯讀工具自然包含)。審計與研究記錄走既有 `runTool` 路徑,無新程式。
+- **字數函式抽離**:`CountText` 從 `app/app.go`(package main,agent 套件無法 import)移到新套件 `app/internal/wordcount`,`app.go` 留同名轉發包裝;狀態列、各章字數與 `list_files` 同一套規則。邏輯逐字未改。
+- **前端**:`ChatWindow.tsx` 工具顯示名稱對照表加 `list_files: '列出檔案'`,其餘不動。
+- **測試**(`list_files_test.go` + 白名單測試更新):卷章順序與 `perkins.json` 一致(兩卷 + 未列入檔案排最後)、章名取一級標題/無標題用檔名、字數含 Markdown 記號與註解排除;未附加的受保護檔案不出現(含內容關鍵字檢查)、附加的會出現;報告模式 `toolsFor` 含 `list_files` 且經 `Ask` 完整流程可呼叫;審計含 `tool_call` 的 `list_files`。
+- **破壞驗證 6 輪**(拿掉對應實作 → 該測試 FAIL → 還原):①倒序列印卷 → 順序測試 FAIL;②拿掉 `g.ok` 檢查 → 附加過濾測試 FAIL;③不用一級標題(一律檔名)→ 章名測試 FAIL;④不算字數 → 字數檢查 FAIL;⑤不列摘要 → 摘要檢查 FAIL;⑥報告模式排除 `list_files` → 報告模式測試 FAIL。還原後全綠。
+- **驗證**:`go test ./internal/...` 全過(含新套件 `wordcount` 編譯);前端僅加顯示名稱字串。未以真實模型 live 驗證 `list_files` 被呼叫(走 scripted 模型)。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
