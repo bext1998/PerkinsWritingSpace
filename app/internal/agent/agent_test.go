@@ -178,8 +178,8 @@ func TestAttachmentsMustBeProjectFiles(t *testing.T) {
 
 func TestWhitelistHasNoWriteTools(t *testing.T) {
 	got := strings.Join(ToolNames(), ",")
-	if got != "read_document,search_project,propose_patch" {
-		t.Fatalf("白名單應是兩個唯讀工具加提案工具,不得有寫入工具, got %s", got)
+	if got != "read_document,search_project,list_files,propose_patch" {
+		t.Fatalf("白名單應是三個唯讀工具加提案工具,不得有寫入工具, got %s", got)
 	}
 }
 

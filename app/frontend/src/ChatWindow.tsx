@@ -190,7 +190,7 @@ export default function ChatWindow(props: Props) {
                 });
             } else if (e.kind === 'tool') {
                 if (e.tool === 'propose_patch') refreshProposals();
-                const label = {read_document: '讀取', search_project: '搜尋', propose_patch: '提出修改提案'}[e.tool ?? ''] ?? e.tool;
+                const label = {read_document: '讀取', search_project: '搜尋', list_files: '列出檔案', propose_patch: '提出修改提案'}[e.tool ?? ''] ?? e.tool;
                 let arg = '';
                 try { const a = JSON.parse(e.args ?? '{}'); arg = a.path ?? a.query ?? ''; } catch { /* 參數不是 JSON 時不顯示 */ }
                 setTurns(t => [...t, {role: 'tool', text: `${e.allowed ? '' : '【已拒絕】'}${label} ${arg}`}]);
