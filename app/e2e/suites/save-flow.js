@@ -148,5 +148,152 @@ module.exports = {
         } else {
             check('E7 開發模式讀檔延遲掛鉤存在', false, 'window.__perkinsReadDelay 不存在(需以 wails dev 開發模式執行)');
         }
+
+        // ---- 定時自動存檔(#36,SPEC §17.3) ----
+        // E2E 預設關掉自動存檔(lib.launch 的 init script,理由見該處註解),這一節明確打開來驗。
+        // 開發模式的間隔掛鉤讓 30 秒上限不必真的等 30 秒;本節結束時把掛鉤與設定還原。
+        if (!(await page.evaluate(() => typeof window.__perkinsAutosaveTiming === 'function'))) {
+            check('#36 自動存檔開發模式間隔掛鉤存在', false, 'window.__perkinsAutosaveTiming 不存在(需以 wails dev 開發模式執行)');
+        } else {
+            const ch2 = 'manuscript/第二章.md';
+            const ch3 = 'manuscript/第三章.md';
+            const autoTiming = (idle, max) => page.evaluate(([i, m]) => window.__perkinsAutosaveTiming(i, m), [idle, max]);
+            const savedState = () => page.waitForSelector('[data-testid=save-button]:has-text("已儲存")[disabled]', {timeout: 10000}).then(() => true).catch(() => false);
+            const typeAtEnd = async text => {
+                await page.click('.cm-content');
+                await page.keyboard.press('Control+End');
+                await page.keyboard.type(text);
+            };
+            // 手動存檔的提示框(3.5 秒)是上一段留下的,等它消失才不會誤判自動存檔跳了提示
+            const waitNoToast = () => page.waitForFunction(() => !document.querySelector('[data-testid=toast]'), null, {timeout: 8000});
+            // 設定頁的「自動存檔」開關:設成指定狀態(不假設目前是哪一邊),後端寫入完成才返回
+            const toggleAutosave = async want => {
+                await page.click('[data-testid=open-settings]');
+                await page.waitForSelector('[data-testid=settings-page]');
+                await page.click('[data-testid=tab-project]');
+                await page.waitForSelector('[data-testid=autosave-switch]');
+                if (await page.getAttribute('[data-testid=autosave-switch]', 'aria-checked') !== want) {
+                    await page.click('[data-testid=autosave-switch]');
+                }
+                await page.waitForFunction(w => document.querySelector('[data-testid=autosave-switch]')?.getAttribute('aria-checked') === w, want, {timeout: 5000});
+                await page.click('[data-testid=close-settings]');
+                await page.waitForSelector('[data-testid=settings-page]', {state: 'detached'});
+                // Workspace 在設定頁關閉時才重讀設定;等 UI 靜下來再打字,不然設定還沒真的生效
+                await settle(80, 700);
+            };
+
+            // 前提:自動存檔是開的(settings.json 的預設值);之前的手動測試若把它關掉也要拉回來
+            await toggleAutosave('true');
+            // (a) 停止輸入約 2 秒後存檔;成功只更新工具列/狀態列,不跳「已儲存」提示框
+            await autoTiming(2000, 30000);
+            await ensureProject('第二章', 'manuscript');
+            await waitNoToast();
+            await typeAtEnd('autoIdleMark');
+            const idleT0 = Date.now();
+            await page.waitForTimeout(800); // 遠小於 2 秒
+            check('自動存檔 (a) 停止輸入不到 2 秒時尚未寫入磁碟(不是立即存)', !read(ch2).includes('autoIdleMark'));
+            const idleSaved = await savedState();
+            const idleMs = Date.now() - idleT0;
+            check('自動存檔 (a) 未按存檔,磁碟已自動寫入新字', idleSaved && read(ch2).includes('autoIdleMark'), JSON.stringify(read(ch2).slice(-40)));
+            check('自動存檔 (a) 工具列與狀態列顯示已儲存', (await page.textContent('footer')).includes('已儲存'));
+            check('自動存檔 (a) 停止輸入後約 2 秒才存', idleSaved && idleMs >= 1500 && idleMs <= 6000, `${idleMs}ms`);
+            check('自動存檔 (a) 不跳「已儲存」提示框', !(await page.$('[data-testid=toast]')));
+            await shot('16-autosave-idle');
+
+            // (b) 持續打字不停:距第一個未存變更最多 30 秒也存一次。
+            // 開發模式縮成 idle 20 秒 / 上限 0.8 秒:每次輸入間隔遠小於 idle,只有上限能觸發,
+            // 不必真的等 30 秒;驗證時距也在 20 秒內,證明存檔不是「停止輸入」觸發的
+            await autoTiming(20000, 800);
+            const capT0 = Date.now();
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            for (let i = 0; i < 12; i++) {
+                await page.keyboard.type(`capMark${i}`);
+                await page.waitForTimeout(150);
+            }
+            let capElapsed = -1;
+            for (let i = 0; i < 20; i++) {
+                if (read(ch2).includes('capMark0')) { capElapsed = Date.now() - capT0; break; }
+                await page.waitForTimeout(150);
+            }
+            check('自動存檔 (b) 持續打字不停時仍會存檔(上限觸發,非停止輸入)', capElapsed >= 0 && capElapsed < 20000, `elapsed=${capElapsed}ms(idle 20000ms)`);
+            // 手動存完讓 (c) 從已儲存開始(idle 還是 20 秒,不能用等待)
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+s');
+            await savedState();
+            await autoTiming(2000, 30000);
+
+            // (c) IME 組字中不存:合成 compositionstart(無頭環境無真實 IME,與 #46 既有做法相同),
+            // 組字中打字超過 2 秒仍不存,compositionend 後才存
+            const imeBefore = read(ch2);
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+            });
+            await page.keyboard.type('imeMark');
+            await page.waitForTimeout(2600);
+            check('自動存檔 (c) 組字中不存檔', read(ch2) === imeBefore && !read(ch2).includes('imeMark'));
+            check('自動存檔 (c) 組字中維持未儲存', (await page.textContent('footer')).includes('未儲存'));
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: 'imeMark'}));
+            });
+            const imeSaved = await savedState();
+            check('自動存檔 (c) 組字結束後會存檔', imeSaved && read(ch2).includes('imeMark'), JSON.stringify(read(ch2).slice(-40)));
+
+            // (c2) 自動存檔已經在寫的途中才開始組字(PR #65 審查 Major):存完第一輪後,
+            // 不得接著把組字中的字寫進磁碟;組字結束後才存
+            // 前置:乾淨狀態下先按一次 Ctrl+S(無事可存的手動存檔),不得讓之後的自動存檔變成「全部落盤」(PR #65 複審)
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+s');
+            await settle(80, 300);
+            await page.evaluate(() => window.__perkinsSaveDelay(1200));
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('inflightA');
+            await page.waitForSelector('[data-testid=save-button][aria-label="儲存中…"]', {timeout: 6000}); // 自動存檔第一輪已開始(卡在延遲)
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+            });
+            await page.keyboard.type('inflightB');
+            await page.waitForTimeout(3200); // 超過第一輪與(若有)第二輪的延遲
+            const inflight = read(ch2);
+            check('自動存檔 (c2) 存檔途中開始組字:組字中的字不落盤(第一輪的字已存)',
+                inflight.includes('inflightA') && !inflight.includes('inflightB'), JSON.stringify(inflight.slice(-40)));
+            await page.evaluate(() => {
+                document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: 'inflightB'}));
+            });
+            const inflightSaved = await savedState();
+            check('自動存檔 (c2) 組字結束後組字內容落盤', inflightSaved && read(ch2).includes('inflightB'), JSON.stringify(read(ch2).slice(-40)));
+            await page.evaluate(() => window.__perkinsSaveDelay(0));
+
+            // (d) 打字後 2 秒內切到另一章:舊章的字存進舊章檔案,新章不被寫入舊章內容
+            await ensureProject('第二章', 'manuscript');
+            const ch3Before = read(ch3);
+            await typeAtEnd('switchMark');
+            await page.click('[data-testid=chapter-row]:has-text("第三章")');
+            await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第三章'), null, {timeout: 15000});
+            // 等超過自動存檔的 2 秒:計時器沒有隨切檔清掉的話,這段時間就會把舊章的文字寫到新章
+            await page.waitForTimeout(2600);
+            check('自動存檔 (d) 切章後舊章的字存進舊章檔案', read(ch2).includes('switchMark'), JSON.stringify(read(ch2).slice(-40)));
+            check('自動存檔 (d) 新章沒有被寫入舊章內容', read(ch3) === ch3Before && !read(ch3).includes('switchMark'));
+
+            // (e) 設定頁關掉「自動存檔」:關掉後打字不會自動存,手動 Ctrl+S 照舊(含提示框)
+            await toggleAutosave('false');
+            await waitNoToast();
+            const offBefore = read(ch3);
+            await typeAtEnd('autoOffMark');
+            await page.waitForTimeout(2600); // 超過 2 秒
+            check('自動存檔 (e) 設定關閉後打字不會自動存檔', read(ch3) === offBefore && !read(ch3).includes('autoOffMark'));
+            check('自動存檔 (e) 設定關閉後維持未儲存', (await page.textContent('footer')).includes('未儲存'));
+            await page.keyboard.press('Control+s');
+            const offSaved = await savedState();
+            check('自動存檔 (e) 手動 Ctrl+S 仍可存檔', offSaved && read(ch3).includes('autoOffMark'), JSON.stringify(read(ch3).slice(-40)));
+            // 提示框在存檔 Promise 解析後才跳,等到它出現再看(前面已確認畫面上沒有舊的提示)
+            const manualToast = await page.waitForSelector('[data-testid=toast]', {timeout: 5000}).then(() => true).catch(() => false);
+            check('自動存檔 (e) 手動存檔仍跳「已儲存」提示框', manualToast);
+            await toggleAutosave('true'); // 測完還原設定
+            // 後續測試組回到預設(自動存檔關):本節已在 (b)(c) 手動存完,沒有待存內容
+            await page.evaluate(() => window.__perkinsAutosaveOff());
+        }
     },
 };

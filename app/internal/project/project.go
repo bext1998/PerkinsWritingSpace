@@ -448,6 +448,12 @@ func ParseScenes(text string) []Scene {
 	return out
 }
 
+// ResolveVolumes 的警告字首。呼叫者用它們辨識警告種類(作品健康檢查沿用同一套判斷,不另寫規則)。
+const (
+	WarnMissingChapter = "順序清單中的檔案不存在,已忽略: "
+	WarnUnlistedFile   = "檔案未列入順序,已排在最後: "
+)
+
 // ResolveVolumes 依 SPEC §10:卷中存在的檔案依序;列入但不存在者忽略並警告(不修改設定);
 // 未列入任何卷者依檔名排在最後一卷尾端並警告。
 func ResolveVolumes(vols []Volume, files []string) ([]Volume, []string) {
@@ -468,7 +474,7 @@ func ResolveVolumes(vols []Volume, files []string) ([]Volume, []string) {
 			if exists[r] {
 				nv.Chapters = append(nv.Chapters, r)
 			} else {
-				warns = append(warns, "順序清單中的檔案不存在,已忽略: "+r)
+				warns = append(warns, WarnMissingChapter+r)
 			}
 		}
 		out = append(out, nv)
@@ -481,7 +487,7 @@ func ResolveVolumes(vols []Volume, files []string) ([]Volume, []string) {
 	}
 	sort.Strings(extra)
 	for _, f := range extra {
-		warns = append(warns, "檔案未列入順序,已排在最後: "+f)
+		warns = append(warns, WarnUnlistedFile+f)
 	}
 	if len(extra) > 0 {
 		if len(out) == 0 {

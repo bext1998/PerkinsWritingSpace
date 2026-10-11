@@ -38,11 +38,28 @@ const devSaveDelay = {ms: 0};
 const devReadDelay = {ms: 0};
 const devSaveFailOnce = {once: false};
 
+// 定時自動存檔(SPEC §17.3):停止輸入 AUTOSAVE_IDLE_MS 後存檔;持續打字不停時,
+// 距第一個未存變更最多 AUTOSAVE_MAX_MS 也存一次。組字中的重試間隔夠短,作者不會察覺延遲。
+const AUTOSAVE_IDLE_MS = 2000;
+const AUTOSAVE_MAX_MS = 30000;
+const AUTOSAVE_COMPOSE_RECHECK_MS = 200;
+// 開發模式專用:E2E 用 __perkinsAutosaveTiming(idle, max) 縮短間隔(驗 30 秒上限不必真的等),
+// __perkinsAutosaveOff() 關掉;lib.launch 的 init script 會先設 __perkinsE2eAutosaveOff,
+// 讓既有測試維持「打字後仍是未存狀態」的假設(自動存檔的測試自己再打開)
+const devAutosave = {idle: AUTOSAVE_IDLE_MS, max: AUTOSAVE_MAX_MS, off: false};
+
 if (import.meta.env.DEV) {
     (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
     (window as any).__perkinsReadDelay = (ms: number) => { devReadDelay.ms = ms; };
     (window as any).__perkinsSaveFailOnce = () => { devSaveFailOnce.once = true; };
     (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
+    (window as any).__perkinsAutosaveTiming = (idle?: number, max?: number) => {
+        devAutosave.off = false;
+        devAutosave.idle = idle ?? AUTOSAVE_IDLE_MS;
+        devAutosave.max = max ?? AUTOSAVE_MAX_MS;
+    };
+    (window as any).__perkinsAutosaveOff = () => { devAutosave.off = true; };
+    if ((window as any).__perkinsE2eAutosaveOff) devAutosave.off = true;
 }
 
 
@@ -79,14 +96,32 @@ export interface Toast {
 
 // 提案寫入的文字在重載後全文中的位置(#45 a):後端回傳的 start 是實際寫入處的位元組偏移
 // (重新定位套用時也已更新),換成字元位置;刪除(寫入空字串)沒有可標示的範圍。
-function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
-    const written = p.authorEdited ? p.final ?? '' : p.replacement;
-    if (!written) return null;
-    const from = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text).slice(0, p.start)).length; // 保留 BOM:編輯器內容也含它
-    if (text.slice(from, from + written.length) !== written) return null; // 重載內容與寫入結果不符(期間檔案又變了):不標
+// 一段文字在編輯器中的位置:start 是後端記錄的位元組位置;內容不符時回 null
+function editorRange(text: string, start: number, s: string): {from: number; to: number} | null {
+    const from = new TextDecoder('utf-8', {ignoreBOM: true}).decode(new TextEncoder().encode(text).slice(0, start)).length; // 保留 BOM:編輯器內容也含它
+    if (!s || text.slice(from, from + s.length) !== s) return null;
     // 編輯器把 \r\n 當成一個換行:CRLF 檔案要扣掉前面的 \r 才是編輯器位置
     const cm = (i: number) => i - (text.slice(0, i).match(/\r\n/g)?.length ?? 0);
-    return {from: cm(from), to: cm(from + written.length)};
+    return {from: cm(from), to: cm(from + s.length)};
+}
+
+function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
+    // 重載內容與寫入結果不符(期間檔案又變了):不標
+    return editorRange(text, p.start, p.authorEdited ? p.final ?? '' : p.replacement);
+}
+
+// 待審提案的原文位置(#45 方案 A「在稿件中顯示」):先用提案記錄的位置;作者在前面打過字而位移時,
+// 改用原文在檔案中唯一的出現處(與後端接受時的放寬規則一致);找不到或不唯一就回 null,不猜位置
+// 退回搜尋時以編輯器的換行表示比對:作者一編輯,編輯器回傳的全文就把 \r\n 換成 \n,
+// 而提案原文仍是磁碟上的 CRLF(PR #66 審查);兩邊都把 \r\n 視為一個換行,索引即是編輯器位置
+function originalRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
+    const r = editorRange(text, p.start, p.original);
+    if (r) return r;
+    const lf = (s: string) => s.replace(/\r\n/g, '\n');
+    const t = lf(text), o = lf(p.original);
+    const i = t.indexOf(o);
+    if (!o || i < 0 || t.indexOf(o, i + 1) >= 0) return null;
+    return {from: i, to: i + o.length};
 }
 
 export default function Workspace({tree, setTree, onClose, onSettings, settingsVersion}: Props) {
@@ -206,6 +241,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         const all = [...tree.manuscript, ...tree.canon, ...tree.outline, ...tree.notes];
         for (const k of [...posMemo.current.keys()]) if (!all.some(e => e.path === k)) posMemo.current.delete(k);
         if (!current) return;
+        // 摘要檔(summaries/)不在樹上,但作品健康檢查會從問題清單點開它們:不當成已被刪除
+        if (current.startsWith('summaries/')) return;
         if (!all.some(e => e.path === current)) {
             loaded.current = null;
             setCurrent(null);
@@ -225,16 +262,24 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 迴圈每輪記下當輪的 current+text 配對,切檔後以新的 latest 判斷,不會寫錯檔。
     const saveInFlight = useRef<Promise<void> | null>(null);
     const [saving, setSaving] = useState(false);
-    const save = useCallback((): Promise<void> => {
-        if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
+    // 只由自動存檔發起的這一輪,遇到 IME 組字就停下(組字內容不落盤,組字結束後自動存檔會再接手);
+    // 手動存檔、切章、關閉等呼叫者一加入就改回「全部落盤才結束」(PR #65 審查)
+    const saveAll = useRef(false);
+    const save = useCallback((opts?: {auto?: boolean}): Promise<void> => {
+        if (saveInFlight.current) { // 已在存:回傳同一個 Promise;非自動的呼叫者加入就要全部落盤
+            if (!opts?.auto) saveAll.current = true;
+            return saveInFlight.current;
+        }
         // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
         // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
         if (!(latest.current.current && latest.current.dirty)) return Promise.resolve();
+        saveAll.current = !opts?.auto; // 只在真的開始一輪時設定;無事可存就返回時不得留下旗標(PR #65 複審)
         let run!: Promise<void>; // 閉包 finally 要比對自身;前置檢查保證 IIFE 先在 await 掛起,賦值必在 finally 前
         run = (async () => {
             setSaving(true);
             try {
                 while (latest.current.current && latest.current.dirty) {
+                    if (!saveAll.current && editor.current?.composing()) break;
                     const {current, text} = latest.current;
                     const ver = editVersion.current;
                     if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
@@ -249,6 +294,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
                 }
             } finally {
+                saveAll.current = false;
                 if (saveInFlight.current === run) saveInFlight.current = null;
                 setSaving(false);
             }
@@ -261,6 +307,30 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // refreshCounts/refreshIndex/refreshTree 換掉後 save 會重建,用 ref 才不會存到過期的那份。
     const saveRef = useRef(save);
     saveRef.current = save;
+
+    // 定時自動存檔(SPEC §17.3)。走既有的序列化存檔迴圈:與手動存檔共用同一個 Promise、
+    // 不新增寫檔路徑、不建快照;成功只更新工具列/狀態列的已儲存狀態(不跳提示),失敗照既有錯誤顯示。
+    // 計時器綁在當下的檔案與 dirty 狀態上:切檔、回書櫃(卸載)、唯讀鎖、設定關閉都會清掉或不再排程,
+    // 不會把舊檔的內容寫進新檔。設定載入前(cfg 為 null)照預設值(開啟)。
+    const autosaveOn = cfg?.autosave !== false;
+    const autoTimer = useRef<number | null>(null);
+    const autoSince = useRef<number | null>(null); // 目前這輪未存變更的起算時間(上限用)
+    useEffect(() => {
+        if (autoTimer.current !== null) { clearTimeout(autoTimer.current); autoTimer.current = null; }
+        if (devAutosave.off || !autosaveOn || !dirty || !current || editLocked) { autoSince.current = null; return; }
+        autoSince.current ??= Date.now();
+        const delay = Math.max(0, Math.min(devAutosave.idle, autoSince.current + devAutosave.max - Date.now()));
+        const fire = async () => {
+            autoTimer.current = null;
+            // IME 組字中不存,延到組字結束後再存。組字中可能不再有輸入事件(組字暫停),這裡自己重試;
+            // 重新排程而不清 autoSince:組字結束後仍受同一輪的上限約束
+            if (editor.current?.composing()) { autoTimer.current = window.setTimeout(fire, AUTOSAVE_COMPOSE_RECHECK_MS); return; }
+            autoSince.current = null; // 存完仍 dirty(期間又打字)時,下一輪從新的變更起算
+            try { await saveRef.current({auto: true}); } catch (e) { fail(e); }
+        };
+        autoTimer.current = window.setTimeout(fire, delay);
+        return () => { if (autoTimer.current !== null) { clearTimeout(autoTimer.current); autoTimer.current = null; } };
+    }, [autosaveOn, dirty, text, current, editLocked, fail]);
 
     // 刪除分類(SPEC §12.2 返工#1):由 Workspace 協調——先走序列化存檔迴圈保存未存內容
     // (存檔失敗就中止,不動任何檔案,快照才含作者最新內容),後端完成快照+改歸「其他」後,
@@ -345,6 +415,29 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             if (line) setTimeout(() => editor.current?.scrollToLine(line), 60);
         } catch (e) { fail(e); }
     }, [save, fail]);
+
+    // 審查視窗「在稿件中顯示」(#45 方案 A):目前章節直接捲到原文並短暫標示;別章先開啟,
+    // 由 Editor 掛載時套用(開發模式的 StrictMode 會建立兩次編輯器,見 .agent/memory/editor-strictmode-remount.md)
+    const [revealP, setRevealP] = useState<proposal.Proposal | null>(null);
+    const notFound = useCallback(() => notify({text: '在稿件中找不到這段原文(可能已被修改)。', kind: 'info'}), [notify]);
+    const revealProposal = (p: proposal.Proposal) => {
+        if (p.target === latest.current.current) {
+            const r = originalRange(text, p);
+            if (r) editor.current?.reveal(r.from, r.to);
+            else notFound();
+            return;
+        }
+        setRevealP(p);
+        const nav = openFile(p.target);
+        const seq = navSeq.current; // openFile 一開始就遞增;之後又有切換時序號會變,取消這次定位
+        nav.then(() => { if (navSeq.current !== seq) setRevealP(r => r === p ? null : r); });
+    };
+    useEffect(() => {
+        if (revealP && revealP.target === current) {
+            if (!originalRange(text, revealP)) notFound();
+            setRevealP(null);
+        }
+    }, [reloadKey]);
 
     // 磁碟上的檔案被系統改動(接受提案、還原)後,重新載入編輯器
     // flash:接受提案後要標示的提案,與重載內容同一次提交(#45 a)
@@ -697,7 +790,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     </div>
                 )}
                 {current ? (
-                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} posKey={current} posStore={posMemo.current}
+                    <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} reveal={revealP && revealP.target === current ? originalRange(text, revealP) : null} posKey={current} posStore={posMemo.current}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
@@ -750,7 +843,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             remoteOk={remoteOk} setRemoteOk={setRemoteOk}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} lockEdits={lockEdits} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
