@@ -1723,3 +1723,22 @@ func mustMsgs(t *testing.T, a *Agent, p AskParams) []llm.Message {
 	}
 	return msgs
 }
+
+// 意圖(#40):作者拒絕提案時寫的原因,要真的送到模型手上,之後的提案才會避開同樣的問題;
+// 開新對話(Reset)後不再帶上,避免上一段對話的偏好悄悄延續。
+func TestRejectionReasonSentUntilReset(t *testing.T) {
+	a, s, _ := setup(t)
+	a.NoteRejection(&proposal.Proposal{Target: "manuscript/001.md", Original: "小明走進森林。"}, "太口語")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := s.reqs[0].Messages[0].Content; !strings.Contains(sys, "太口語") || !strings.Contains(sys, "小明走進森林。") {
+		t.Fatalf("拒絕原因應送出: %q", sys)
+	}
+	a.Reset()
+	a.Ask(context.Background(), AskParams{Question: "新對話"}, func(Event) {})
+	if strings.Contains(s.reqs[1].Messages[0].Content, "太口語") {
+		t.Fatal("Reset 後不應再帶上拒絕原因")
+	}
+}

@@ -1081,14 +1081,18 @@ func (a *App) AcceptProposal(id string, edited *string) (*proposal.Proposal, err
 	return p, err
 }
 
-// RejectProposal 拒絕提案並記錄研究事件;回傳提案供呼叫端(目前僅供研究記錄內部使用)。
-func (a *App) RejectProposal(id string) (*proposal.Proposal, error) {
+// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),非空時本次會話的 Bot 會記住。
+func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
 	}
+	reason = strings.TrimSpace(reason)
 	p, err := a.agent.Proposals.Reject(id)
 	if err == nil && p != nil {
-		proposal.LogReject(a.research, p)
+		proposal.LogReject(a.research, p, reason)
+		if reason != "" {
+			a.agent.NoteRejection(p, reason)
+		}
 	}
 	return p, err
 }

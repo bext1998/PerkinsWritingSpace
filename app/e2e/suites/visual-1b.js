@@ -371,6 +371,7 @@ module.exports = {
             '#45 Ctrl+Shift+Enter:選取後開啟 Perkins Bot 並帶入選取',
             '#45 返工 CRLF 多行原文:直接顯示與在原文外打字後都能標示',
             '#45 返工 640 寬已修改狀態:頁尾按鈕都在視窗內且可點',
+            '#40 按「拒絕」先出現選填原因列,確認前提案仍待審;確認後原因送進下一次給 Bot 的系統訊息',
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
@@ -584,9 +585,16 @@ module.exports = {
                 read(revRel).includes('春日終究來了。') && !read(revRel).includes('春日在望。')
                 && JSON.parse(read('.perkins/proposals/20261010-150100-revb.json')).status === 'accepted'
                 && h5.original === '秋風起了。' && h5.count === '第 1 / 1 個', JSON.stringify({head: h5, disk: read(revRel)}));
-            // --- 拒絕最後一個:視窗關閉、提案從待審消失 ---
+            // --- 拒絕最後一個:先填選填原因(#40),確認後視窗關閉、提案從待審消失 ---
             await page.click('[data-testid=review-reject]');
+            await settle(80, 300);
+            const reasonRow = await page.evaluate(() => !!document.querySelector('[data-testid=review-reject-reason]'));
+            const stillPending = JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'pending';
+            await page.fill('[data-testid=review-reject-reason]', '節奏太快');
+            await page.click('[data-testid=review-reject-confirm]');
             await settle(80, 900);
+            const pvSys = await page.evaluate(() => window.go.main.App.PreviewContext({question: 'x'}).then(p => p.messages[0].content));
+            revCheck(REV_CHECKS[22], reasonRow && stillPending && pvSys.includes('節奏太快'), JSON.stringify({reasonRow, stillPending, hasReason: pvSys.includes('節奏太快')}));
             const endState = await page.evaluate(() => ({
                 win: !!document.querySelector('[data-testid=proposal-review]'),
                 cards: [...document.querySelectorAll('[data-testid=proposal]')].map(e => e.textContent),
@@ -631,7 +639,7 @@ module.exports = {
                 });
                 await page.click('[data-testid=review-accept]');
                 await settle(80, 400);
-                await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160200-revy').then(() => window.__perkinsRefreshProposals()));
+                await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160200-revy', '').then(() => window.__perkinsRefreshProposals()));
                 await settle(80, 700);
                 await page.evaluate(() => window.__revRelease());
                 await waitDisk(revRel, '甲改。');
@@ -655,7 +663,7 @@ module.exports = {
             revCheck(REV_CHECKS[15], conf.win && conf.original === '丙句。' && conf.text.includes('無法套用') && !conf.accept,
                 JSON.stringify({...conf, text: conf.text.slice(-60)}));
             // 目前這張從聊天卡片捨棄:視窗關閉;之後縮放視窗不得拋錯(不能留下已卸載內容的監聽器)
-            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160100-revz').then(() => window.__perkinsRefreshProposals()));
+            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160100-revz', '').then(() => window.__perkinsRefreshProposals()));
             await settle(80, 900);
             await page.setViewportSize({width: 1400, height: 880});
             await settle(80, 500);
@@ -717,7 +725,7 @@ module.exports = {
             await page.keyboard.press('Backspace');
             await page.keyboard.press('Control+s');
             await settle(80, 600);
-            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-170000-crlf').then(() => window.__perkinsRefreshProposals()));
+            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-170000-crlf', '').then(() => window.__perkinsRefreshProposals()));
             await settle(80, 500);
         } catch (e) {
             for (const n of REV_CHECKS) if (!revDone.has(n)) check(n, false, e.message);

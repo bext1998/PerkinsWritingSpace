@@ -324,8 +324,8 @@ export default function ChatWindow(props: Props) {
         refreshProposals();
     };
 
-    const reject = async (p: proposal.Proposal) => {
-        try { await RejectProposal(p.id); } catch (e) { setError(errText(e)); }
+    const reject = async (p: proposal.Proposal, reason: string) => {
+        try { await RejectProposal(p.id, reason); } catch (e) { setError(errText(e)); }
         refreshProposals();
     };
 
