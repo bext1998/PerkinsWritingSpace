@@ -49,6 +49,7 @@ module.exports = {
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
@@ -60,6 +61,8 @@ module.exports = {
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await shot('37-1b-inspector-light');
         await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)

@@ -84,6 +84,8 @@ module.exports = {
         const out = await page.textContent('[data-testid=platform-preview]');
         check('平台預覽:兩格縮排、筆記不外流', out.includes('\u3000\u3000清晨的王都很安靜') && !out.includes('伏筆'), JSON.stringify(out));
         await shot('11-settings-platforms');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
@@ -105,6 +107,8 @@ module.exports = {
         await shot('43-brand-chat-title-light');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
 

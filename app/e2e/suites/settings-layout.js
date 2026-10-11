@@ -81,7 +81,7 @@ module.exports = {
             `diff=${g && g.centerDiff}`);
         check('作品頁 900×600 封面與欄位區不重疊', proj900 && !!g && g.coverOverlap === false, `overlap=${g && g.coverOverlap}`);
 
-        // 左側導覽欄(新設計才有;現況 FAIL 屬預期破壞證據)
+        // 左側導覽欄(新設計才有;現況 FAIL 屬預期破壞證據):四頁 — 作品/Perkins Bot/平台輸出/外觀
         const hasNav = !!(await page.$('[data-testid=settings-nav]'));
         let navSwitch = false;
         if (hasNav) {
@@ -91,11 +91,18 @@ module.exports = {
             const n2 = await waitSel('[data-testid=platform-preview]');
             await page.click('[data-testid=tab-project]');
             const n3 = await waitSel('[data-testid=research-row]');
-            navSwitch = n1 && n2 && n3;
+            await page.click('[data-testid=tab-appearance]');
+            const n4 = await waitSel('[data-testid=appearance-theme]');
+            navSwitch = n1 && n2 && n3 && n4;
         }
-        check('設定頁 900×600 左側導覽欄存在且切換三頁正常', hasNav && navSwitch, `nav=${hasNav} switch=${navSwitch}`);
+        check('設定頁 900×600 左側導覽欄存在且切換四頁正常', hasNav && navSwitch, `nav=${hasNav} switch=${navSwitch}`);
 
-        // 主題切換:導覽欄底部、任何頁面可用,且立即保存到設定(SetTheme)
+        // 主題與稿紙版面搬到位於「外觀」頁(Issue #88):導覽欄底部不再放主題與稿紙版面
+        await page.click('[data-testid=tab-project]');
+        await waitSel('[data-testid=research-row]');
+        const navNoTheme = !(await page.isVisible('button:has-text("白紙")')) && !(await page.isVisible('[data-testid=paper-width]'));
+        check('設定頁 導覽欄底部不再放主題與稿紙版面(作品頁看不到了)', navNoTheme);
+        await page.click('[data-testid=tab-appearance]');
         const themeVisible = await page.isVisible('button:has-text("白紙")');
         let themeOk = false;
         if (themeVisible) {
@@ -108,13 +115,13 @@ module.exports = {
             const darkHtml = await page.evaluate(() => document.documentElement.classList.contains('dark'));
             const savedDark = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => null));
             themeOk = lightHtml && savedLight === 'light' && darkHtml && savedDark === 'dark';
-            check('設定頁 主題切換在任何頁面可用且會保存(白紙→夜間書房)', themeOk,
+            check('設定頁 外觀頁主題切換會保存(白紙→夜間書房)', themeOk,
                 JSON.stringify({lightHtml, savedLight, darkHtml, savedDark}));
         } else {
-            check('設定頁 主題切換在任何頁面可用且會保存(白紙→夜間書房)', false, '作品頁看不到「白紙」按鈕');
+            check('設定頁 外觀頁主題切換會保存(白紙→夜間書房)', false, '外觀頁看不到「白紙」主題卡');
         }
 
-        // 截圖:900×600 三頁(現況圖另由一次性腳本拍攝;這裡只在新版面下拍)
+        // 截圖:900×600 四頁(現況圖另由一次性腳本拍攝;這裡只在新版面下拍)
         if (hasNav) {
             await shot('70-settings-project-900');
             await page.click('[data-testid=tab-models]');
@@ -123,7 +130,95 @@ module.exports = {
             await page.click('[data-testid=tab-platforms]');
             await waitSel('[data-testid=platform-preview]');
             await shot('74-settings-platforms-900');
+            await page.click('[data-testid=tab-appearance]');
+            await waitSel('[data-testid=appearance-theme]');
+            await shot('78-settings-appearance-900');
         }
+
+        // ===== 外觀頁(Issue #88):主題選擇卡、稿紙版面每項一列 =====
+        await page.click('[data-testid=tab-appearance]');
+        const app900 = await waitSel('[data-testid=appearance-theme]');
+        await settle(80, 700);
+        g = await geoSettings();
+        check('設定頁 900×600 外觀頁 捲軸在內容區(根節點不滾動)', app900 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 900×600 外觀頁 內容無水平捲軸', app900 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        const paperControls = await page.evaluate(() => ['paper-width', 'paper-font-size', 'paper-gap']
+            .map(t => { const el = document.querySelector(`[data-testid=${t}]`); return !!el; }));
+        check('外觀頁 稿紙版面三項控制項齊全', paperControls.every(Boolean), JSON.stringify(paperControls));
+        // 淺色外觀頁截圖(拍完還原夜間書房)
+        await page.click('button:has-text("白紙")');
+        await settle(80, 700);
+        await shot('79-settings-appearance-900-light');
+        await page.click('button:has-text("夜間書房")');
+        await settle(80, 700);
+
+        // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
+        await page.click('[data-testid=tab-models]');
+        await waitSel('[data-testid=profile-url]');
+        // 從預設新增(#43):帶入名稱、網址、Provider;金鑰欄空白讓作者填
+        const ids0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.profiles.map(p => p.id)));
+        await page.click('[data-testid=preset-select]');
+        await page.waitForSelector('[data-testid=preset-opt-anthropic]');
+        await page.click('[data-testid=preset-opt-anthropic]');
+        // 等表單帶入預設值(切換到新端點後 profile-url 會是預設檔的網址),避免讀到上一個端點的表單
+        await page.waitForFunction(() => (document.querySelector('[data-testid=profile-url]') || {}).value === 'https://api.anthropic.com/v1', null, {timeout: 5000});
+        const added = await page.evaluate(async () => {
+            const s = await window.go.main.App.GetSettings();
+            return s.profiles.map(p => ({id: p.id, name: p.name, baseUrl: p.baseUrl, provider: p.provider, model: p.model, hasKey: p.hasKey}));
+        });
+        const fresh = added.filter(p => !ids0.includes(p.id));
+        const presetOK = fresh.length === 1 && fresh[0].baseUrl === 'https://api.anthropic.com/v1' && fresh[0].provider === 'anthropic' && !fresh[0].hasKey;
+        check('從預設新增端點帶入名稱、網址與 Provider(金鑰留空)', presetOK, JSON.stringify(fresh));
+        const formProvider = (await page.textContent('[data-testid=provider-select]') || '').trim();
+        check('從預設新增後表單顯示 Anthropic 原生', formProvider.includes('Anthropic 原生'), formProvider);
+        // 思考強度選項依 Provider 變化(#30):Anthropic 原生有 更高/最高,保存後寫入設定
+        await page.click('[data-testid=effort-select]');
+        await page.waitForSelector('[data-testid=effort-opt-xhigh]', {timeout: 3000}).catch(() => {});
+        const effortAnthropic = !!(await page.$('[data-testid=effort-opt-xhigh]')) && !!(await page.$('[data-testid=effort-opt-max]'));
+        await page.click('[data-testid=effort-opt-xhigh]');
+        await page.click('[data-testid=save-profile]');
+        const savedEffort = await page.evaluate(async (id) => {
+            // 輪詢設定讀回(等寫入完成),逾時回最後讀到的值讓斷言自己 FAIL
+            const read = async () => {
+                const s = await window.go.main.App.GetSettings();
+                const p = s.profiles.find(x => x.id === id);
+                return p && {provider: p.provider, reasoningEffort: p.reasoningEffort};
+            };
+            for (let i = 0; i < 25; i++) {
+                const cur = await read();
+                if (cur && cur.reasoningEffort === 'xhigh') return cur;
+                await new Promise(r => setTimeout(r, 200));
+            }
+            return read();
+        }, fresh[0] && fresh[0].id);
+        check('思考強度選項依 Provider 變化(Anthropic 有 更高/最高)', effortAnthropic);
+        check('思考強度保存後寫入設定(xhigh)', !!savedEffort && savedEffort.reasoningEffort === 'xhigh', JSON.stringify(savedEffort));
+        // 換回 OpenAI 相容:不合法的值(xhigh)重設為不指定
+        await page.click('[data-testid=provider-select]');
+        await page.waitForSelector('[data-testid=provider-opt-openai]');
+        await page.click('[data-testid=provider-opt-openai]');
+        const effortReset = ((await page.textContent('[data-testid=effort-select]') || '').trim()).includes('不指定');
+        check('切換 Provider 時不合法的思考強度重設為不指定', effortReset);
+        // 清理:刪除本次建立的暫時端點(不動作者既有端點)
+        if (fresh.length === 1) await page.evaluate(id => window.go.main.App.DeleteProfile(id), fresh[0].id);
+
+        // 作者指示(AGENTS.md)編輯(Issue #38):作品層編輯儲存後寫入磁碟
+        const agFile = path.join(PROJ, 'AGENTS.md');
+        const agText = 'E2E 作者指示:提到森林時稱「紫斑蝶E2E森林」。';
+        const agVisible = !!(await page.$('[data-testid=agents-project]'));
+        await page.fill('[data-testid=agents-project-text]', agText);
+        await page.click('[data-testid=agents-project-save]');
+        await page.waitForSelector('[data-testid=agents-project] p:has-text("已儲存")', {timeout: 5000}); // 等寫檔完成(限本編輯區的訊息)
+        const onDisk = fs.existsSync(agFile) ? fs.readFileSync(agFile, 'utf8') : '(不存在)';
+        check('AGENTS.md 編輯儲存後寫入磁碟', agVisible && onDisk === agText, JSON.stringify(onDisk));
+        await page.waitForFunction(() => /約\s*[1-9]/.test(document.querySelector('[data-testid=agents-project-tokens]')?.textContent || ''), null, {timeout: 5000}).catch(() => {});
+        const agTokens = (await page.textContent('[data-testid=agents-project-tokens]') || '').trim();
+        check('作者指示顯示估算長度與上限', /約\s*[1-9]\d*\s*\/\s*4000/.test(agTokens), agTokens);
+        // 全域層編輯區也要在(不寫入作者的真實全域檔)
+        check('作者指示顯示全域層編輯區與路徑', !!(await page.$('[data-testid=agents-global]')) &&
+            (await page.textContent('[data-testid=agents-global]') || '').includes('AGENTS.md'));
+        fs.rmSync(agFile, {force: true}); // 清理:不留給後面的組
 
         // ===== 設定頁 640×672(半螢幕,SPEC §16 第 7 項 (c) + 返工):堆疊版面 =====
         // 三欄並排(導覽+清單+表單)會把表單壓到約 148px、模型輸入框剩 24px——
@@ -155,6 +250,15 @@ module.exports = {
         check('設定頁 640×672 清單與表單上下堆疊(非三欄並排)', stacked640.gridCols === 1, `gridCols=${stacked640.gridCols}`);
         check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
         await shot('76-settings-models-640');
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-theme]');
+        await settle(80, 700); // 等 UI 更新
+        const app640 = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            return {sw: c.scrollWidth, cw: c.clientWidth};
+        });
+        check('設定頁 640×672 外觀頁無水平捲軸', app640.sw <= app640.cw + 1, JSON.stringify(app640));
+        await shot('78-settings-appearance-640');
         await page.click('[data-testid=tab-platforms]');
         await waitSel('[data-testid=platform-preview]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
@@ -218,6 +322,15 @@ module.exports = {
             JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
         check('設定頁 1280×800 平台輸出頁 內容無水平捲軸', plt1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
         if (hasNav) await shot('75-settings-platforms-1280');
+
+        await page.click('[data-testid=tab-appearance]');
+        const app1280 = await waitSel('[data-testid=appearance-theme]');
+        await settle(80, 700); // 等 UI 更新
+        g = await geoSettings();
+        check('設定頁 1280×800 外觀頁 捲軸在內容區(根節點不滾動)', app1280 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('設定頁 1280×800 外觀頁 內容無水平捲軸', app1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        if (hasNav) await shot('80-settings-appearance-1280');
 
         // 還原:視窗與設定頁關閉(後續測試在 1440×900 進行)
         await page.setViewportSize({width: 1440, height: 900});

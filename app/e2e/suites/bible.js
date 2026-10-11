@@ -129,6 +129,7 @@ module.exports = {
         const setTheme = async label => {
             await page.click('[data-testid=open-settings]');
             await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
+            await page.click('[data-testid=tab-appearance]');
             await page.click(`button:has-text("${label}")`);
             await page.click('[data-testid=close-settings]');
             await settle(80, 700);

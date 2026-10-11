@@ -17,6 +17,8 @@ export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposa
 
 export function AddCategory(arg1:string):Promise<Array<string>>;
 
+export function AgentsMdTokens(arg1:string):Promise<number>;
+
 export function ApplyEntityHeader(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<string>;
 
 export function ArchiveSession(arg1:string,arg2:boolean):Promise<void>;
@@ -113,6 +115,8 @@ export function ProjectPath():Promise<string>;
 
 export function PurgeSession(arg1:string):Promise<void>;
 
+export function ReadAgentsMd(arg1:string):Promise<main.AgentsMdView>;
+
 export function ReadFile(arg1:string):Promise<string>;
 
 export function RejectProposal(arg1:string,arg2:string):Promise<proposal.Proposal>;
@@ -166,3 +170,5 @@ export function TakeSnapshot(arg1:string):Promise<snapshot.Meta>;
 export function TrashFile(arg1:string):Promise<project.Tree>;
 
 export function WordCount(arg1:string):Promise<number>;
+
+export function WriteAgentsMd(arg1:string,arg2:string):Promise<main.AgentsMdView>;

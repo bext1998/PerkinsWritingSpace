@@ -1719,7 +1719,7 @@ func TestAuthorInstructionsRereadEachBuild(t *testing.T) {
 // 意圖:單份超過 4000 估算 tokens 時整份不送出(不靜默截斷),原因出現在預覽與對話通知;另一層不受影響。
 func TestAuthorInstructionsOverLimitNotSentWithNotice(t *testing.T) {
 	a, s, dir := setup(t)
-	big := strings.Repeat("字", agentsLimit+100) // 4204 估算 tokens > 4000
+	big := strings.Repeat("字", AgentsLimit+100) // 4204 估算 tokens > 4000
 	writeAgents(t, filepath.Join(dir, "AGENTS.md"), big)
 	g := filepath.Join(t.TempDir(), "AGENTS.md")
 	writeAgents(t, g, "全域層指示")
@@ -1737,7 +1737,7 @@ func TestAuthorInstructionsOverLimitNotSentWithNotice(t *testing.T) {
 		t.Fatal("另一層不受影響,仍應送出")
 	}
 	n := EstimateTokens([]llm.Message{{Content: strings.TrimSpace(big)}})
-	if len(pv.Notices) != 1 || !strings.Contains(pv.Notices[0], fmt.Sprintf("作品 AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", n, agentsLimit)) {
+	if len(pv.Notices) != 1 || !strings.Contains(pv.Notices[0], fmt.Sprintf("作品 AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", n, AgentsLimit)) {
 		t.Fatalf("預覽應附上明確原因, got %+v", pv.Notices)
 	}
 
@@ -1995,5 +1995,53 @@ func TestProposePatchMalformedMainLabelStillCreatesProposal(t *testing.T) {
 	list, _ := a.Proposals.List()
 	if len(list) != 1 || list[0].Replacement != "小明獨自闖入森林。" || list[0].Label != "" || !strings.Contains(res, "label 格式不對") {
 		t.Fatalf("label 型別不對時仍應建立提案並說明: res=%q list=%+v", res, list)
+	}
+}
+
+// 意圖(#38 送出預覽):Preview.Instructions 由 buildMessages 回報實際放進 system 的作者指示層——
+// 送出的層逐項列出(先全域、後作品),超過上限整份不送出的層不列入(原因在 Notices),都沒有時為空。
+func TestPreviewInstructionsListsSentLayers(t *testing.T) {
+	a, _, dir := setup(t)
+
+	// 一份都沒有:不列任何作者指示
+	pv, err := a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pv.Instructions) != 0 {
+		t.Fatalf("沒有作者指示時不應列出任何層, got %+v", pv.Instructions)
+	}
+
+	// 兩層都有:依送出順序列出兩項
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), "作品層指示")
+	g := filepath.Join(t.TempDir(), "AGENTS.md")
+	writeAgents(t, g, "全域層指示")
+	a.GlobalAgentsPath = g
+	pv, err = a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pv.Instructions) != 2 || pv.Instructions[0] != "全域 AGENTS.md" || pv.Instructions[1] != "作品 AGENTS.md" {
+		t.Fatalf("應依序列出全域與作品兩層, got %+v", pv.Instructions)
+	}
+	// 預覽列的就是實際放進 system 的層(A6)
+	sys := sysOf(t, pv.Messages)
+	for _, name := range pv.Instructions {
+		if !strings.Contains(sys, "【作者指示:"+name+"】") {
+			t.Fatalf("列出的 %s 應實際放進 system 訊息", name)
+		}
+	}
+
+	// 作品層超過上限:整份不送出、不列入,原因在 Notices;另一層照常列出
+	writeAgents(t, filepath.Join(dir, "AGENTS.md"), strings.Repeat("字", AgentsLimit+100))
+	pv, err = a.Preview(AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pv.Instructions) != 1 || pv.Instructions[0] != "全域 AGENTS.md" {
+		t.Fatalf("超過上限未送出的層不應列入, got %+v", pv.Instructions)
+	}
+	if len(pv.Notices) != 1 || !strings.Contains(pv.Notices[0], "作品 AGENTS.md 超過長度上限") {
+		t.Fatalf("未送出原因應在 Notices, got %+v", pv.Notices)
 	}
 }

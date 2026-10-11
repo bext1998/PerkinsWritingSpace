@@ -787,6 +787,8 @@ export default function ChatWindow(props: Props) {
                         <div className="rounded-md border" data-testid="preview-direct">
                             <div className="border-b bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">本次直接送出</div>
                             <div className="space-y-1 p-2 text-xs">
+                                {/* 本次送出的作者指示(Issue #38):由後端 Preview.instructions 回報實際放進 system 的層,前端不自己猜 */}
+                                {preview?.instructions?.map(name => <p key={name} data-testid="preview-instructions">· 作者指示:{name}</p>)}
                                 {withDoc && doc && <p>· 目前文件:{titleOf(doc)}(全文)</p>}
                                 {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
                                 {!withDoc && <p className="text-muted-foreground">· 目前文件:未附加</p>}
