@@ -270,6 +270,9 @@ type anthropicBlockState struct {
 func parseAnthropicStream(r io.Reader, onDelta func(string)) (Message, error) {
 	msg := Message{Role: "assistant"}
 	blocks := map[int]*anthropicBlockState{}
+	// stopped:收到 message_stop(官方串流的最後事件);stopReason 來自 message_delta
+	var stopped bool
+	var stopReason string
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -299,6 +302,7 @@ func parseAnthropicStream(r io.Reader, onDelta func(string)) (Message, error) {
 				PartialJSON string `json:"partial_json"`
 				Thinking    string `json:"thinking"`
 				Signature   string `json:"signature"`
+				StopReason  string `json:"stop_reason"`
 			} `json:"delta"`
 			Error *struct {
 				Type    string `json:"type"`
@@ -342,6 +346,12 @@ func parseAnthropicStream(r io.Reader, onDelta func(string)) (Message, error) {
 			case "signature_delta":
 				st.signature.WriteString(ev.Delta.Signature)
 			}
+		case "message_delta":
+			if ev.Delta.StopReason != "" {
+				stopReason = ev.Delta.StopReason
+			}
+		case "message_stop":
+			stopped = true
 		case "error":
 			// 防止沒有 error 欄位的 error 事件被吞掉
 			return msg, fmt.Errorf("模型錯誤: %s", strings.TrimSpace(data))
@@ -349,6 +359,16 @@ func parseAnthropicStream(r io.Reader, onDelta func(string)) (Message, error) {
 	}
 	if err := sc.Err(); err != nil {
 		return msg, err
+	}
+	// 連線提早結束(沒有 message_stop)或生成被截斷:回錯,不把不完整的文字或工具參數當成正常回覆
+	if !stopped {
+		return msg, fmt.Errorf("模型串流未正常結束(連線中斷)")
+	}
+	switch stopReason {
+	case "max_tokens":
+		return msg, fmt.Errorf("模型回覆被截斷:達到輸出上限 %d tokens", anthropicMaxTokens)
+	case "model_context_window_exceeded":
+		return msg, fmt.Errorf("模型回覆被截斷:超過模型上下文長度")
 	}
 
 	idx := make([]int, 0, len(blocks))

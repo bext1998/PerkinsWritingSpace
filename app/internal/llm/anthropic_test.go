@@ -269,3 +269,28 @@ func TestAnthropicSurfacesHTTPErrors(t *testing.T) {
 		t.Fatalf("應回報 401, got %v", err)
 	}
 }
+
+// 意圖:連線在 message_stop 之前中斷時,半截文字或工具參數不能當成正常回覆交給 Agent(PR #90 審查)。
+func TestAnthropicStreamWithoutMessageStopFails(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"unfinished"}}`,
+	}, "\n\n")
+	if _, err := parseAnthropicStream(strings.NewReader(stream), nil); err == nil {
+		t.Fatal("沒有 message_stop 的串流應回錯")
+	}
+}
+
+// 意圖:達到輸出上限(stop_reason=max_tokens)時工具參數可能只有一半,不能執行工具或當成完整答案(PR #90 審查)。
+func TestAnthropicMaxTokensStopFails(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"propose_patch","input":{}}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}`,
+		`data: {"type":"content_block_stop","index":0}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}`,
+		`data: {"type":"message_stop"}`,
+	}, "\n\n")
+	if _, err := parseAnthropicStream(strings.NewReader(stream), nil); err == nil || !strings.Contains(err.Error(), "截斷") {
+		t.Fatalf("max_tokens 應回截斷錯誤, got %v", err)
+	}
+}
