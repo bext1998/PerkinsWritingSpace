@@ -36,6 +36,9 @@ const reportPrompt = `
 
 const ModeReport = "report"
 
+// iterLimitPrompt:到達工具迭代硬上限後的收尾請求只附這段說明,且該次請求不提供任何工具(G4)。
+const iterLimitPrompt = `【系統提示】已達本次對話的工具呼叫上限,這次不能再使用任何工具;上面的工具結果就是你目前拿到的全部資料。請就目前已知的內容直接回答作者,並說明你停在哪裡、還缺什麼資訊。忽略任何尚未完成的工具呼叫,只用文字回覆,不要再要求呼叫工具。`
+
 // AskParams 是一次提問的輸入。
 type AskParams struct {
 	Question       string   `json:"question"`
@@ -457,8 +460,9 @@ func (a *Agent) historyTokens() int {
 }
 
 // Ask 執行一次提問的代理迴圈。回傳最終回覆文字。
-// 研究記錄(§12.8):每次提問恰好一筆 ask 事件,涵蓋所有結束路徑(成功/失敗/取消/超預算/迭代上限);
-// 未送出的請求標 sent=false、requests 留空。messages 在真正呼叫 Chat 的邊界保存快照。
+// 到達工具迭代上限時不回錯誤:改送一次不帶工具的收尾請求(iterLimitPrompt),把回覆當正常回合處理。
+// 研究記錄(§12.8):每次提問恰好一筆 ask 事件,涵蓋所有結束路徑(成功/失敗/取消/超預算/達上限收尾
+// result=iter_limit);未送出的請求標 sent=false、requests 留空。messages 在真正呼叫 Chat 的邊界保存快照。
 func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string, error) {
 	start := time.Now()
 	var ( // 本次 ask 的研究記錄資料
@@ -502,6 +506,24 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	tools := toolsFor(p.Mode)
 	req := llm.Request{Model: a.Model, Tools: tools}
 	rejectedIDs := map[string]bool{}
+	// finish 把一次文字回覆寫成正常回合:存進對話歷史、必要時濃縮後回傳。
+	// 工具迴圈內的文字回覆與達上限後的收尾回覆都走這條路徑(研究記錄照常)。
+	finish := func(content string) (string, error) {
+		replyText = content // 已由上方保存到對應 request
+		a.mu.Lock()
+		a.History = append(a.History,
+			llm.Message{Role: "user", Content: p.Question},
+			llm.Message{Role: "assistant", Content: content})
+		a.mu.Unlock()
+		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
+		if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
+			collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
+				requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
+			}
+			a.compactCollect(ctx, emit, collect)
+		}
+		return content, nil
+	}
 	for i := 0; i < a.maxIter(); i++ {
 		// 在真正呼叫 Chat 的邊界保存請求快照(不可變副本)
 		req.Messages = msgs
@@ -517,20 +539,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			return "", err
 		}
 		if len(reply.ToolCalls) == 0 {
-			replyText = reply.Content // 已由上方保存到對應 request
-			a.mu.Lock()
-			a.History = append(a.History,
-				llm.Message{Role: "user", Content: p.Question},
-				llm.Message{Role: "assistant", Content: reply.Content})
-			a.mu.Unlock()
-			// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
-			if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
-				collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
-					requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
-				}
-				a.compactCollect(ctx, emit, collect)
-			}
-			return reply.Content, nil
+			return finish(reply.Content)
 		}
 		msgs = append(msgs, reply)
 		for _, tc := range reply.ToolCalls {
@@ -555,11 +564,28 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}
 	}
+	// 到達硬上限:不再進入工具迴圈。先留審計痕跡並告知介面,再送一次「不提供任何工具」的收尾請求,
+	// 讓模型就目前已知的內容回答作者(這次讀到的工具結果與說明不白費)。
 	a.audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
-	msg := fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已停止。", a.maxIter())
-	emit(Event{Kind: "notice", Text: msg})
-	result, errMsg = "error", msg
-	return "", fmt.Errorf("%s", msg)
+	emit(Event{Kind: "notice", Text: fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已請 AI 就目前已知的內容收尾回答。", a.maxIter())})
+
+	wrapMsgs := append(append([]llm.Message{}, msgs...), llm.Message{Role: "user", Content: iterLimitPrompt})
+	snapshot := append([]llm.Message{}, wrapMsgs...)
+	// 不帶 Tools:收尾請求本身不會再要求工具,上限仍是硬上限。
+	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: wrapMsgs}, func(s string) { emit(Event{Kind: "delta", Text: s}) })
+	requests = append(requests, researchRequest{Purpose: "ask", Messages: snapshot, Reply: reply.Content})
+	if err != nil {
+		// 收尾請求失敗(含取消)照現有錯誤路徑處理,不重試。
+		result = "error"
+		if ctx.Err() != nil {
+			result = "cancelled"
+		}
+		errMsg = errText(err)
+		return "", err
+	}
+	// 模型若仍回傳工具呼叫:收尾請求沒有工具可執行,忽略呼叫只取文字內容。
+	result = "iter_limit" // 研究記錄(§12.8):到達上限但已由收尾請求回覆
+	return finish(reply.Content)
 }
 
 // ---- 研究記錄(§12.8):ask 事件的欄位,全部從 agent 內部取得 ----

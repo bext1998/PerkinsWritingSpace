@@ -112,21 +112,173 @@ func TestDeniedToolsDoNotTouchFilesAndAreAudited(t *testing.T) {
 	}
 }
 
-// A5 意圖:模型陷入無限工具循環時必須停下,不能燒光成本或卡住作者。
+// A5 意圖:模型陷入無限工具循環時必須停在上限 — 不再提供任何工具,並以一次收尾回覆回答作者
+// (這次讀到的工具結果不白費);上限、iter_limit 審計與告知介面的 notice 都不能少。
 func TestIterationLimitStopsLoop(t *testing.T) {
 	a, s, dir := setup(t)
 	a.MaxIter = 3
-	s.replies = []llm.Message{{Role: "assistant", ToolCalls: []llm.ToolCall{
-		{ID: "x", Name: "search_project", Arguments: `{"query":"小明"}`}}}}
-	_, err := a.Ask(context.Background(), AskParams{Question: "?"}, func(Event) {})
-	if err == nil {
-		t.Fatal("應因迭代上限而停止")
+	toolReply := llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+		{ID: "x", Name: "search_project", Arguments: `{"query":"小明"}`}}}
+	s.replies = []llm.Message{
+		toolReply, toolReply, toolReply,
+		{Role: "assistant", Content: "我查到小明怕黑;停在這裡,還缺其他章節的資料。"},
 	}
-	if len(s.reqs) != 3 {
-		t.Errorf("應恰好呼叫模型 3 次, got %d", len(s.reqs))
+	var events []Event
+	reply, err := a.Ask(context.Background(), AskParams{Question: "?"}, func(e Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatalf("達上限應以收尾回覆回答,不回錯誤: %v", err)
+	}
+	if !strings.Contains(reply, "怕黑") {
+		t.Errorf("應回傳收尾回覆內容, got %q", reply)
+	}
+	if len(s.reqs) != 4 {
+		t.Errorf("應呼叫模型 4 次(3 輪工具 + 1 次收尾), got %d", len(s.reqs))
+	}
+	if len(s.reqs[3].Tools) != 0 {
+		t.Errorf("收尾請求不得提供任何工具: %v", names(s.reqs[3].Tools))
+	}
+	last := s.reqs[3].Messages[len(s.reqs[3].Messages)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "工具呼叫上限") {
+		t.Errorf("收尾請求應告知模型已達上限: %+v", last)
+	}
+	a.mu.Lock()
+	hist := append([]llm.Message{}, a.History...)
+	a.mu.Unlock()
+	if len(hist) != 2 || hist[1].Content != reply {
+		t.Errorf("收尾回覆應寫入對話歷史: %+v", hist)
+	}
+	if !hasNotice(events, "迭代上限") {
+		t.Error("應照舊 emit 一則告知迭代上限的 notice")
 	}
 	if !strings.Contains(auditText(t, dir), `"event":"iter_limit"`) {
 		t.Error("審計紀錄缺少 iter_limit")
+	}
+}
+
+// hasNotice 回傳是否有一則內容含 part 的 notice。
+func hasNotice(events []Event, part string) bool {
+	for _, e := range events {
+		if e.Kind == "notice" && strings.Contains(e.Text, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// failOn 前 failAt-1 次照 scripted 回放,第 failAt 次回傳錯誤(onFail 可先取消 context)。
+type failOn struct {
+	replies []llm.Message
+	failAt  int
+	onFail  func()
+	reqs    []llm.Request
+}
+
+func (f *failOn) Chat(ctx context.Context, req llm.Request, _ func(string)) (llm.Message, error) {
+	f.reqs = append(f.reqs, req)
+	if len(f.reqs) == f.failAt {
+		if f.onFail != nil {
+			f.onFail()
+		}
+		if ctx.Err() != nil {
+			return llm.Message{}, ctx.Err()
+		}
+		return llm.Message{}, fmt.Errorf("端點連不上")
+	}
+	r := f.replies[0]
+	if len(f.replies) > 1 {
+		f.replies = f.replies[1:]
+	}
+	return r, nil
+}
+
+// 意圖:收尾請求本身失敗(錯誤、取消)時照現有錯誤路徑處理 — 記 error/cancelled、不重試。
+func TestIterLimitWrapUpFailureUsesErrorPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+	}{{"錯誤", false}, {"取消", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, _ := setup(t)
+			a.Proj.SetResearch(true)
+			a.Research = research.New(a.Proj, "sess-1")
+			a.MaxIter = 1
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f := &failOn{
+				replies: []llm.Message{{Role: "assistant", ToolCalls: []llm.ToolCall{
+					{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}}},
+				failAt: 2,
+			}
+			if tc.cancel {
+				f.onFail = cancel // 收尾請求進行中作者按停止
+			}
+			a.LLM = f
+			if _, err := a.Ask(ctx, AskParams{Question: "q"}, func(Event) {}); err == nil {
+				t.Fatal("收尾請求失敗應回錯誤")
+			}
+			if len(f.reqs) != 2 {
+				t.Fatalf("失敗不重試:應恰好 2 次(1 輪工具 + 1 次收尾), got %d", len(f.reqs))
+			}
+			evs, _ := research.Read(a.Proj)
+			if len(evs) != 1 {
+				t.Fatalf("應恰好一筆 ask, got %d", len(evs))
+			}
+			var d struct {
+				Result   string `json:"result"`
+				Requests []json.RawMessage `json:"requests"`
+			}
+			if err := json.Unmarshal(evs[0].Detail, &d); err != nil {
+				t.Fatal(err)
+			}
+			want := "error"
+			if tc.cancel {
+				want = "cancelled"
+			}
+			if d.Result != want {
+				t.Errorf("result 應為 %s, got %q", want, d.Result)
+			}
+			if len(d.Requests) != 2 {
+				t.Errorf("失敗的收尾請求也要列入 requests: %d", len(d.Requests))
+			}
+		})
+	}
+}
+
+// 意圖:收尾請求不提供工具,模型仍夾帶的工具呼叫不得被執行 — 上限仍是硬上限(G4)。
+func TestIterLimitWrapUpIgnoresToolCalls(t *testing.T) {
+	a, s, dir := setup(t)
+	before := snapshot(t, dir)
+	a.MaxIter = 1
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", Content: "收尾回答", ToolCalls: []llm.ToolCall{{ID: "2", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"X","rationale":"r"}`}}},
+	}
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply != "收尾回答" {
+		t.Fatalf("reply=%q err=%v", reply, err)
+	}
+	if len(s.reqs) != 2 {
+		t.Fatalf("收尾的工具呼叫不得引發第三次請求: %d", len(s.reqs))
+	}
+	if len(s.reqs[1].Tools) != 0 {
+		t.Error("收尾請求不得提供工具")
+	}
+	log := auditText(t, dir)
+	if strings.Contains(log, `"event":"tool_call","tool":"propose_patch"`) {
+		t.Errorf("收尾回覆的 propose_patch 不應被執行:\n%s", log)
+	}
+	list, lerr := a.Proposals.List()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(list) != 0 {
+		t.Errorf("收尾回覆不得建立提案: %d", len(list))
+	}
+	for k, v := range before {
+		if snapshot(t, dir)[k] != v {
+			t.Errorf("檔案被改動: %s", k)
+		}
 	}
 }
 
@@ -994,7 +1146,7 @@ func TestResearchProposalIDsOnlyThisAsk(t *testing.T) {
 	}
 }
 
-// 意圖(第 3 點):迭代上限時 requests 只含已送出的快照,未送出的工具結果不列入。
+// 意圖(第 3 點):迭代上限時 requests 只含實際送出的快照(含最後的收尾請求),未送出的工具結果不列入。
 func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	a, s, _ := setup(t)
 	a.Proj.SetResearch(true)
@@ -1002,11 +1154,12 @@ func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	a.MaxIter = 2
 	s.replies = []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
-		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"森林"}`}}},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"第一章"}`}}},
+		{Role: "assistant", Content: "已達上限前查到的內容。"},
 	}
-	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
-	if err == nil {
-		t.Fatal("應因迭代上限停止")
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply == "" {
+		t.Fatalf("達上限應以收尾回覆回答: reply=%q err=%v", reply, err)
 	}
 	evs, _ := research.Read(a.Proj)
 	if len(evs) != 1 {
@@ -1014,21 +1167,37 @@ func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	}
 	var d struct {
 		Sent     bool `json:"sent"`
+		Result   string `json:"result"`
 		Requests []struct {
 			Purpose  string        `json:"purpose"`
 			Messages []llm.Message `json:"messages"`
 		} `json:"requests"`
 	}
 	json.Unmarshal(evs[0].Detail, &d)
-	if !d.Sent || len(d.Requests) != 2 {
-		t.Fatalf("應兩筆已送出的請求: sent=%v n=%d", d.Sent, len(d.Requests))
+	if !d.Sent || len(d.Requests) != 3 {
+		t.Fatalf("應三筆已送出的請求(2 輪工具 + 收尾): sent=%v n=%d", d.Sent, len(d.Requests))
 	}
-	// 最後一筆快照不應含尚未送出的工具結果(最後一輪的 search 結果)
-	last := d.Requests[1]
-	for _, m := range last.Messages {
-		if m.Role == "tool" && strings.Contains(m.Content, "森林: ") {
-			t.Fatalf("最後一筆請求快照不應含未送出的工具結果: %q", m.Content)
+	if d.Result != "iter_limit" {
+		t.Errorf("達上限已收尾的 result 應為 iter_limit, got %q", d.Result)
+	}
+	// 第 2 筆在第 2 輪工具執行前送出:不含該輪的工具結果(第 2 輪查詢命中的是「# 第一章」那一行)
+	for _, m := range d.Requests[1].Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "# 第一章") {
+			t.Fatalf("第 2 筆請求快照不應含尚未送出的工具結果: %q", m.Content)
 		}
+	}
+	// 收尾請求實際送出,包含最後一輪的工具結果
+	gotToolResult := false
+	for _, m := range d.Requests[2].Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "# 第一章") {
+			gotToolResult = true
+		}
+	}
+	if !gotToolResult {
+		t.Fatal("收尾請求應含最後一輪的工具結果")
+	}
+	if len(s.reqs) != 3 || len(s.reqs[2].Tools) != 0 {
+		t.Fatalf("收尾請求應不帶工具: n=%d tools=%v", len(s.reqs), names(s.reqs[2].Tools))
 	}
 }
 
@@ -1146,7 +1315,7 @@ func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
 	}
 }
 
-// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆;MaxIter=1 逐筆比對。
+// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆與達上限後的收尾回覆;MaxIter=1 逐筆比對。
 func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 	a, s, _ := setup(t)
 	a.Proj.SetResearch(true)
@@ -1154,10 +1323,11 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 	a.MaxIter = 1
 	s.replies = []llm.Message{
 		{Role: "assistant", Content: "先查資料", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", Content: "收尾回答"},
 	}
-	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
-	if err == nil {
-		t.Fatal("MaxIter=1 應因迭代上限停止")
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply != "收尾回答" {
+		t.Fatalf("MaxIter=1 應以收尾回覆回答: reply=%q err=%v", reply, err)
 	}
 	evs, _ := research.Read(a.Proj)
 	if len(evs) != 1 {
@@ -1171,10 +1341,17 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 		} `json:"requests"`
 	}
 	json.Unmarshal(evs[0].Detail, &d)
-	if len(d.Requests) != 1 {
-		t.Fatalf("應一筆請求, got %d", len(d.Requests))
+	if len(d.Requests) != 2 {
+		t.Fatalf("應兩筆請求(1 輪工具 + 收尾), got %d", len(d.Requests))
 	}
 	if d.Requests[0].Reply != "先查資料" {
 		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
+	}
+	if d.Requests[1].Reply != "收尾回答" {
+		t.Fatalf("收尾回覆應被保存: %q", d.Requests[1].Reply)
+	}
+	last := d.Requests[1].Messages[len(d.Requests[1].Messages)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "工具呼叫上限") {
+		t.Fatalf("收尾請求快照應含上限說明: %+v", last)
 	}
 }
