@@ -622,6 +622,23 @@ func (a *Agent) Reset() {
 	a.mu.Unlock()
 }
 
+// Snapshot 回傳對話歷史與拒絕原因的副本(對話記錄保存用,#33)。
+func (a *Agent) Snapshot() ([]llm.Message, []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]llm.Message{}, a.History...), append([]string{}, a.rejections...)
+}
+
+// RestoreSession 以保存的對話內容取代目前的對話歷史與拒絕原因(接續對話記錄,#33)。
+// 過往會話屬 Interpretation:只當對話上下文參考,不會成為 Canon(SPEC §0 第 3 條);
+// 接續後送出的內容照常計入上下文預算並在送出預覽可見(A6)。
+func (a *Agent) RestoreSession(history []llm.Message, rejections []string) {
+	a.mu.Lock()
+	a.History = append([]llm.Message{}, history...)
+	a.rejections = append([]string{}, rejections...)
+	a.mu.Unlock()
+}
+
 // NoteRejection 記下作者拒絕提案的原因,本次會話之後的請求都會帶上(#40)。原因屬 Interpretation,只當參考。
 // 受保護資料夾(設定、大綱、筆記)的提案不附原文片段:它可能來自先前對話的附加,本次未附加就不能送出(G2)。
 func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {

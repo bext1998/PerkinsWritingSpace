@@ -7,6 +7,7 @@ import {main} from '../models';
 import {summary} from '../models';
 import {project} from '../models';
 import {health} from '../models';
+import {sessions} from '../models';
 import {snapshot} from '../models';
 import {notion} from '../models';
 import {publish} from '../models';
@@ -17,6 +18,8 @@ export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposa
 export function AddCategory(arg1:string):Promise<Array<string>>;
 
 export function ApplyEntityHeader(arg1:string,arg2:string,arg3:string,arg4:Array<string>):Promise<string>;
+
+export function ArchiveSession(arg1:string,arg2:boolean):Promise<void>;
 
 export function AskAI(arg1:agent.AskParams):Promise<void>;
 
@@ -43,6 +46,8 @@ export function CopyChapter(arg1:string,arg2:string):Promise<string>;
 export function DeleteCategory(arg1:string):Promise<Array<string>>;
 
 export function DeleteProfile(arg1:string):Promise<main.SettingsView>;
+
+export function DeleteSession(arg1:string):Promise<void>;
 
 export function DraftSummary(arg1:string):Promise<string>;
 
@@ -71,6 +76,8 @@ export function ListModels(arg1:string):Promise<Array<string>>;
 export function ListProposals():Promise<Array<proposal.Proposal>>;
 
 export function ListRecent():Promise<Array<main.RecentView>>;
+
+export function ListSessions():Promise<Array<sessions.Meta>>;
 
 export function ListSnapshots():Promise<Array<snapshot.Meta>>;
 
@@ -102,6 +109,8 @@ export function PreviewExport(arg1:string,arg2:publish.Rules):Promise<string>;
 
 export function ProjectPath():Promise<string>;
 
+export function PurgeSession(arg1:string):Promise<void>;
+
 export function ReadFile(arg1:string):Promise<string>;
 
 export function RejectProposal(arg1:string,arg2:string):Promise<proposal.Proposal>;
@@ -116,13 +125,19 @@ export function ResetChat():Promise<void>;
 
 export function ResetPlatforms():Promise<main.SettingsView>;
 
+export function RestoreSession(arg1:string):Promise<void>;
+
 export function RestoreSnapshot(arg1:string,arg2:Array<string>):Promise<snapshot.Meta>;
+
+export function ResumeSession(arg1:string,arg2:Array<sessions.Turn>):Promise<sessions.Session>;
 
 export function SaveFile(arg1:string,arg2:string):Promise<void>;
 
 export function SavePlatforms(arg1:Array<publish.Platform>):Promise<main.SettingsView>;
 
 export function SaveProfile(arg1:settings.Profile,arg2:any):Promise<main.SettingsView>;
+
+export function SaveSession(arg1:Array<sessions.Turn>):Promise<sessions.Meta>;
 
 export function SaveSummary(arg1:string,arg2:string):Promise<summary.Summary>;
 

@@ -1,14 +1,14 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {
-    AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Eye, FileText, GripHorizontal, Loader2, Maximize2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
-    ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
+    AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Eye, FileText, GripHorizontal, History, Loader2, Maximize2, MessageCircle,
+    Minus, Paperclip, Plus, RefreshCw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
-    AcceptProposal, AskAI, CancelAsk, CompactChat, ListModels, ListProposals, PreviewContext, RejectProposal, ResetChat, SetActiveModel,
-    SuggestAttachments,
+    AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
+    PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel, SuggestAttachments,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
-import {agent, main, project, proposal} from '../wailsjs/go/models';
+import {agent, main, project, proposal, sessions} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Badge, Checkbox, Input, Textarea} from '@/components/ui/basic';
 import {
@@ -139,6 +139,12 @@ export default function ChatWindow(props: Props) {
     // 前端不重算公式;limit=0(端點未設定上下文長度)時不顯示。
     const [usage, setUsage] = useState<{tokens: number; limit: number} | null>(null);
     const [usageTick, setUsageTick] = useState(0); // 後端 History 變了但前端狀態沒變時(chat:done、新對話)手動觸發重算
+    // 對話記錄(#33):清單、分頁(最近/封存/已刪除)、永久刪除確認、存一次目前會話的觸發
+    const [sOpen, setSOpen] = useState(false);
+    const [sessionList, setSessionList] = useState<sessions.Meta[]>([]);
+    const [sTab, setSTab] = useState<'active' | 'archived' | 'deleted'>('active');
+    const [purgeId, setPurgeId] = useState<string | null>(null);
+    const [saveTick, setSaveTick] = useState(0);
     const bottom = useRef<HTMLDivElement>(null);
     const box = useRef<HTMLDivElement>(null);
     const input = useRef<HTMLTextAreaElement>(null);
@@ -218,6 +224,7 @@ export default function ChatWindow(props: Props) {
             refreshProposals();
             setUsageTick(t => t + 1); // 對話(含壓縮後)寫回後端 History,用量要重算
             if (d.error) setError(d.error);
+            else setSaveTick(t => t + 1); // 回合結束(成功)存一次目前會話(#33)
         });
         return () => { offEvent(); offDone(); };
     }, []);
@@ -308,6 +315,7 @@ export default function ChatWindow(props: Props) {
                 await CompactChat();
                 setQuestion('');
                 setError('');
+                setSaveTick(t => t + 1); // 手動壓縮後存一次目前會話(#33)
             } catch (e) { setError(errText(e)); } // 對話太短沒有可壓縮內容等:明確告知,不靜默不做
             finally { setBusy(false); setUsageTick(t => t + 1); } // 歷史變了,用量要重算
             return;
@@ -384,6 +392,50 @@ export default function ChatWindow(props: Props) {
         setQuickId(undefined);
         setQuickQ('');
         setUsageTick(t => t + 1); // 後端 History 已清空,重算用量
+    };
+
+    // ---- 對話記錄(#33):存在使用者設定目錄(依作品分開);過往內容只當對話上下文參考,不會成為設定 ----
+    const toSessionTurns = (list: Turn[]): sessions.Turn[] =>
+        list.map(t => ({role: t.role, text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad}));
+    const fromSessionTurns = (list: sessions.Turn[]): Turn[] =>
+        (list ?? []).map(t => ({role: t.role as Turn['role'], text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad}));
+    const fmtTime = (s: string) => (s || '').replace('T', ' ').slice(0, 16);
+    const loadSessions = () => ListSessions().then(list => setSessionList(list ?? [])).catch(e => setError(errText(e)));
+
+    // 回合結束(chat:done 成功後)與手動壓縮後存一次目前會話;寫檔失敗顯示錯誤列,不靜默
+    useEffect(() => {
+        if (saveTick === 0) return;
+        SaveSession(toSessionTurns(turns))
+            .then(() => { if (sOpen) loadSessions(); })
+            .catch(e => setError(errText(e)));
+        // 只在 saveTick 變化時存檔:turns 就是存檔當下的對話內容
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [saveTick]);
+
+    // 開啟清單固定回到「最近」分頁(上次停留的分頁可能是空的,例如剛刪完)
+    const openSessions = () => { setSTab('active'); setPurgeId(null); setSOpen(true); loadSessions(); };
+
+    const resumeSession = async (id: string) => {
+        if (busy) { setError('有請求進行中,請先停止再切換對話記錄。'); return; }
+        try {
+            const s = await ResumeSession(id, toSessionTurns(turns)); // 目前會話先存好再切換(後端)
+            setTurns(fromSessionTurns(s.turns));
+            setSOpen(false);
+            setError('');
+            setUsageTick(t => t + 1); // 對話歷史換了,用量要重算
+        } catch (e) { setError(errText(e)); }
+    };
+    const archiveSession = async (m: sessions.Meta) => {
+        try { await ArchiveSession(m.id, m.status !== 'archived'); await loadSessions(); } catch (e) { setError(errText(e)); }
+    };
+    const removeSession = async (id: string) => {
+        try { await DeleteSession(id); await loadSessions(); } catch (e) { setError(errText(e)); }
+    };
+    const restoreSession = async (id: string) => {
+        try { await RestoreSession(id); await loadSessions(); } catch (e) { setError(errText(e)); }
+    };
+    const purgeSession = async (id: string) => {
+        try { await PurgeSession(id); setPurgeId(null); await loadSessions(); } catch (e) { setError(errText(e)); }
     };
 
     const loadModels = async (profileID: string) => {
@@ -490,6 +542,9 @@ export default function ChatWindow(props: Props) {
                         </span>
                     </Tip>
                     <GripHorizontal className="mx-auto h-4 w-4 text-muted-foreground/40"/>
+                    <Tip label="對話記錄" side="bottom">
+                        <Button variant="ghost" size="iconSm" data-testid="sessions-btn" onMouseDown={e => e.stopPropagation()} onClick={openSessions}><History/></Button>
+                    </Tip>
                     <Tip label="新對話" side="bottom">
                         <Button variant="ghost" size="iconSm" onMouseDown={e => e.stopPropagation()} onClick={reset}><SquarePen/></Button>
                     </Tip>
@@ -777,6 +832,68 @@ export default function ChatWindow(props: Props) {
                                 })}
                             </div>
                         </details>
+                    </div>
+                </DialogContent>
+            </Dialog>
+            {/* 對話記錄(#33):清單分「最近／封存／已刪除」,每列可接續、封存、刪除(已刪除列:還原、永久刪除,先確認) */}
+            <Dialog open={sOpen} onOpenChange={o => { setSOpen(o); if (!o) setPurgeId(null); }}>
+                <DialogContent className="flex max-h-[85vh] max-w-xl flex-col" data-testid="sessions-dialog">
+                    <DialogHeader>
+                        <DialogTitle>對話記錄</DialogTitle>
+                        <DialogDescription>
+                            存在這台電腦的設定目錄(依作品分開),與審計、研究記錄分開存放。過往內容只當對話參考,不會成為設定。
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="flex flex-wrap gap-1">
+                        {([['active', '最近'], ['archived', '封存'], ['deleted', '已刪除']] as const).map(([k, label]) => (
+                            <Button key={k} size="sm" variant={sTab === k ? 'default' : 'ghost'} className="h-7"
+                                    data-testid={`session-tab-${k}`} onClick={() => { setSTab(k); setPurgeId(null); }}>{label}</Button>
+                        ))}
+                    </div>
+                    <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1" data-testid="session-list">
+                        {sessionList.filter(x => x.status === sTab).length === 0 && (
+                            <p className="p-2 text-xs text-muted-foreground">沒有對話記錄。</p>
+                        )}
+                        {sessionList.filter(x => x.status === sTab).map(m => (
+                            <div key={m.id} data-testid="session-row" className="rounded-md border px-2.5 py-1.5">
+                                <div className="flex items-center gap-2">
+                                    <span className="min-w-0 flex-1 truncate text-sm" title={m.title}>{m.title || '(無標題)'}</span>
+                                    {m.current && <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px]" data-testid="session-current">目前</Badge>}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                                    <span data-testid="session-updated">{fmtTime(m.updatedAt)}</span>
+                                    <span data-testid="session-turns">{m.turns} 回合</span>
+                                    <span className="flex-1"/>
+                                    {sTab === 'deleted' ? (
+                                        purgeId === m.id ? (
+                                            <>
+                                                <span className="text-warning">永久刪除後無法還原</span>
+                                                <Button size="sm" variant="destructive" className="h-6 px-2 text-xs" data-testid="session-purge-confirm"
+                                                        onClick={() => purgeSession(m.id)}>確定永久刪除</Button>
+                                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" data-testid="session-purge-cancel"
+                                                        onClick={() => setPurgeId(null)}>取消</Button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Button size="sm" variant="outline" className="h-6 px-2 text-xs" data-testid="session-restore"
+                                                        onClick={() => restoreSession(m.id)}>還原</Button>
+                                                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-destructive" data-testid="session-purge"
+                                                        onClick={() => setPurgeId(m.id)}>永久刪除</Button>
+                                            </>
+                                        )
+                                    ) : (
+                                        <>
+                                            <Button size="sm" variant="outline" className="h-6 px-2 text-xs" data-testid="session-resume"
+                                                    onClick={() => resumeSession(m.id)}>接續</Button>
+                                            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" data-testid="session-archive"
+                                                    onClick={() => archiveSession(m)}>{m.status === 'archived' ? '取消封存' : '封存'}</Button>
+                                            <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-destructive" data-testid="session-delete"
+                                                    onClick={() => removeSession(m.id)}>刪除</Button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
                     </div>
                 </DialogContent>
             </Dialog>

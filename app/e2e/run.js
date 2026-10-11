@@ -29,6 +29,7 @@ if (args[0] === '--fixture') {
 const SUITES = [
     ['titlebar-zen', '標題欄與品牌與選單與禪模式(含開檔基本、白屏回歸)'],
     ['bot-chat', 'Perkins Bot 對話:快速指令、建議附加、提案(需模型)、版本初覽'],
+    ['sessions', '對話記錄(#33):保存、清單、接續、封存、刪除、還原、永久刪除、640 寬清單'],
     ['bible', '設定集與自訂分類與寫法檢查'],
     ['shelf', '作品章節:摘要、複製到平台、新增卷拖曳、主題切換、書櫃'],
     ['layout-visual', '書櫃 1B 視覺(長書名封面)與重新開啟'],
@@ -54,7 +55,7 @@ const printUsage = () => {
     console.log('');
     console.log('何時跑哪組(詳見 .agent/skills/e2e/SKILL.md):');
     console.log('  改標題欄/禪模式/品牌      → titlebar-zen');
-    console.log('  改 ChatWindow/提案流程    → bot-chat polish visual-1b');
+    console.log('  改 ChatWindow/提案流程    → bot-chat polish visual-1b sessions');
     console.log('  改設定集/分類/Notion 匯入 → bible notion');
     console.log('  改章節/書櫃/平台輸出/摘要 → shelf layout-visual');
     console.log('  改研究記錄                → research');
