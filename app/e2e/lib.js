@@ -66,6 +66,11 @@ async function launch(reporter) {
     const {chromium} = require('playwright-core');
     const browser = await chromium.launch({executablePath: EDGE, headless: true});
     const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    // 定時自動存檔(#36)預設在 E2E 關掉:既有測試大多假設「打字後仍是未存狀態」
+    // (未儲存標記、關閉保護、緊急存檔的時序),自動存檔會隨著機器快慢不定時打斷它們。
+    // 驗自動存檔本身的步驟在自己的測試組裡以 __perkinsAutosaveTiming 明確打開。
+    // init script 在每次導覽/重載前執行,Workspace 載入時讀這個旗標。
+    await context.addInitScript(() => { window.__perkinsE2eAutosaveOff = true; });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']); // E4 複製全文用
     const page = await context.newPage();
     const errors = [];
