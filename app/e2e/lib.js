@@ -96,6 +96,27 @@ async function clickProjectCard(page) {
     await cards.nth(i).click();
 }
 
+// 指定作品的書櫃卡片選擇器:路徑正規化成正斜線與反斜線兩個變體,並忽略大小寫。
+// Windows 路徑不能直接放進 CSS 屬性選擇器 — 反斜線會被 CSS 轉義規則吃掉
+// (\U、\8334f1 這類不是合法轉義),該變體永遠匹配不到。卡片 title 是啟動時
+// PERKINS_OPEN 的字串形式(後端原樣存進最近清單),所以只給一種斜線形式的
+// 選擇器會在另一種形式的那輪全部等不到卡片(Issue #63)。
+function cardSelector(projPath) {
+    const str = s => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    const fwd = projPath.replace(/\\/g, '/');
+    const bwd = fwd.replace(/\//g, '\\');
+    return `button[title=${str(fwd)} i], button[title=${str(bwd)} i]`;
+}
+
+// 等指定作品的卡片 render 再回傳 locator:書櫃只在 mount 時取一次 ListRecent,
+// 等到卡片就是等到資料落地的穩定狀態(不是加長固定等待)。回傳的 locator 後續
+// 點擊會自動重試。
+async function projectCard(page, projPath, timeout = 15000) {
+    const card = page.locator(cardSelector(projPath));
+    await card.first().waitFor({timeout});
+    return card.first();
+}
+
 // 開啟 E2E 測試專案;chapter 指定時確認該章在編輯器中(crumbs 含章名);
 // panel 指定側欄面板(manuscript/bible/docs/checks):各組第一步可能是「切換面板」的
 // rail 點擊(已在該面板時會變成收合),起始面板要對齊原始流程
@@ -209,7 +230,7 @@ async function ensureBookshelf(page) {
     await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
 }
 
-module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM, serverUp, reuseProject,
+module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM, projectCard, cardSelector, serverUp, reuseProject,
     makeFs: (PROJ) => ({
         P: rel => (require('path').join(PROJ, ...rel.split('/'))),
         read: rel => fs.readFileSync(require('path').join(PROJ, ...rel.split('/')), 'utf8'),

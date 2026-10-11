@@ -1,5 +1,13 @@
 # PROGRESS.md
 
+## 2026-10-11 — E2E「回書櫃重開作品」等不到卡片的根因與修正(Issue #63)
+
+- **根因(已重現確認,不是 `ListRecent` 覆寫/還原 race)**:`bible.js:337` 與 `layout-visual.js:25/88` 把 `PROJ` 路徑直接拼進 CSS 屬性選擇器。反斜線變體會被 CSS 轉義規則吃掉(`\U`、`\8334f1` 不是合法轉義;Edge + playwright 實測:反斜線 title 0 匹配、正斜線 title 1 匹配),所以選擇器只有在「卡片 `title` 是正斜線且與 `PROJ` 逐字相同」時才會命中。卡片 `title` 是後端把 `PERKINS_OPEN` 字串原樣存進最近清單的結果(`project.Open` 只存 `Root`,不正規化 → `AddRecent`),所以 title 的斜線形式 = 啟動 `wails dev` 時給的路徑形式。
+- **什麼決定一輪失敗(=「偶發」的解釋)**:同一台機器上,POSIX 形式 `PERKINS_OPEN="$S/e2e-proj"` 會被 MSYS 轉成 `C:/...`(正斜線)→ 通過;直接給 Windows 形式 `PERKINS_OPEN='C:\Users\...\e2e-proj'`(引號包住,已是 Windows 路徑,MSYS 不轉)→ title 反斜線 → 必定失敗;`PROJ` 給反斜線形式同樣失敗。#63 的 5 筆失敗 log(`all-46b-final`/`final2`/`baseline`、`all-35-final`/`final3`,2026-10-10 01:32–02:45)對應的啟動指令在 pi session 轉錄裡查到,清一色 `PERKINS_OPEN='C:\...\e2e-proj-xxx'`,而 `PROJ` 是正斜線(失敗 log 的第二個選擇器變體)。標準 `rerun*.sh` 兩個都給 POSIX → 全數通過。所以「偶發」是**啟動方式**決定的,同一啟動方式內 100% 必現(5/5),不是隨機 race;同一輪其他組用路徑正規化比對的 `clickProjectCard` 照常通過,所以只有這兩處失敗。
+- **同輪證據**:失敗輪中 `shelf` 組的 `p:has-text("E2E測試")` 與 `clickProjectCard`(斜線/大小寫正規化)都成功、`bible`/`layout-visual` 的精確選擇器逾時 → 卡片確實 render 了,只是 `title` 形式對不上;舊失敗 log 的 `waiting for locator(...)` 與本次重現逐字相同。
+- **修正(只動測試,不動其他組的行為與斷言)**:`app/e2e/lib.js` 新增 `cardSelector`/`projectCard` — 路徑正規化成正/反斜線兩個變體 + 忽略大小寫的靜態選擇器,`waitFor` 等到卡片 render(= 等 `ListRecent` 資料落地)再回傳 locator;`bible.js` 移除 `p:has-text("E2E測試")` 那行「軟等待保留」,改用它等卡片再點;`layout-visual.js` 兩處 `page.click(button[title=...])` 改用它。`run.js` 把 helper 接進 ctx。
+- **重現 → 修正 → 破壞驗證**:刻意用 `PERKINS_OPEN` 反斜線啟動(還原失敗輪形式)→ 未修正前 `bible`+`layout-visual` **17/19、正好這 2 項 FAIL**;修正後同形式 **29/29**。破壞驗證:拿掉 `cardSelector` 的反斜線變體 → 又是這 2 項 FAIL(17/19)→ 還原 → 29/29。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)連跑 3 輪 **499/499 passed,略過 8 項,184s/184s/185s**,零 FAIL;另加一輪 `PERKINS_OPEN` 反斜線啟動的 `--all` 也 **499/499**。settings.json 已逐位元組還原、`clean-recent.js` 清過、無殘留程序;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。4 輪 `--all` 各覆寫一次。
 ## 2026-10-11 — Perkins Bot 讀取兩層作者指示 AGENTS.md(Issue #38 作者已定案部分)
 
 - **後端 `app/internal/agent/agent.go`**:`BuildMessages` 拆成內部 `buildMessages`(回傳訊息 + 未送出原因),每次組裝都重讀兩層 `AGENTS.md`:全域 `%APPDATA%\Perkins\AGENTS.md`(`Agent.GlobalAgentsPath`,由 `app.go` 的 `setProject` 從 settings store 目錄接線,空 = 不讀,測試可注入)與作品根目錄 `AGENTS.md`。兩層以「【作者指示:全域/作品 AGENTS.md】」標題放進 system 訊息、在既有規則之後(既有文字不動),並附說明:衝突時作品層為準、不能改變系統規則(G1–G4)。檔案不存在略過;讀取失敗回錯不吞。單份超過 `agentsLimit`(4000,`EstimateTokens` 估算)整份不送出,原因進 `Preview.Notices` 與 Ask 的 `notice` 事件(同 B7 通知機制)。計入上下文預算(system 訊息自然被 `EstimateTokens`/`Preview` 計算)。報告模式套用;章節摘要(`summaryPrompt`)與對話濃縮(`compactPrompt`)不經 `BuildMessages`,不套用。

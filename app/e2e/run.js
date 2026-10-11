@@ -152,6 +152,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, (
         ensureProject: (c, panel) => lib.ensureProject(page, c, panel),
         ensureChapter: (c, panel) => lib.ensureChapter(page, c, panel),
         ensureBookshelf: () => lib.ensureBookshelf(page),
+        projectCard: p => lib.projectCard(page, p),
     };
     const T0 = Date.now();
     for (const n of only) {

@@ -4,7 +4,7 @@ module.exports = {
     name: 'bible',
     desc: '設定集別名、自訂分類與回歸、寫法檢查',
     run: async ctx => {
-        const {page, check, skip, maybe, shot, read, hash, P, PROJ, errors, cfgHash, ch1, SKIP_AI, NOTION_SRC, ensureProject, ensureChapter, ensureBookshelf, settle, SHOTS} = ctx;
+        const {page, check, skip, maybe, shot, read, hash, P, PROJ, errors, cfgHash, ch1, SKIP_AI, NOTION_SRC, ensureProject, ensureChapter, ensureBookshelf, projectCard, settle, SHOTS} = ctx;
         const fs = require('fs');
         const path = require('path');
         const os = require('os');
@@ -333,10 +333,9 @@ module.exports = {
         await page.evaluate(() => { window.go.main.App.ListRecent = window.__lrOrig; });
         await page.click('nav button:has(svg.lucide-house)');
         await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
-        await page.waitForSelector('p:has-text("E2E測試")', {timeout: 5000}).catch(() => {}); // 軟等待保留:既有 flaky race(原因未明,見 docs/PROGRESS.md),等不到也由下一行斷言把關
-        const cardA = 'button[title="' + PROJ.replace(/\//g, '\\') + '"], button[title="' + PROJ + '"]';
-        await page.waitForSelector(cardA, {timeout: 10000});
-        await page.click(cardA);
+        // 等指定作品的卡片 render(= 等 ListRecent 資料落地)再點;路徑比對忽略斜線方向與大小寫(#63)
+        const cardA = await projectCard(PROJ);
+        await cardA.click();
         await page.waitForFunction(n => document.querySelector("[data-testid=titlebar-title]")?.textContent.trim() === n, "E2E測試", {timeout: 30000});
         await page.evaluate(() => { if (window.__etRestore) window.__etRestore(); });
         // (回歸#8)清理:只清本次建立的路徑;預先存在的 guardDir 檔案必須還在
