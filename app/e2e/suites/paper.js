@@ -674,7 +674,56 @@ module.exports = {
         check('#44 專注模式關閉(快捷鍵)後恢復一般行為:所有段落都不淡化',
             f4.filter(r => r.t !== '' && r.op < 1).length === 0, JSON.stringify(f4.filter(r => r.op < 1).slice(0, 3)));
 
-        // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸
+        // 快捷鍵必須在 CodeMirror keymap 之前攔截(PR #79 返工):Caps Lock 下 Ctrl+Shift+D 的 key
+        // 是小寫 'd'(keyCode 68),CM 的 Mod-d(selectNextOccurrence)若先收到會把游標所在的英文字
+        // 選起來,切換專注模式後下一個輸入就取代被選的字。送真實 keyDown(key='d'+Ctrl+Shift)驗:
+        // 狀態切換且原本的游標/選取不變;事件也不得傳到 CM/內文層(探針在 document 上看不到它)。
+        await setDoc('hello world\n\n第二段。\n');
+        await home();
+        await press('ArrowRight', 2); // 游標在 hello 中間(空選取)
+        await page.evaluate(() => {
+            (window).__capProbe = 0;
+            document.addEventListener('keydown', e => {
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 't' || e.key === 'd')) (window).__capProbe++;
+            }, false);
+        });
+        const capKey = k => cdp.send('Input.dispatchKeyEvent', {type: 'keyDown', key: k, code: `Key${k.toUpperCase()}`,
+            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 10});
+        const capUp = k => cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code: `Key${k.toUpperCase()}`,
+            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 10});
+        const kb0 = await page.evaluate(() => window.__perkinsEditor.pos());
+        const dim0 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
+        await capKey('d');
+        await capUp('d');
+        await settle(150, 1000);
+        const kb1 = await page.evaluate(() => window.__perkinsEditor.pos());
+        const dim1 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
+        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+D(key=d)切換專注模式且游標/選取不變',
+            dim0 === 0 && dim1 > 0 && kb1.anchor === kb0.anchor && kb1.head === kb0.head,
+            JSON.stringify({kb0, kb1, dim0, dim1}));
+        await capKey('d');
+        await capUp('d'); // 關回
+        await settle(150, 800);
+        const twCls = () => page.evaluate(() => document.querySelector('.cm-host').classList.contains('cm-typewriter'));
+        const tw0 = await twCls();
+        await capKey('t');
+        await capUp('t');
+        await settle(150, 1000);
+        const tw1 = await twCls();
+        const kb2 = await page.evaluate(() => window.__perkinsEditor.pos());
+        const probe = await page.evaluate(() => window.__capProbe);
+        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+T(key=t)以同一機制切換打字機捲動、選取不變且事件不傳到 CM',
+            !tw0 && tw1 && kb2.anchor === kb0.anchor && kb2.head === kb0.head && probe === 0,
+            JSON.stringify({tw0, tw1, kb2, probe}));
+        await capKey('t');
+        await capUp('t'); // 關回
+        await settle(150, 800);
+
+        // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸。
+        // 先把文件與游標帶到中段(上一段是快捷鍵的短測試檔,游標在開頭會被不硬拉的夾住影響量測)
+        await setDoc(TDOC);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(21, 0)); // 打字第10段
+        await settle(150, 1000);
         await page.setViewportSize({width: 640, height: 672});
         await settle(250, 1500);
         await page.keyboard.press('Control+Shift+T');

@@ -480,17 +480,30 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 e.preventDefault();
                 setZen(z => !z);
             }
-            // 打字機捲動 Ctrl+Shift+T、專注模式 Ctrl+Shift+D(進出同鍵);IME 組字中不動作
-            if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key.toLowerCase() === 't' || e.key.toLowerCase() === 'd')) {
-                if (e.isComposing || e.keyCode === 229) return;
-                e.preventDefault();
-                if (e.key.toLowerCase() === 't') setTypewriter(v => !v);
-                else setFocusMode(v => !v);
-            }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [saveNow]);
+
+    // 打字機捲動 Ctrl+Shift+T、專注模式 Ctrl+Shift+D(進出同鍵);IME 組字中不動作。
+    // 必須在 CodeMirror keymap 之前攔截(PR #79 返工):Caps Lock 下這兩個組合的 key 是小寫
+    // 'd'/'t',CM 的 Mod-d(selectNextOccurrence)會先把游標所在的英文字選起來,之後輸入就
+    // 取代被選的字;CM 處理後 bubble 到 window 時 preventDefault 救不回已發生的選字。
+    // 所以用 capture 階段的 listener 攔截並 stopPropagation,事件根本到不了 CM。
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
+            const k = e.key.toLowerCase();
+            if (k !== 't' && k !== 'd') return;
+            if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (k === 't') setTypewriter(v => !v);
+            else setFocusMode(v => !v);
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, []);
 
     // 全域 Ctrl+F / Ctrl+H(§16 第 24 項第一層):編輯器未聚焦時(作品畫面任何地方)按也開啟
     // 搜尋/取代面板並聚焦輸入框。編輯器聚焦時不會走到這裡(cm-content 是 contenteditable,

@@ -10,6 +10,7 @@
 - **破壞驗證 9 輪**(拿掉或改壞對應實作 → 對應檢查 FAIL → 還原):R1 定位不動作 → 7 項 FAIL;R2 捲動也搶回 → 不被拉回 FAIL;R3 組字中也捲動 → IME FAIL;R4 不做淡化 → 5 項 FAIL;R5 只看游標行(忽略選取涵蓋段落)→ 選取跨段 FAIL;R6 開頭硬拉(加頂部留白)→ 不硬拉 FAIL;R7 選單項目不動作 → 13 項 FAIL;R8 禪模式藏起兩個開關 → 禪模式項 FAIL;R9 移除快捷鍵 → 3 項 FAIL。18 項新檢查各有至少一輪讓它 FAIL(效能項是量測,無對應破壞,以實測值核對)。
 - **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**527/527 passed**,略過 8 項,214s(= 上一輪基準 509 + 本次 18,零 FAIL、既有組檢查數未變)。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
 - **效能(實測,兩者同時開啟)**:約 7.6 萬字章節(75,892 字、2200 段),按鍵到畫面更新中位數 **14.8ms**、最大 **21.3ms**(40 次)——不低於 SPEC §17.3 既有基準(中位數約 20ms、最大約 30ms)。
+- **返工(hemingway 審查 1 Minor,直接修)**:兩個模式快捷鍵原本在 Workspace 的 window bubble listener 處理,Caps Lock 下 `Ctrl+Shift+D` 的 key 是小寫 'd',CodeMirror keymap 的 `Mod-d`(selectNextOccurrence)會先在 contentDOM 把游標所在的英文字選起來,切換專注模式後下一個輸入就取代被選的字;CM 處理後 bubble 到 window 時 `preventDefault` 救不回已發生的選字。改用 **capture 階段的 window listener + `stopPropagation`** 攔截(`Ctrl+Shift+T` 同機制):事件根本到不了 CM 的 keymap。E2E 新增 2 項回歸(CDP 送真實 `key='d'/'t'`+Ctrl+Shift+keyCode 68 模擬 Caps Lock:狀態切換、原本游標/選取不變、document 上的探針看不到事件);破壞驗證:換回 bubble 攔截(無 capture/stopPropagation)→ 2 項 FAIL(選字重現、探針收到事件)→ 還原後 paper 組全過。
 - **E2E 陷阱(本次踩到)**:標題欄應用程式選單(Radix DropdownMenu)浮層開著時,後續鍵盤與滑鼠都被浮層吃掉(方向鍵/滾輪無效、點 `.cm-content` 被 `<html>` 攔截而 timeout),整段檢查會空轉後中斷。讀完選單文字後要等 `[data-testid=app-menu-content]` 真的 detach(必要時點中性處關閉)再操作;破壞驗證時選單項目不存在也要避免直接點它,讓檢查自己 FAIL。
 - **未做(第二階段)**:名稱/別名比對提示。
 - **待作者實機**:打字機捲動在真實注音/倉頡組字下的手感(無頭環境以 CDP 組字事件驗;#47)。
