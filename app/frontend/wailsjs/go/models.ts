@@ -297,6 +297,8 @@ export namespace main {
 	    model: string;
 	    contextTokens: number;
 	    disableAutoCompact?: boolean;
+	    provider?: string;
+	    reasoningEffort?: string;
 	    hasKey: boolean;
 	    remote: boolean;
 	
@@ -312,6 +314,8 @@ export namespace main {
 	        this.model = source["model"];
 	        this.contextTokens = source["contextTokens"];
 	        this.disableAutoCompact = source["disableAutoCompact"];
+	        this.provider = source["provider"];
+	        this.reasoningEffort = source["reasoningEffort"];
 	        this.hasKey = source["hasKey"];
 	        this.remote = source["remote"];
 	    }
@@ -877,6 +881,32 @@ export namespace sessions {
 
 export namespace settings {
 	
+	export class Preset {
+	    id: string;
+	    name: string;
+	    baseUrl: string;
+	    provider?: string;
+	    contextTokens?: number;
+	    model?: string;
+	    local: boolean;
+	    region?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Preset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.baseUrl = source["baseUrl"];
+	        this.provider = source["provider"];
+	        this.contextTokens = source["contextTokens"];
+	        this.model = source["model"];
+	        this.local = source["local"];
+	        this.region = source["region"];
+	    }
+	}
 	export class Profile {
 	    id: string;
 	    name: string;
@@ -884,6 +914,8 @@ export namespace settings {
 	    model: string;
 	    contextTokens: number;
 	    disableAutoCompact?: boolean;
+	    provider?: string;
+	    reasoningEffort?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Profile(source);
@@ -897,6 +929,8 @@ export namespace settings {
 	        this.model = source["model"];
 	        this.contextTokens = source["contextTokens"];
 	        this.disableAutoCompact = source["disableAutoCompact"];
+	        this.provider = source["provider"];
+	        this.reasoningEffort = source["reasoningEffort"];
 	    }
 	}
 

@@ -7,11 +7,11 @@ import {main} from '../models';
 import {summary} from '../models';
 import {project} from '../models';
 import {health} from '../models';
+import {settings} from '../models';
 import {sessions} from '../models';
 import {snapshot} from '../models';
 import {notion} from '../models';
 import {publish} from '../models';
-import {settings} from '../models';
 
 export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposal.Proposal>;
 
@@ -72,6 +72,8 @@ export function HealthCheck():Promise<health.Report>;
 export function IgnoreVariant(arg1:string):Promise<void>;
 
 export function ListModels(arg1:string):Promise<Array<string>>;
+
+export function ListProfilePresets():Promise<Array<settings.Preset>>;
 
 export function ListProposals():Promise<Array<proposal.Proposal>>;
 

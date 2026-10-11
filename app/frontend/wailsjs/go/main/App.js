@@ -122,6 +122,10 @@ export function ListModels(arg1) {
   return window['go']['main']['App']['ListModels'](arg1);
 }
 
+export function ListProfilePresets() {
+  return window['go']['main']['App']['ListProfilePresets']();
+}
+
 export function ListProposals() {
   return window['go']['main']['App']['ListProposals']();
 }
