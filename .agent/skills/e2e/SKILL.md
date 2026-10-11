@@ -70,6 +70,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 - **部分組假設全新 fixture**:`titlebar-zen`(B1 嚴格 3 章與 perkins.json 未改)、`research`(R1 檔案不存在)、`save-flow`(E3 標記字未寫入)、`bible`(別名未套用過、無自訂分類殘留)、`bot-chat`/`search-editor`(依賴第一章原始內容)。這些組跑前要重建 fixture + 重啟 wails dev;重複執行同一 fixture 會因前輪汙染 FAIL(例如 bible 的別名填入相同值時 EntityHeader 的「套用」鈕不渲染),不是產品 bug。`--all` 一律從全新 fixture 開始。
 - **要驗證「送出」本身(研究記錄、參數)但不想呼叫模型**:照 `research` R3,用綁定暫時 `SaveProfile` + `SetActiveModel` 到 `http://127.0.0.1:9/v1`,連線立即失敗仍會走完整 Ask 路徑;`finally` 還原原端點並 `DeleteProfile`,再開關設定頁讓 Workspace 重讀設定(使用者常選雲端端點,沿用舊設定會被送出前確認擋住)。用過對話框的組結束前按「新對話」,否則選取/附加/報告模式會漏到下一組(曾讓 polish U2 FAIL)。
 - **共用狀態準備要冪等**:拆組後各組用 `lib.ensureProject/ensureChapter/ensureBookshelf` 對齊起始狀態;章節列點擊一律用 locator(自動重試,建立後的 tree 重渲染不打斷);冒煙組以專用「冒煙章」寫入(fs + 弄髒存檔觸發 refreshTree),不依賴也不汙染 fixture 原始內容。
+- **自動存檔在 E2E 預設關閉(#36)**:`lib.launch` 以 `addInitScript` 設 `__perkinsE2eAutosaveOff`,開發模式的 `Workspace` 載入時讀它。既有多數測試假設「打字後仍是未存狀態」(未儲存標記、關閉保護、緊急存檔的時序),自動存檔會隨機器快慢不定時打斷它們。要驗自動存檔用 `save-flow` 的段落,或自己 `__perkinsAutosaveTiming(idle, max)` 打開(結束時 `__perkinsAutosaveOff()` 還原);設定頁的 `autosave` 開關要用 `aria-checked` 設成指定狀態,不要假設起始是哪一邊。
 
 ## 驗證與回報
 

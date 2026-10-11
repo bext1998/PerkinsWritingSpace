@@ -123,6 +123,8 @@ export function SaveSummary(arg1:string,arg2:string):Promise<summary.Summary>;
 
 export function SetActiveModel(arg1:string,arg2:string):Promise<main.SettingsView>;
 
+export function SetAutosave(arg1:boolean):Promise<void>;
+
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 
 export function SetResearch(arg1:boolean):Promise<void>;

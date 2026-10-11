@@ -789,15 +789,16 @@ type ProfileView struct {
 }
 
 type SettingsView struct {
-	Profiles  []ProfileView     `json:"profiles"`
-	Active    string            `json:"active"`
+	Profiles  []ProfileView      `json:"profiles"`
+	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string            `json:"theme"`
+	Theme     string             `json:"theme"`
+	Autosave  bool               `json:"autosave"`
 }
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Profiles: []ProfileView{}}
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Autosave: s.AutosaveOn(), Profiles: []ProfileView{}}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL)})
@@ -879,6 +880,13 @@ func (a *App) SetTheme(theme string) error {
 	}
 	s := a.store.Load()
 	s.Theme = theme
+	return a.store.Save(s)
+}
+
+// SetAutosave 由設定頁的「自動存檔」開關呼叫(SPEC §17.3)。
+func (a *App) SetAutosave(on bool) error {
+	s := a.store.Load()
+	s.Autosave = &on
 	return a.store.Save(s)
 }
 
