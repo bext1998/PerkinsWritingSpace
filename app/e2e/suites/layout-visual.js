@@ -76,11 +76,14 @@ module.exports = {
         // 淺色書櫃:切白紙 → 書櫃 → 切回
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
         await shot('33-1b-bookshelf-light');
         await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)

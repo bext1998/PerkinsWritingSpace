@@ -191,6 +191,11 @@ module.exports = {
         check('全域 AGENTS.md 已隔離,未進入預覽', !pvAg.includes('【作者指示:全域 AGENTS.md】'),
             pvAg.slice(0, 80));
         check('預覽可看出兩層衝突時以作品層為準', pvAg.includes('以作品層為準'));
+        // 送出預覽逐項列出本次送出的作者指示(Issue #38):由後端 Preview.instructions 回報,超過上限的不列
+        const directAg = await page.textContent('[data-testid=preview-direct]');
+        check('送出預覽列出本次送出的作者指示',
+            directAg.includes('作者指示:作品 AGENTS.md') && !directAg.includes('作者指示:全域 AGENTS.md'),
+            directAg.slice(0, 120));
         await page.keyboard.press('Escape');
         // 超過 4000 估算 tokens:整份不送出,預覽與對話都要看得到原因(不靜默截斷)
         fs.writeFileSync(agFile, '超長指示。'.repeat(2100)); // 10500 字 → 約 10504 tokens > 4000
@@ -201,6 +206,8 @@ module.exports = {
         check('超上限的作品 AGENTS.md 不送出且預覽顯示原因',
             !!noticeEl && (await noticeEl.textContent()).includes('作品 AGENTS.md 超過長度上限') && !pvAg.includes('超長指示'),
             noticeEl ? await noticeEl.textContent() : '(無 notice)');
+        const directAgOver = await page.textContent('[data-testid=preview-direct]');
+        check('超上限未送出的作者指示不列入送出預覽清單', !directAgOver.includes('作者指示:'), directAgOver.slice(0, 120));
         await page.keyboard.press('Escape');
         // #32 /compact 也會把對話送到目前端點:雲端端點未勾選確認時要擋下,不能繞過外流確認
         {
