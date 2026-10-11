@@ -12,6 +12,8 @@ app/frontend/package.json.md5
 
 # Agent Team runtime state (Herdr pane/agent IDs; not a source of truth)
 .agent/profile/runtime.json
+# Pi 派工紀錄與停損門檻(含花費,本機用)
+.agent/profile/pi-ledger.md
 
 # Author's private manuscript/setting samples used as research material
 docs/user_research/
