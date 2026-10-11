@@ -785,6 +785,7 @@ module.exports = {
             '#39 編輯第 2 個版本後接受:寫入作者版本(以所選版本為底)',
             '#39 舊格式提案(單一版本)不顯示版本切換,照常接受',
             '#39 Provenance 記錄選了第幾個版本與版本總數',
+            '#39 接受第 2 個版本後,稿件標示的是寫入的第 2 個版本',
         ];
         const mvDone = new Set();
         const mvCheck = (name, ok, detail = '') => { mvDone.add(name); check(name, ok, detail); };
@@ -846,6 +847,9 @@ module.exports = {
             await shot('83-multi-version-review');
             await page.click('[data-testid=review-accept]');
             const mvDisk = await mvWaitDisk('夜色張牙舞爪地撲了下來。');
+            await page.waitForSelector('.cm-ai-flash', {timeout: 5000}).catch(() => {});
+            const mvFlash = await page.evaluate(() => [...document.querySelectorAll('.cm-ai-flash')].map(e => e.textContent).join(''));
+            mvCheck(MV_CHECKS[9], mvFlash === '夜色張牙舞爪地撲了下來。', JSON.stringify({flash: mvFlash}));
             const prov = read('.perkins/provenance.jsonl').trim().split('\n').map(l => JSON.parse(l))
                 .find(x => x.proposal === '20261011-160000-multi' && x.event === 'accept');
             mvCheck(MV_CHECKS[4], mvDisk.includes('夜色張牙舞爪地撲了下來。') && !mvDisk.includes('夜色溫柔'),
