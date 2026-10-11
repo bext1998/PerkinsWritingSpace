@@ -66,6 +66,11 @@ async function launch(reporter) {
     const {chromium} = require('playwright-core');
     const browser = await chromium.launch({executablePath: EDGE, headless: true});
     const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    // 定時自動存檔(#36)預設在 E2E 關掉:既有測試大多假設「打字後仍是未存狀態」
+    // (未儲存標記、關閉保護、緊急存檔的時序),自動存檔會隨著機器快慢不定時打斷它們。
+    // 驗自動存檔本身的步驟在自己的測試組裡以 __perkinsAutosaveTiming 明確打開。
+    // init script 在每次導覽/重載前執行,Workspace 載入時讀這個旗標。
+    await context.addInitScript(() => { window.__perkinsE2eAutosaveOff = true; });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']); // E4 複製全文用
     const page = await context.newPage();
     const errors = [];
@@ -225,12 +230,39 @@ async function ensureBookshelf(page) {
     await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
 }
 
-module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM, projectCard, cardSelector,
+module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM, projectCard, cardSelector, serverUp, reuseProject,
     makeFs: (PROJ) => ({
         P: rel => (require('path').join(PROJ, ...rel.split('/'))),
         read: rel => fs.readFileSync(require('path').join(PROJ, ...rel.split('/')), 'utf8'),
         hash: rel => crypto.createHash('sha256').update(fs.readFileSync(require('path').join(PROJ, ...rel.split('/')))).digest('hex'),
     })};
+
+// 34115 上是否已有 wails dev(只偵測,不自己啟動)。--reuse 需要它:Go 程式碼改了沒重啟就測不到。
+async function serverUp() {
+    try {
+        const res = await fetch(BASE, {signal: AbortSignal.timeout(3000)});
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+// E2E 重用同一個 wails dev(--reuse):重建 fixture 後叫後端重新開啟作品,再讓前端重載回起始畫面。
+// 後端的作品狀態(proj、agent 含對話與提案快取、research、在途 cancel)由 OpenProjectAt → setProject 整個換掉,
+// 與作者從書櫃換作品是同一條產品路徑;冷啟動只多了 Go 重編譯與行程重啟。
+// 注意:改了 Go 程式碼一定要冷啟動(wails dev -noreload 不會重編譯);改前端 vite 會熱更新,
+// 這裡仍然會重載頁面,所以測到的一定是磁碟上的最新前端程式。
+async function reuseProject(page, projDir) {
+    buildFixture(projDir);
+    await page.goto(BASE);
+    const bound = await page.waitForFunction(() => !!(window.go && window.go.main && window.go.main.App && window.go.main.App.OpenProjectAt),
+        null, {timeout: 20000}).then(() => true).catch(() => false);
+    if (!bound) throw new Error('34115 上的 wails dev 沒有回應綁定:確認伺服器還活著(見 .agent/skills/e2e/SKILL.md)');
+    await page.evaluate(dir => window.go.main.App.OpenProjectAt(dir), projDir);
+    await page.goto(BASE);
+    await page.waitForSelector('[data-testid=bookshelf-title], [data-testid=chapter-row]', {timeout: 30000});
+    return true;
+}
 
 // 條件式等待:等 DOM 靜默(連續 quietMs 無 mutation)或超過 maxMs 上限。
 // 取代「click 後固定等 N ms」的寫法:UI 早就更新完就提早返回,更新中就繼續等。

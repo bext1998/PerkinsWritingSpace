@@ -37,7 +37,7 @@ type evalCase struct {
 	Params             AskParams
 	DocPath            string   // 評測針對的文件(空 = 不指定);RequireProposal 時要求對這個檔案有提案
 	RequireProposal    bool     // 是否必須對 DocPath(或任一檔案)建立提案
-	ForbidProposalTool bool     // 不得建立任何提案(報告模式)
+	ForbidProposalTool bool     // 不得建立任何提案(報告模式;或方向未定時應先澄清而非直接改寫的情境)
 	ScanHints          []string // 改寫文字的字串提示:只記錄在報告供人工檢查,不影響判定(字串無法對應語意)
 	Manual             string   // 需人工比對的項目說明
 }
