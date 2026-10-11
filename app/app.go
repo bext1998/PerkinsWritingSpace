@@ -17,6 +17,7 @@ import (
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"
+	"perkins/internal/health"
 	"perkins/internal/publish"
 	"perkins/internal/llm"
 	"perkins/internal/notion"
@@ -762,6 +763,15 @@ func (a *App) FindVariants() ([]bible.Variant, error) {
 		return nil, err
 	}
 	return bible.FindVariants(ents, ch, a.proj.ReadFile, a.loadIgnored()), nil
+}
+
+// HealthCheck 由「檢查」面板的「開始檢查」呼叫(SPEC §0 第 4 條):只讀作品檔案,回報問題清單,
+// 不修改任何內容也不呼叫模型。
+func (a *App) HealthCheck() (health.Report, error) {
+	if a.proj == nil {
+		return health.Report{}, errNoProject
+	}
+	return health.Check(a.proj)
 }
 
 // IgnoreVariant 記錄作者判定「不是錯字」的寫法,之後不再回報。
