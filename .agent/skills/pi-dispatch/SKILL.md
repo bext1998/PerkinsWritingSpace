@@ -8,12 +8,22 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
 
 ## 步驟
 1. **選模型**:預設簡單工作 `xiaomi/mimo-v2.6-flash`、複雜工作 `xiaomi/mimo-v2.6-pro`。為累積比較資料,可依任務性質改用 `z-ai/glm-5.3`、`z-ai/glm-5.3-flash`、`deepseek/deepseek-v4.1-flash`;選擇理由寫進紀錄。
-2. **啟動**:`start.sh <模型 ID> <分支短雜湊>` → 印出 pane ID。已有任何 Pi pane 時會拒絕(同時最多一個)。分支短雜湊由 Orchestrator 先決定並寫進任務說明,讓標籤與分支對得上。
+   **思考強度**依任務難度選:簡單工作 `medium`;複雜工作、或返工/審查被打回後重派用 `high`;`xhigh`/`max` 原則上不用(思考 token 也計費)。不依賴 `~/.pi/agent/settings.json` 的預設值(實測不一定生效),一律在啟動時指定。
+   各模型實際可用的強度(2026-10-12 查 OpenRouter `/api/v1/models` 的 `reasoning.supported_efforts` 與 pi 1.1.0 內建模型表;換模型或升級 pi 後重查):
+
+   | 模型 | pi 可用強度 | 不支援的值會被 pi 換成 | 備註 |
+   |---|---|---|---|
+   | MiMo V2.6 Pro / Flash | off、minimal、low、medium、high | xhigh/max → high | OpenRouter 只標「可開關思考」,沒有列強度檔位;low/medium/high 是否真有差別未實測 |
+   | GLM 5.3 / 5.3 Flash | low、high、max(不能關) | medium → **high**、off → low | 不指定時 OpenRouter 預設 **max**(最貴) |
+   | DeepSeek V4.1 Flash | off、low、high、max | medium → **high** | 不指定時預設 high |
+
+   pi 遇到不支援的值會**往上**找最近的檔位,所以「簡單工作 medium」在 GLM、DeepSeek 上實際是 high;這兩家簡單工作改用 `low`。
+2. **啟動**:`start.sh <模型 ID> <分支短雜湊> [思考強度]` → 印出 pane ID。思考強度省略時用 `medium`。已有任何 Pi pane 時會拒絕(同時最多一個)。分支短雜湊由 Orchestrator 先決定並寫進任務說明,讓標籤與分支對得上。
 3. **送任務**:任務說明寫成檔案,`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
 4. **監看**:立刻在背景執行 `watch.sh <pane ID>`。它會印出供應商,並在 Pi 停下、30 分鐘沒有任何修改、或花費超過停損門檻時結束。
    - 迷路或超過門檻:Esc 中斷 Pi,判斷改由自己接手、換模型重派,或回報作者;不讓它繼續燒錢。
    - 同一問題返工兩輪仍未通過審查:停止返工,由 Orchestrator 接手。
-5. **記錄**:每次派工(含返工)在 `pi-ledger.md` 加一列:日期、任務、PR、模型、供應商、花費(`usage.sh` 前後差額為準;pi 介面顯示的金額不可靠)、初審結果、返工、備註。
+5. **記錄**:每次派工(含返工)在 `pi-ledger.md` 加一列:日期、任務、PR、模型、思考強度、供應商、花費(`usage.sh` 前後差額為準;pi 介面顯示的金額不可靠)、初審結果、返工、備註。
 6. **收尾**:Pi 回報且不再需要它(審查通過,或返工已交由別人)時,確認閒置後 `stop.sh <pane ID>` 關掉 Pi 與 pane。PR 合併後刪除對應工作樹與本機分支。
 
 ## 標籤
