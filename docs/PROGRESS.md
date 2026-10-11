@@ -8,6 +8,70 @@
 - **破壞驗證**:逐條拿掉系統提示中的三條新規則 → `TestSystemPromptUncertaintyRules` 對應 FAIL(三輪各 FAIL 一項)→ 還原後通過。
 - **驗證**:`go test ./internal/...`(不帶實機標記)全部通過,新情境可編譯(`go vet` + `go test -run TestLiveEvalCases` 未設 `PERKINS_LIVE_MODEL` 時 skip 路徑執行)。實機評測需要本機模型,未執行。
 - 文件:`docs/SPEC.md` §12.3 新增「不確定時的三態回應」、`docs/LIVE_EVAL.md` 硬判定說明與情境表各加一項、本檔。
+## 2026-10-11 — 搜尋結果被截斷時告知總筆數(Issue #34 第 3 項)
+
+- **`app/internal/agent/agent.go` 的 `search`**:原本找到 30 筆符合就直接回傳,模型會以為只有這些結果。改為仍只回傳前 30 筆片段(上限與片段長度規則不變),但走完全部檔案計數符合的行數;總數超過 30 時在結果最後附一行「共 N 筆,只列出前 30 筆;請改用更精確的關鍵字。」,未超過時輸出完全不變(原本的 30 筆提前結束改為 `len(hits) >= searchMaxHits` 時只計數、不再累積片段字串)。
+- **G2 不變**:計數只在 `g.ok(f)` 允許的檔案上進行,未附加的 `canon/`、`outline/`、`notes/` 檔案不入計數,檔名與內容都不會出現在結果中。
+- **測試**(`app/internal/agent/agent_test.go`):45 筆符合時總數正確且仍只回 30 筆片段;剛好 30 筆、29 筆與 1 筆都沒有截斷說明;未附加的受保護檔案有 5 筆符合時不計入(結果也不含其檔名),附加後總數變 35 筆。
+- **破壞驗證 3 輪**(拿掉對應實作 → 該項 FAIL → 還原,還原後 `cmp` 逐位元組相同):①不附截斷說明(`if false`)→ 總數說明與受保護計數 2 項 FAIL;②無條件附說明(`if true`)→「不多一行雜訊」FAIL;③計數不看 gate(`if false`)→「受保護檔案不計入」FAIL。
+- **驗證**:`gofmt` 對新增段落無意見(檔案既有的 `AskParams` 註解對齊問題不動);`go test ./internal/...` 11 個套件全部 ok。
+## 2026-10-11 — Perkins Bot 新增唯讀工具 list_files(Issue #34 第 2 項)
+
+- **新工具 `list_files`**(`app/internal/agent/agent.go`):不需參數、唯讀;輸出給模型讀的純文字。稿件依 `perkins.json` 卷章順序(與側欄一致,沿用 `project.Tree()` 的 `ResolveVolumes` 解析,未列入卷的檔案照既有規則排最後)、章名取檔內第一個 `# ` 標題(沒有就用檔名)、字數用與狀態列同一套的 `CountText`;另列 `summaries/` 存在的摘要。受保護資料夾(`canon/`、`outline/`、`notes/`)沿用同一個 `gate`(`gateFor`/`g.ok`)過濾,只列作者本次附加的檔案(G2/B2);報告模式可用(`toolsFor` 只排除 `propose_patch`,唯讀工具自然包含)。審計與研究記錄走既有 `runTool` 路徑,無新程式。
+- **字數函式抽離**:`CountText` 從 `app/app.go`(package main,agent 套件無法 import)移到新套件 `app/internal/wordcount`,`app.go` 留同名轉發包裝;狀態列、各章字數與 `list_files` 同一套規則。邏輯逐字未改。
+- **前端**:`ChatWindow.tsx` 工具顯示名稱對照表加 `list_files: '列出檔案'`,其餘不動。
+- **測試**(`list_files_test.go` + 白名單測試更新):卷章順序與 `perkins.json` 一致(兩卷 + 未列入檔案排最後)、章名取一級標題/無標題用檔名、字數含 Markdown 記號與註解排除;未附加的受保護檔案不出現(含內容關鍵字檢查)、附加的會出現;報告模式 `toolsFor` 含 `list_files` 且經 `Ask` 完整流程可呼叫;審計含 `tool_call` 的 `list_files`。
+- **破壞驗證 6 輪**(拿掉對應實作 → 該測試 FAIL → 還原):①倒序列印卷 → 順序測試 FAIL;②拿掉 `g.ok` 檢查 → 附加過濾測試 FAIL;③不用一級標題(一律檔名)→ 章名測試 FAIL;④不算字數 → 字數檢查 FAIL;⑤不列摘要 → 摘要檢查 FAIL;⑥報告模式排除 `list_files` → 報告模式測試 FAIL。還原後全綠。
+- **驗證**:`go test ./internal/...` 全過(含新套件 `wordcount` 編譯);前端僅加顯示名稱字串。未以真實模型 live 驗證 `list_files` 被呼叫(走 scripted 模型)。
+## 2026-10-11 — 迭代上限改以不帶工具的收尾請求回答(Issue #34 第 1 項)
+
+- **問題**:`internal/agent` 的 `Ask` 迴圈到達 `maxIter`(預設 8)時直接回錯誤(「已達單次對話的工具迭代上限…」),模型該輪讀到的工具結果與說明全部遺失,作者只看到錯誤。
+- **做法**:到上限仍寫 `iter_limit` 審計並 emit 一則 notice,再送一次**不提供任何工具**的收尾請求(附加 `iterLimitPrompt`:告知已達工具呼叫上限、請就目前已知的內容回答並說明停在哪裡、還缺什麼)。收尾回覆當正常回合處理(迴圈內的文字回覆與收尾共用抽出來的 `finish`:寫入對話歷史、必要時濃縮),照常列入研究記錄的 requests(purpose 仍為 ask);result 改記 `iter_limit`(§12.8 新增值;收尾請求本身失敗則照原本錯誤路徑記 error/cancelled,不重試)。模型仍回傳工具呼叫時忽略呼叫、只取文字內容;上限仍是硬上限(收尾請求不帶工具,不會再進迴圈)。上限數值、其他工具行為、前端均未改。
+- **SPEC** 同步:§5 工具迭代上限、§7 A5、§12.8 ask 事件的 requests 與 result。
+- **測試**(`internal/agent`):3 個既有測試改為驗證新行為(達上限不再回錯誤、改驗收尾回覆與不帶工具的收尾請求、requests 含收尾快照、iter_limit 審計仍在),新增 2 個:收尾請求失敗(錯誤/取消各一子測試)走錯誤路徑且不重試;收尾回覆夾帶的 `propose_patch` 不被執行(沒有第三次請求、審計無 tool_call、無提案、檔案雜湊不變)。
+- **破壞驗證 9 輪**(每輪只改 `agent.go` 一處,只跑上述 5 個相關測試):①改回直接回錯誤 → 5 個全 FAIL;②收尾請求仍帶工具 → 3 個 FAIL;③不寫 iter_limit 審計 → 1 個 FAIL;④不 emit notice → 1 個 FAIL;⑤忽略收尾請求的錯誤 → 收尾失敗測試 FAIL;⑥執行收尾回覆的工具呼叫 → 忽略工具測試 FAIL;⑦result 改回 ok → 研究記錄測試 FAIL;⑧收尾請求不列入 requests → 3 個 FAIL;⑨收尾請求不含上限說明 → 2 個 FAIL。還原後全綠。
+- **驗證**:`go test ./internal/...` 全過(agent 5 個相關測試加 `-count=1` 重跑)。根套件 `perkins` 的 `go test ./...` 需要 `app/frontend/dist`(embed),全新工作樹未建置前端因此 setup 失敗,與本次改動無關(未動前端)。
+## 2026-10-10 — E2E 重用開發伺服器(Issue #48 B)
+
+- **做法(不加任何 Go 入口)**:新增 `--reuse` 模式(`app/e2e/run.js` + `lib.js`):偵測 34115 上已有的 `wails dev`,重建 fixture → 呼叫既有產品綁定 `OpenProjectAt(測試專案)` → 重載頁面。後端的作品狀態由 `setProject` 整個換掉:`proj`(含記憶體中的 perkins.json)、`agent`(對話與提案快取)、`research`、在途 `cancel`;`session`(研究記錄的 app-run id)與 `quitConfirmed` 是應用層狀態不是作品狀態,不換。前端重載頁面即回到冷啟動的起始畫面。
+- **為何不改用 dev-only 綁定**:`wails dev` 每次啟動都會重新產生 `frontend/wailsjs` 綁定(本次實測:內容相同、只有行尾差異),若新增 `//go:build dev` 的 `DevReloadProject`,這兩份已進版控的綁定檔會在 dev/build 之間反覆來回(作者跑 `wails dev` 就會看到 dirty);而 `OpenProjectAt` 本來就是作者從書櫃換作品在用的同一條路徑,重用不必新增入口,正式建置的綁定集合與 main 完全相同。
+- **`--reuse` 不自己啟動伺服器**:沒有 34115 時直接報錯並提示啟動指令;`--reuse` 可放任意位置(`node run.js --reuse --all`)。
+- **耗時(實測,同一台機器)**:`wails dev` 第一次編譯 41.4 秒、之後冷啟動 20.8 秒;`bible` 一組冷啟動一輪 56.4 秒(0.1 重建 + 41.4 啟動 + 14.9 測試)對 `--reuse` 15.0 秒;重載本身 619 ms。
+- **驗證**:(b) 冷啟動 `--all` 468/468 passed(略過 8)176.1 秒;(a) 同一台 dev server 上 `--reuse --all` 連跑兩輪各 468/468(175.6 / 175.1 秒),檢查數與冷啟動逐組相同。(c) 破壞驗證:把重載改成不重新開啟作品(模擬漏掉 perkins.json 快取),先用 `RenameProject` 造出「記憶體與磁碟不一致」,`--reuse titlebar-zen` → 「標題欄 作品畫面標題為作品名」FAIL(28/29,記憶體還留著舊名字);把重載放回去,同情境 29/29 通過。(d) 正式建置:`go build -tags production ./...` 與 `wails build` 都成功,`perkins.exe` 內沒有任何 dev/E2E 專用符號,建置後 `wailsjs`/`go.mod` 無內容差異;本次只改 `app/e2e/{run,lib}.js` 與文件,沒有新增綁定。
+- **文件**:`.agent/skills/e2e/SKILL.md` 新增「重用同一個 wails dev(`--reuse`)」一節(何時可以 reuse、何時一定要冷啟動、如何確定測到新程式、等價性實測數字),並改寫原本「重建測試專案後必須重啟 `wails dev`」與「部分組假設全新 fixture」兩條陷阱(改為:冷啟動或 `--reuse` 二選一)。
+- **返工(codex 審查 1 Major + 1 Minor,Orchestrator 直接修)**:(1)會呼叫模型的執行被中斷時,後端舊請求與研究記錄可能還在跑,重新開啟作品不會等它結束,會寫進下一輪的新 fixture → `--reuse` 只能搭配 `E2E_SKIP_AI=1`(否則 run.js 報錯退出),跑模型一律冷啟動;不改產品的請求生命週期。(2)只寫 `--reuse` 沒寫組名時印用法並非零退出(原本會重建 fixture 後回報成功)。兩個防護各實測非零退出;`--reuse bible` 23/23。
+- **複審(codex)**:零組已解;run.js 只看得到本輪環境變數,「前輪跑過模型、本輪 skip-AI 再 reuse」仍可能撞到舊請求 → SKILL.md 明訂:跑過模型或中途中斷的 `wails dev` 一律先冷啟動,不得 reuse。
+## 2026-10-10 — 作品健康檢查第一批(Issue #41)
+
+- **後端 `internal/health`**(SPEC §17.4):只讀作品檔案、只回報不修改、不呼叫模型。五類:frontmatter 無法解析(`bible.Parse` 會靜默退回,這裡指出來)、孤兒摘要(`source` 指向不存在的章節)、摘要可能過期(沿用 `summary` 的 Stale)、斷連結(Markdown 行內連結/圖片指向作品內不存在的檔案;忽略外部連結、錨點、逃出作品根的路徑與程式碼區塊)、卷中列出但不存在的章節(沿用 `project.ResolveVolumes` 的警告,警告字首抽成常數)。名稱/別名重複等依賴設定集結構的檢查等 #31。
+- **綁定與介面**:`App.HealthCheck`;左側欄「檢查」面板最上方「作品健康檢查」+「開始檢查」,只在作者按下時檢查,先存檔再檢查。結果依類型分組,點項目開啟該檔(卷中缺章沒有檔案可開,不可點);沒問題時顯示「沒有發現問題」與檢查時間。`Workspace` 不再把開著的 `summaries/` 檔當成已刪除而自動關閉(摘要不在樹上,但可從結果點開)。
+- **驗證**:`go test ./internal/...` 通過;Go 破壞驗證 8 輪(五類各自、程式碼區塊、URL 解碼、逃出作品根)皆讓對應測試 FAIL。`tsc --noEmit`、`npm run build` 通過。E2E `bible` 新增 11 項;破壞驗證 7 輪(不分組、不可點、修好後仍列出、開啟作品自動檢查、按鈕無作用、編碼路徑誤報、專用檔未清),每項新檢查至少一輪 FAIL。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)479/479 passed,略過 8 項,174s(main 468 + 11)。實作者先前一輪 `--all` 為 180/191:visual-1b 的 #35 審查視窗「接受」未寫入、視窗未關,擋住後續 7 組;單跑 visual-1b、`bible`+`visual-1b` 連跑兩輪(67/67)與本輪 `--all` 皆未重現,與 #63 記錄的同一偶發現象相同(PR #65 分支也出現過,不經過本次修改),原因未定位。
+- **返工(codex 審查 3 Major,Orchestrator 直接修)**:(1)讀檔失敗不再略過:任何一檔讀不到(被其他程式獨占、沒有權限)整次檢查失敗並帶出路徑,走既有錯誤提示,不顯示「沒有發現問題」。(2)連結目標改為逐字讀出:目標內成對的括號是路徑的一部分(`好(1).md`)、`\(`/`\)` 取字面;行內程式碼(`…`、``…``)內的不算。(3)URL 解碼後把 `\` 換成 `/` 再做作品根邊界判斷,`..%5C..%5Coutside.md`、`..\..\outside.md` 不再繞過。新增 Go 回歸(Windows 專用:share mode 0 獨占檔案);破壞驗證 4 輪(吞掉讀檔錯誤、不去行內程式碼、不認成對括號、不換反斜線)各讓對應測試 FAIL,還原後通過。E2E `bible` 34/34。
+- **複審返工(codex 複審 1 項,Orchestrator 直接修)**:行內程式碼改在整段(空行/圍欄之間)上辨識,可跨行;辨識到的換成佔位字元而不是刪掉,`[說明]`+行內程式碼+`(x.md)` 不會拼成假連結。新增 2 個回歸;破壞驗證(改回刪除、改回逐行)各讓測試 FAIL,還原後通過。
+## 2026-10-10 — 審查地點收斂為審查視窗、在稿件中顯示、Ctrl+Shift+Enter(Issue #45 方案 A)
+
+- **作者定案(#45 方案 A)**:做決定的地方只有審查視窗。聊天提案卡改為只做通知(檔名、原文一行、理由、已修改/衝突狀態、「審查」按鈕),不再在卡片內編輯或接受/拒絕。SPEC §2.2、§6、§10「審查地點」、§12.3 改寫。
+- **在稿件中顯示**:審查視窗頁尾按鈕。目前章節直接捲到原文並短暫標示(沿用 `cm-ai-flash`,不改選取,選取不會變成附加內容);別章先開啟,由 Editor 的 `reveal` prop 在掛載時套用(StrictMode 會建立兩次編輯器,父層 effect 對舊 view 下指令會落空,同 `.agent/memory/editor-strictmode-remount.md`)。位置先用提案記錄的位元組位置,作者在前面打字而位移時改用原文唯一出現處,找不到或不唯一就提示,不猜。開啟被後來的切換取代時取消定位(以 `navSeq` 判斷)。
+- **#45 (c)**:選取後 `Ctrl+Shift+Enter` 等同「詢問這段」(右鍵選單標示快捷鍵,浮動列以 tooltip 標示);IME 組字中不動作,沒有選取時不攔截。
+- **E2E**:visual-1b、bot-chat 的卡片內接受改走審查視窗(`reviewAccept` helper,卡片以原文定位);#35 的「卡片內編輯同步」改為「卡片只有『審查』」;清單變動兩項改由後端 `RejectProposal` 觸發。新增:在稿件中顯示(別章切回、原文位移)、Ctrl+Shift+Enter。
+- **破壞驗證**:停用標示 → 在稿件中顯示 2 項 FAIL;拿掉唯一出現處退回 → 位移項 FAIL(另一項仍 PASS,證明測到的是退回路徑);卡片加回拒絕鈕 → 卡片項 FAIL;改掉快捷鍵 → 快捷鍵項 FAIL;還原全綠。過程中修正一個無效測試:第二次標示原本讀到第一次殘留的標示,改為先等上一次標示消失。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)471/471 passed,略過 8 項。
+- **返工(codex 審查 1 Major + 1 Minor + 1 驗證缺口,Orchestrator 直接修)**:(1)CRLF 稿件的多行原文:作者在原文外打字後,編輯器回傳的全文已把 `\r\n` 換成 `\n`,退回搜尋找不到。改為比對前兩邊都把 `\r\n` 視為一個換行(索引即編輯器位置;提案存的原文與接受路徑不變)。新增 E2E:BOM+CRLF 章節的多行原文,直接顯示與在文末打字後都能標示;破壞驗證(換回舊搜尋)→ 該項 FAIL,還原通過。(2)SPEC §12.3「部分採用」與審查視窗段落改寫為最終規則(編輯與接受/拒絕只在審查視窗,卡片只通知)。(3)640 寬「已修改」狀態的頁尾:新增 E2E 量「在稿件中顯示/還原 AI 版本/拒絕/接受」都在視窗內且點得到——實測通過;曾試加 `flex-wrap`,但拿掉後同一檢查仍通過(單行放得下),故未保留該樣式。全新 fixture `--all` 473/473 passed,略過 8 項,186s(上一版 471 + 2)。
+## 2026-10-10 — 定時自動存檔(Issue #36)
+
+- **何時存**(SPEC §17.3):編輯器有未存變更時,停止輸入 **2 秒**後存;持續打字不停時,距第一個未存變更**最多 30 秒**也存一次(`Workspace.tsx` 的 `AUTOSAVE_IDLE_MS`/`AUTOSAVE_MAX_MS`)。單一 effect 依 `[autosaveOn, dirty, text, current, editLocked]` 重排計時器:每次輸入重設 2 秒;`autoSince` 記住這輪起點以守住上限,存檔後仍 dirty 就從下一次變更重新起算。
+- **走既有的 `save()`**:不新增寫檔路徑、不建快照、Provenance 不變;與 Ctrl+S/按鈕共用同一個序列化 Promise(存檔途中重複觸發不會並行寫入)。成功只更新工具列/狀態列,**不跳「已儲存」提示框**(手動存檔照舊);失敗走既有 `fail` 的錯誤提示,不吞錯。
+- **避開組字**:`EditorHandle` 新增 `composing()`(讀 `view.composing`/`compositionStarted`);計時器到點時仍在組字就每 200ms 重試,`compositionend` 後才存(組字中不再有輸入事件時也不會卡住不存)。
+- **切檔/回書櫃/關閉**:計時器綁在當下的 `current`/`dirty` 上,切檔或卸載(回書櫃、關閉前存檔流程)時清掉;`save()` 一律讀 `latest.current`(path+text 成對),不會把舊檔內容寫進新檔。錯誤防護的緊急存檔不變。
+- **設定**:`settings.json` 加 `autosave`(用 `*bool` 區分「舊設定檔沒這個欄位」(視為開啟)與「作者明確關閉」);設定頁「作品」新增「自動存檔」開關(`data-testid=autosave-switch`,說明「停止輸入 2 秒後自動存檔,不建立版本快照」),不提供間隔設定。
+- **驗證**:`go test ./internal/settings/`(新增舊設定檔相容與預設值)、`tsc --noEmit`、`npm run build` 通過(工作樹 `npm ci`)。
+- **E2E(save-flow 新增 15 項)**:停止輸入約 2 秒才存(實測 2153ms)、2 秒內不寫入、狀態列已儲存且不跳提示框;持續打字時由上限觸發(掛鉤縮成 idle 20s / 上限 0.8s,實測 2.9s 落盤,不必真的等 30 秒);組字中不存、`compositionend` 後存;設定關閉後打字不存而 Ctrl+S 照舊(含提示框)並還原設定;打字後 2 秒內切章→舊章的字在舊章、新章不被寫入。開發模式另加 `__perkinsAutosaveTiming(idle, max)`/`__perkinsAutosaveOff()` 掛鉤。
+- **破壞驗證 11 輪**(每輪重建 fixture、只跑 `save-flow`):①不排程→(a)(b)(c) 5 項 FAIL;②不管 IME→(c) 2 項 FAIL;③自動存檔也跳提示→(a) 提示框 FAIL;④不等停止輸入→(a) 2 項 FAIL;⑤計時器不清+用最新路徑配舊文字→(d) 新章 FAIL;⑥忽略設定開關→(e) 2 項 FAIL;⑦手動存檔不跳提示→(e) 提示框 FAIL;⑧切檔前不存→(d) 舊章 FAIL(另帶 E5);⑨移除 Ctrl+S→(e) 手動存檔 2 項 FAIL;⑩只移 `openFile` 的 `setDirty(false)`→不受影響;⑪⑩再併①(不排程自動存檔)→該斷言仍未 FAIL,因為切檔前 `await save()` 已把 dirty 清掉。因此「切章後新章為已儲存」沒有可辨識的失敗情境,**已刪掉該檢查**,不拿永遠會過的斷言充數。
+- **基準**:全新 fixture + 重啟 wails dev 的 `--all`(E2E_SKIP_AI=1)**471/473 passed**,略過 8 項,231s。2 項 FAIL 是既有 #63 書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等不到卡片)並讓這兩組提早中斷(少 10 項檢查);同一環境上一輪 PR 的 `all-35-final3.log` 是同樣這 2 項,基準 `run.log` 為 468/468 全過 → 無 race 時的預期是 468 + 15 = **483/483**。其餘 13 組檢查數與基準逐一相同,只有 `save-flow` 22 → 37。`app/e2e/shots/71-settings-project-1280.png` 與另行拍攝的 640×672 截圖都確認新區塊正常(內容區無水平捲軸、開關不超出內容區)。
+- **E2E 預設關閉自動存檔**:`lib.launch` 以 `addInitScript` 設 `__perkinsE2eAutosaveOff`,開發模式載入 `Workspace` 時讀它——既有多數測試假設「打字後仍是未存狀態」(未儲存標記、關閉保護、緊急存檔時序),自動存檔會隨機器快慢不定時打斷它們。自動存檔自己的檢查在 `save-flow` 段落內明確打開,段落開始先把設定頁開關設成開啟(不假設起始狀態)、結束還原。
+- **返工(codex 審查 1 Major,Orchestrator 直接修)**:自動存檔已在寫的途中才開始 IME 組字,序列化存檔迴圈的下一輪會把組字中的字寫進磁碟。改為記錄這一輪是否只由自動存檔發起:是的話每輪開始前遇到組字就停下(組字結束後自動存檔再接手);手動存檔、切章、關閉、接受提案等呼叫者一加入就改回「全部落盤才結束」。新增 2 項 E2E(c2):存檔延遲 1.2 秒期間開始組字 → 組字中的字不落盤、第一輪的字已存;組字結束後落盤。破壞驗證:拿掉停下判斷 → (c2) 第一項 FAIL(重現審查描述的情形),還原全綠。全新 fixture `--all` 485/485 passed;另一輪 `--all` 曾出現 visual-1b 審查視窗接受未生效而連鎖中斷(E2E 預設關閉自動存檔,不經過本次修改的分支;單跑 visual-1b 與再跑 `--all` 皆通過),記入 #63。
+- **複審返工(codex 複審 1 項,Orchestrator 直接修)**:無事可存時的手動存檔(乾淨狀態按 Ctrl+S)會先設「全部落盤」旗標再直接返回,旗標留到下一次自動存檔,使它略過組字檢查。改為只在加入在途存檔或真的開始一輪時設定。(c2) 前置加入「乾淨狀態按 Ctrl+S」。破壞驗證:換回舊寫法 → (c2) 第一項 FAIL(組字中的字落盤),還原後 `save-flow` 40/40;全新 fixture `--all` 485/485 passed,略過 8 項,203s。
 
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 

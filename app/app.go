@@ -13,19 +13,20 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"
-	"perkins/internal/publish"
+	"perkins/internal/health"
 	"perkins/internal/llm"
 	"perkins/internal/notion"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
+	"perkins/internal/publish"
 	"perkins/internal/research"
 	"perkins/internal/settings"
 	"perkins/internal/snapshot"
 	"perkins/internal/summary"
+	"perkins/internal/wordcount"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -416,35 +417,8 @@ func (a *App) TrashFile(rel string) (*project.Tree, error) {
 	return a.proj.Tree()
 }
 
-// CountText 計算字數:不含空白、Markdown 記號(標題 #、強調 *_~、引用 >、程式碼 `)與 HTML 註解(作者筆記)。
-// 以程式計算,讓狀態列與各章字數用同一套規則。
-func CountText(s string) int {
-	for {
-		i := strings.Index(s, "<!--")
-		if i < 0 {
-			break
-		}
-		j := strings.Index(s[i:], "-->")
-		if j < 0 {
-			s = s[:i]
-			break
-		}
-		s = s[:i] + s[i+j+3:]
-	}
-	n := 0
-	for _, line := range strings.Split(s, "\n") {
-		if t := strings.TrimLeft(line, " \t"); strings.HasPrefix(t, "- ") || strings.HasPrefix(t, "+ ") {
-			line = t[2:] // 清單記號
-		}
-		for _, r := range line {
-			if unicode.IsSpace(r) || strings.ContainsRune("*_~`#>|", r) {
-				continue
-			}
-			n++
-		}
-	}
-	return n
-}
+// CountText 計算字數(規則見 internal/wordcount;狀態列與 Perkins Bot 的 list_files 用同一套)。
+func CountText(s string) int { return wordcount.CountText(s) }
 
 func (a *App) WordCount(text string) int { return CountText(text) }
 
@@ -764,6 +738,15 @@ func (a *App) FindVariants() ([]bible.Variant, error) {
 	return bible.FindVariants(ents, ch, a.proj.ReadFile, a.loadIgnored()), nil
 }
 
+// HealthCheck 由「檢查」面板的「開始檢查」呼叫(SPEC §0 第 4 條):只讀作品檔案,回報問題清單,
+// 不修改任何內容也不呼叫模型。
+func (a *App) HealthCheck() (health.Report, error) {
+	if a.proj == nil {
+		return health.Report{}, errNoProject
+	}
+	return health.Check(a.proj)
+}
+
 // IgnoreVariant 記錄作者判定「不是錯字」的寫法,之後不再回報。
 func (a *App) IgnoreVariant(w string) error {
 	if a.proj == nil {
@@ -789,15 +772,16 @@ type ProfileView struct {
 }
 
 type SettingsView struct {
-	Profiles  []ProfileView     `json:"profiles"`
-	Active    string            `json:"active"`
+	Profiles  []ProfileView      `json:"profiles"`
+	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string            `json:"theme"`
+	Theme     string             `json:"theme"`
+	Autosave  bool               `json:"autosave"`
 }
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Profiles: []ProfileView{}}
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Autosave: s.AutosaveOn(), Profiles: []ProfileView{}}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL)})
@@ -879,6 +863,13 @@ func (a *App) SetTheme(theme string) error {
 	}
 	s := a.store.Load()
 	s.Theme = theme
+	return a.store.Save(s)
+}
+
+// SetAutosave 由設定頁的「自動存檔」開關呼叫(SPEC §17.3)。
+func (a *App) SetAutosave(on bool) error {
+	s := a.store.Load()
+	s.Autosave = &on
 	return a.store.Save(s)
 }
 
@@ -1027,7 +1018,9 @@ func (a *App) DraftSummary(chapter string) (string, error) {
 		return "", err
 	}
 	start := time.Now()
-	defer func() { _ = a.research.Log("summary_draft", map[string]any{"chapter": chapter, "elapsedMs": time.Since(start).Milliseconds()}) }()
+	defer func() {
+		_ = a.research.Log("summary_draft", map[string]any{"chapter": chapter, "elapsedMs": time.Since(start).Milliseconds()})
+	}()
 	defer a.end(cancel)
 	return ag.DraftSummary(ctx, chapter, func(e agent.Event) { runtime.EventsEmit(a.ctx, "summary:delta", e.Text) })
 }
