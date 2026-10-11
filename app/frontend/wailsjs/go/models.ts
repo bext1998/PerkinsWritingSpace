@@ -34,6 +34,7 @@ export namespace agent {
 	    budget: number;
 	    limit: number;
 	    over: boolean;
+	    notices?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -46,6 +47,7 @@ export namespace agent {
 	        this.budget = source["budget"];
 	        this.limit = source["limit"];
 	        this.over = source["over"];
+	        this.notices = source["notices"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -158,6 +160,59 @@ export namespace bible {
 	        this.chapter = source["chapter"];
 	        this.snippet = source["snippet"];
 	    }
+	}
+
+}
+
+export namespace health {
+	
+	export class Issue {
+	    check: string;
+	    path: string;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Issue(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.check = source["check"];
+	        this.path = source["path"];
+	        this.message = source["message"];
+	    }
+	}
+	export class Report {
+	    issues: Issue[];
+	    checkedAt: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Report(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.issues = this.convertValues(source["issues"], Issue);
+	        this.checkedAt = source["checkedAt"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }
@@ -284,6 +339,7 @@ export namespace main {
 	    active: string;
 	    platforms: publish.Platform[];
 	    theme: string;
+	    autosave: boolean;
 	    paperWidth: string;
 	    paperFontSize: string;
 	    paperParaGap: string;
@@ -298,6 +354,7 @@ export namespace main {
 	        this.active = source["active"];
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
 	        this.theme = source["theme"];
+	        this.autosave = source["autosave"];
 	        this.paperWidth = source["paperWidth"];
 	        this.paperFontSize = source["paperFontSize"];
 	        this.paperParaGap = source["paperParaGap"];

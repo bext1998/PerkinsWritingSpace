@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
-import {Check, ChevronLeft, ChevronRight, FileText, RotateCcw, X} from 'lucide-react';
+import {Check, ChevronLeft, ChevronRight, Crosshair, FileText, RotateCcw, X} from 'lucide-react';
 import {proposal} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Textarea} from '@/components/ui/basic';
@@ -22,10 +22,11 @@ interface Props {
     titleOf: (path: string) => string;
     onAccept: (p: proposal.Proposal) => void;
     onReject: (p: proposal.Proposal) => void;
+    onReveal: (p: proposal.Proposal) => void; // 在稿件中顯示:捲到原文並短暫標示(#45 方案 A)
     onClose: () => void;
 }
 
-export default function ProposalReview({items, id, onStep, edited, setEdited, titleOf, onAccept, onReject, onClose}: Props) {
+export default function ProposalReview({items, id, onStep, edited, setEdited, titleOf, onAccept, onReject, onReveal, onClose}: Props) {
     const box = useRef<HTMLDivElement>(null);
     const [pos, setPos] = useState<{x: number; y: number} | null>(null);
     const [stacked, setStacked] = useState(false);
@@ -155,6 +156,9 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
 
             {/* 頁尾:還原 AI 版本、拒絕/捨棄、接受 */}
             <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
+                {!conflict && (
+                    <Button size="sm" variant="ghost" data-testid="review-reveal" onClick={() => onReveal(p)}><Crosshair/>在稿件中顯示</Button>
+                )}
                 {changed && (
                     <button className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground" data-testid="review-reset"
                             onClick={() => setEdited(m => { const n = {...m}; delete n[p.id]; return n; })}>

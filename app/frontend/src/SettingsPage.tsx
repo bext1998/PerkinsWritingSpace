@@ -2,7 +2,7 @@ import {useEffect, useMemo, useState} from 'react';
 import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     ClearCover, ConvertOptions, DeleteProfile, GetCover, GetResearch, GetSettings, ListModels, PickCover, PreviewExport, RenameProject, ResetPlatforms,
-    SavePlatforms, SaveProfile, SetPaperLayout, SetResearch, SetTheme,
+    SavePlatforms, SaveProfile, SetAutosave, SetPaperLayout, SetResearch, SetTheme,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -252,10 +252,17 @@ function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.S
     );
 }
 
-function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.Tree) => void}) {
+function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
+    tree: project.Tree;
+    setTree: (t: project.Tree) => void;
+    autosave: boolean;
+    onSetAutosave: (on: boolean) => Promise<void>;
+}) {
     const [name, setName] = useState(tree.name);
     const [cover, setCover] = useState('');
     const [error, setError] = useState('');
+    const [autosaveSaving, setAutosaveSaving] = useState(false);
+    const [autosaveError, setAutosaveError] = useState('');
     const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
     const [researchSaving, setResearchSaving] = useState(false);
     const [researchError, setResearchError] = useState('');
@@ -289,7 +296,26 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                     </div>
                 </div>
             </section>
-            {/* 區塊二:研究記錄(§12.8):間距只靠容器 gap-8,不再 mt-6 疊加(SPEC §17.2) */}
+            {/* 區塊二:自動存檔(SPEC §17.3):只提供開關,不提供間隔設定 */}
+            <div className="flex items-start gap-4 rounded-lg border p-4" data-testid="autosave-row">
+                <div className="flex-1">
+                    <Label className="text-sm font-medium">自動存檔</Label>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        停止輸入 2 秒後自動存檔,不建立版本快照。
+                    </p>
+                    {autosaveError && <p className="mt-1 text-xs text-destructive" data-testid="autosave-error">無法儲存自動存檔設定:{autosaveError}</p>}
+                </div>
+                <Switch data-testid="autosave-switch" checked={autosave} disabled={autosaveSaving}
+                        onCheckedChange={async v => {
+                            setAutosaveSaving(true);
+                            try {
+                                await onSetAutosave(v); // 後端保存成功才更新畫面
+                                setAutosaveError('');
+                            } catch (e) { setAutosaveError(errText(e)); /* 失敗保持原值 */ }
+                            setAutosaveSaving(false);
+                        }}/>
+            </div>
+            {/* 區塊三:研究記錄(§12.8):間距只靠容器 gap-8,不再 mt-6 疊加(SPEC §17.2) */}
             <div className="flex items-start gap-4 rounded-lg border p-4" data-testid="research-row">
                 <div className="flex-1">
                     <Label className="text-sm font-medium">研究記錄</Label>
@@ -310,7 +336,7 @@ function ProjectTab({tree, setTree}: {tree: project.Tree; setTree: (t: project.T
                             setResearchSaving(false);
                         }}/>
             </div>
-            {/* 區塊三:從 Notion 匯入(NotionImport 自帶小標題) */}
+            {/* 區塊四:從 Notion 匯入(NotionImport 自帶小標題) */}
             <NotionImport onDone={() => {}}/>
         </div>
     );
@@ -327,6 +353,11 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
     }, [onClose]);
 
     const changeTheme = (t: string) => { setTheme(t); SetTheme(t); };
+    // 自動存檔(SPEC §17.3):寫入設定檔成功後才更新畫面;Workspace 在設定頁關閉時重讀設定。
+    const setAutosave = async (on: boolean) => {
+        await SetAutosave(on);
+        setCfg(c => c ? main.SettingsView.createFrom({...c, autosave: on}) : c);
+    };
     // 稿紙版面:變更立即套用到開著的編輯器(App 以 CSS 變數套用),並照主題的方式存回設定
     const changePaper = (key: keyof PaperLayout, v: string) => {
         const next = {...paper, [key]: v};
@@ -397,7 +428,7 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
                 <div data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
                     {cfg && (
                         <div className="mx-auto w-full max-w-5xl px-6 py-6">
-                            {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree}/>}
+                            {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}/>}
                             {page === 'models' && <ModelsTab cfg={cfg} setCfg={setCfg}/>}
                             {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg}/>}
                         </div>

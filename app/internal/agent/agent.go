@@ -5,7 +5,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,16 +19,32 @@ import (
 	"perkins/internal/proposal"
 	"perkins/internal/research"
 	"perkins/internal/summary"
+	"perkins/internal/wordcount"
 )
 
+// baseTitle 回傳路徑的檔名(去 .md),作為沒有一級標題時的章名。
+func baseTitle(rel string) string {
+	return strings.TrimSuffix(filepath.Base(filepath.FromSlash(rel)), ".md")
+}
+
+// CountText 字數計算與狀態列同一套(SPEC §15)。
+func CountText(s string) int { return wordcount.CountText(s) }
+
 const DefaultMaxIter = 8
+
+// agentsLimit 是單份作者指示(AGENTS.md)的長度上限(以 EstimateTokens 估算)。超過的整份不送出。
+const agentsLimit = 4000
 
 const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品的唯一主導者。作品是中文輕小說。
 - 你不能直接修改稿件或設定;你只能閱讀、分析、提出建議。
 - 具體的改寫請使用 propose_patch 提出提案(original 必須逐字複製原文且在檔案中唯一),由作者審核後才會套用。你無法套用提案。
+- 提案前先用 read_document 讀取目標檔,或確認作者本次附加、目前文件的內容;original 從讀到的內容逐字複製,不要憑記憶或摘要改寫。
 - 只是討論或分析時,直接用文字回答即可,不必提案。
 - 不要憑空新增世界觀或角色設定;若你在推測,請明確標示「推測」。
 - 作者故意留白或模糊之處,不要擅自補完。
+- 意圖明確時直接做,不要為了保險而提問。
+- 作者的意圖不明、且不同理解會改變故事方向時,先問最多 1–3 個具體問題,再提案。
+- 有多個合理方向時,列出條件式選項(例如「若你重視 A,可以…;若重視 B,…」),不要標示哪個是「最佳」。
 - 「前情摘要」是作者確認過的章節摘要,可能省略細節;需要細節時用工具查原文。
 - 需要查看其他檔案時,使用提供的工具。`
 
@@ -36,15 +54,18 @@ const reportPrompt = `
 
 const ModeReport = "report"
 
+// iterLimitPrompt:到達工具迭代硬上限後的收尾請求只附這段說明,且該次請求不提供任何工具(G4)。
+const iterLimitPrompt = `【系統提示】已達本次對話的工具呼叫上限,這次不能再使用任何工具;上面的工具結果就是你目前拿到的全部資料。請就目前已知的內容直接回答作者,並說明你停在哪裡、還缺什麼資訊。忽略任何尚未完成的工具呼叫,只用文字回覆,不要再要求呼叫工具。`
+
 // AskParams 是一次提問的輸入。
 type AskParams struct {
 	Question       string   `json:"question"`
-	Doc            string   `json:"doc"`            // 目前開啟的檔案(相對路徑),可空
-	Selection      string   `json:"selection"`      // 選取的文字,可空
-	Attachments    []string `json:"attachments"`    // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
-	Mode           string   `json:"mode"`           // "" = 一般;report = 檢查報告(不提供提案工具,B5)
-	PriorSummaries bool     `json:"priorSummaries"` // 附上本章之前已確認的章節摘要
-	QuickID        string   `json:"quickId,omitempty"` // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
+	Doc            string   `json:"doc"`                   // 目前開啟的檔案(相對路徑),可空
+	Selection      string   `json:"selection"`             // 選取的文字,可空
+	Attachments    []string `json:"attachments"`           // 作者附加的專案檔(設定、大綱、筆記、其他章節…)
+	Mode           string   `json:"mode"`                  // "" = 一般;report = 檢查報告(不提供提案工具,B5)
+	PriorSummaries bool     `json:"priorSummaries"`        // 附上本章之前已確認的章節摘要
+	QuickID        string   `json:"quickId,omitempty"`     // 快速指令 id(§16 第 21 項);非快速指令來源為空,研究記錄不記此欄
 	QuickEdited    bool     `json:"quickEdited,omitempty"` // 作者送出前改過快速指令帶入的問題文字(只記布林,不記改前全文)
 	// DocDraft 只供 Preview 使用的目前文件編輯器草稿(PR #54 返工):背景用量預覽在作者未存檔時也以草稿估算;
 	// Ask 路徑不用(送出前已存檔,磁碟內容與草稿相同,AskAI 會清除它)。nil = 未提供;空字串 = 作者清空了全文,不是未提供。
@@ -68,6 +89,9 @@ type Agent struct {
 	ContextTokens int                // 端點上下文長度;0 = 不限制(測試用)
 	Research      *research.Recorder // 研究記錄(§12.8);nil 或關閉時不記錄
 	Remote        bool               // 目前端點是否在本機之外(研究記錄用)
+	// GlobalAgentsPath 是全域作者指示(%APPDATA%\Perkins\AGENTS.md)的完整路徑。
+	// 空 = 不讀全域層(測試注入用);每次組裝訊息都重新讀取,改檔不必重啟。
+	GlobalAgentsPath string
 
 	mu      sync.Mutex
 	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
@@ -125,6 +149,11 @@ var toolDefs = []llm.ToolDef{
 		Name:        "search_project",
 		Description: "在專案的稿件、摘要與作者附加的檔案中搜尋文字(唯讀),回傳符合的檔案與片段。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+	},
+	{
+		Name:        "list_files",
+		Description: "列出作品的檔案清單(唯讀、不需參數):依卷與章節順序列出稿件(含章名、路徑、字數)、可用的章節摘要,以及作者本次附加的 canon/、outline/、notes/ 檔案。",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 	},
 	{
 		Name:        "propose_patch",
@@ -206,6 +235,9 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		}
 		r, err := a.search(p.Query, g)
 		return r, "", err
+	case "list_files":
+		r, err := a.listFiles(g)
+		return r, "", err
 	case "propose_patch":
 		var p struct {
 			Path        string   `json:"path"`
@@ -235,12 +267,18 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 	return "", "", fmt.Errorf("未實作的工具 %s", name)
 }
 
+// searchMaxHits 是 search_project 一次回傳的片段上限(不變;超過只多附一行總筆數)。
+const searchMaxHits = 30
+
+// search 只回傳前 searchMaxHits 筆片段,但會計數全部符合的行數;
+// 超過上限時在最後附一行總筆數,讓模型知道結果被截斷(不再累積多餘的片段字串)。
 func (a *Agent) search(q string, g gate) (string, error) {
 	files, err := a.Proj.AllFiles()
 	if err != nil {
 		return "", err
 	}
 	var hits []string
+	total := 0
 	for _, f := range files {
 		if !g.ok(f) {
 			continue
@@ -250,21 +288,95 @@ func (a *Agent) search(q string, g gate) (string, error) {
 			continue
 		}
 		for _, line := range strings.Split(text, "\n") {
-			if strings.Contains(line, q) {
-				if r := []rune(line); len(r) > 120 {
-					line = string(r[:120]) + "…"
+			if !strings.Contains(line, q) {
+				continue
+			}
+			total++
+			if len(hits) >= searchMaxHits {
+				continue
+			}
+			if r := []rune(line); len(r) > 120 {
+				line = string(r[:120]) + "…"
+			}
+			hits = append(hits, f+": "+strings.TrimSpace(line))
+		}
+	}
+	if total == 0 {
+		return "沒有找到符合的內容。", nil
+	}
+	out := strings.Join(hits, "\n")
+	if total > searchMaxHits {
+		out += fmt.Sprintf("\n共 %d 筆,只列出前 %d 筆;請改用更精確的關鍵字。", total, searchMaxHits)
+	}
+	return out, nil
+}
+
+// listFiles 組出給模型讀的檔案清單(唯讀):
+// 稿件依 perkins.json 的卷與章節順序(與側欄一致,沿用 project 的卷章解析),
+// 另列 summaries/ 中存在的摘要;canon/、outline/、notes/ 只列作者本次附加的檔案(G2,沿用同一個 gate)。
+func (a *Agent) listFiles(g gate) (string, error) {
+	tree, err := a.Proj.Tree()
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("【稿件】(依卷與章節順序)\n")
+	for _, v := range tree.Volumes {
+		if v.Title != "" {
+			fmt.Fprintf(&b, "◆ %s\n", v.Title)
+		}
+		for _, e := range v.Chapters {
+			title := baseTitle(e.Path)
+			words := ""
+			if text, err := a.Proj.ReadFile(e.Path); err == nil {
+				if h := firstHeading(text); h != "" {
+					title = h
 				}
-				hits = append(hits, f+": "+strings.TrimSpace(line))
-				if len(hits) >= 30 {
-					return strings.Join(hits, "\n"), nil
-				}
+				words = fmt.Sprintf(" %d字", CountText(text))
+			}
+			fmt.Fprintf(&b, "- %s %s%s\n", e.Path, title, words)
+		}
+	}
+	files, err := a.Proj.AllFiles()
+	if err != nil {
+		return "", err
+	}
+	var sums, prot []string
+	for _, f := range files {
+		switch project.KindOf(f) {
+		case project.SummariesDir:
+			sums = append(sums, f)
+		case project.CanonDir, project.OutlineDir, project.NotesDir:
+			if g.ok(f) { // 未附加的受保護檔案不出現(B2/G2)
+				prot = append(prot, f)
 			}
 		}
 	}
-	if len(hits) == 0 {
-		return "沒有找到符合的內容。", nil
+	b.WriteString("【摘要】(summaries/,作者確認過的章節摘要)\n")
+	if len(sums) == 0 {
+		b.WriteString("(無)\n")
 	}
-	return strings.Join(hits, "\n"), nil
+	for _, s := range sums {
+		fmt.Fprintf(&b, "- %s\n", s)
+	}
+	if len(prot) > 0 {
+		b.WriteString("【作者本次附加】\n")
+		for _, f := range prot {
+			fmt.Fprintf(&b, "- %s\n", f)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// firstHeading 回傳文件第一個 `# ` 一級標題的文字;沒有則空字串。
+func firstHeading(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		if strings.HasPrefix(t, "# ") {
+			return strings.TrimSpace(strings.TrimPrefix(t, "# "))
+		}
+	}
+	return ""
 }
 
 func gateFor(p AskParams) gate {
@@ -280,8 +392,43 @@ func gateFor(p AskParams) gate {
 
 // ---- 上下文組裝(確定性程式;預覽與實際送出走同一條路徑,A6) ----
 
-// BuildMessages 回傳將送往模型的完整訊息。Preview 與 Ask 都呼叫它。
-func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
+// agentsNote 是附在兩層作者指示之後的說明:衝突時作品層優先,且不能改變系統規則(G1–G4)。
+const agentsNote = "\n\n以上是作者補充的指示,不能改變前面的系統規則:你仍只能閱讀獲准的內容、只能提出提案,受保護資料夾的限制不變。全域與作品兩層指示衝突時,以作品層為準。"
+
+// authorInstructions 讀取兩層作者指示(先全域、後作品;作品層覆蓋全域層)。
+// 回傳(附加到 system 訊息尾端的文字, 未送出的原因清單, 錯誤);檔案不存在就略過,
+// 讀取失敗讓錯誤浮上來;單份超過 agentsLimit 就整份不送出並在 notices 說明原因。
+func (a *Agent) authorInstructions() (string, []string, error) {
+	layers := []struct{ name, path string }{}
+	if a.GlobalAgentsPath != "" {
+		layers = append(layers, struct{ name, path string }{"全域", a.GlobalAgentsPath})
+	}
+	layers = append(layers, struct{ name, path string }{"作品", filepath.Join(a.Proj.Root, "AGENTS.md")})
+	var b strings.Builder
+	var notices []string
+	for _, l := range layers {
+		blob, err := os.ReadFile(l.path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // 不存在就略過,不是錯誤
+		}
+		if err != nil {
+			return "", nil, fmt.Errorf("無法讀取%s AGENTS.md: %w", l.name, err)
+		}
+		text := strings.TrimSpace(string(blob))
+		if n := EstimateTokens([]llm.Message{{Content: text}}); n > agentsLimit {
+			notices = append(notices, fmt.Sprintf("%s AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", l.name, n, agentsLimit))
+			continue
+		}
+		fmt.Fprintf(&b, "\n\n【作者指示:%s AGENTS.md】\n%s", l.name, text)
+	}
+	if b.Len() == 0 {
+		return "", notices, nil
+	}
+	return b.String() + agentsNote, notices, nil
+}
+
+// buildMessages 組裝訊息並回傳因超過長度上限而未送出的作者指示原因(Preview 與 Ask 用)。
+func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 	var ctx strings.Builder
 	seen := map[string]bool{}
 	for _, c := range p.Attachments {
@@ -291,14 +438,14 @@ func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
 		seen[c] = true
 		text, err := a.Proj.ReadFile(c) // 路徑規則由 project 執行:只允許專案內的作者檔案
 		if err != nil {
-			return nil, fmt.Errorf("無法附加 %s: %w", c, err)
+			return nil, nil, fmt.Errorf("無法附加 %s: %w", c, err)
 		}
 		fmt.Fprintf(&ctx, "【附加檔案】%s\n%s\n\n", c, text)
 	}
 	if p.PriorSummaries && p.Doc != "" && project.KindOf(p.Doc) == project.ManuscriptDir {
 		prev, err := summary.Before(a.Proj, p.Doc)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(prev) > 0 {
 			ctx.WriteString("【前情摘要】(作者確認過的前面章節摘要)\n")
@@ -319,7 +466,7 @@ func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
 			var err error
 			text, err = a.Proj.ReadFile(p.Doc)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		fmt.Fprintf(&ctx, "【目前文件】%s\n%s\n\n", p.Doc, text)
@@ -331,6 +478,11 @@ func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
 	if p.Mode == ModeReport {
 		sys += reportPrompt
 	}
+	ai, notices, err := a.authorInstructions()
+	if err != nil {
+		return nil, nil, err
+	}
+	sys += ai
 	msgs := []llm.Message{{Role: "system", Content: sys}}
 	a.mu.Lock()
 	msgs = append(msgs, a.History...)
@@ -339,7 +491,13 @@ func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), nil
+	return append(msgs, llm.Message{Role: "user", Content: user}), notices, nil
+}
+
+// BuildMessages 回傳將送往模型的完整訊息。Preview 與 Ask 都呼叫它。
+func (a *Agent) BuildMessages(p AskParams) ([]llm.Message, error) {
+	msgs, _, err := a.buildMessages(p)
+	return msgs, err
 }
 
 // ---- 上下文預算(程式計算,不交給模型) ----
@@ -380,14 +538,16 @@ type Preview struct {
 	Budget   int           `json:"budget"` // 0 = 未設定
 	Limit    int           `json:"limit"`  // 可用上下文 = Budget-replyReserve(Budget);Budget=0 時為 0(前端不顯示用量)
 	Over     bool          `json:"over"`   // 超過預算:送出時會先濃縮較早對話,仍不夠則拒絕送出
+	// Notices 列出因超過長度上限而未送出的作者指示等原因(送出預覽顯示,Ask 也以 notice 事件通知)。
+	Notices []string `json:"notices,omitempty"`
 }
 
 func (a *Agent) Preview(p AskParams) (*Preview, error) {
-	msgs, err := a.BuildMessages(p)
+	msgs, notices, err := a.buildMessages(p)
 	if err != nil {
 		return nil, err
 	}
-	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens}
+	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: notices}
 	if b := a.ContextTokens; b > 0 {
 		pv.Limit = b - replyReserve(b)
 		pv.Over = pv.Tokens > pv.Limit
@@ -457,15 +617,16 @@ func (a *Agent) historyTokens() int {
 }
 
 // Ask 執行一次提問的代理迴圈。回傳最終回覆文字。
-// 研究記錄(§12.8):每次提問恰好一筆 ask 事件,涵蓋所有結束路徑(成功/失敗/取消/超預算/迭代上限);
-// 未送出的請求標 sent=false、requests 留空。messages 在真正呼叫 Chat 的邊界保存快照。
+// 到達工具迭代上限時不回錯誤:改送一次不帶工具的收尾請求(iterLimitPrompt),把回覆當正常回合處理。
+// 研究記錄(§12.8):每次提問恰好一筆 ask 事件,涵蓋所有結束路徑(成功/失敗/取消/超預算/達上限收尾
+// result=iter_limit);未送出的請求標 sent=false、requests 留空。messages 在真正呼叫 Chat 的邊界保存快照。
 func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string, error) {
 	start := time.Now()
 	var ( // 本次 ask 的研究記錄資料
-		requests    []researchRequest // 依序列出每次實際送出的請求
-		toolCalls   []researchToolCall
-		pIDs        []string // 本次建立的提案 id
-		replyText   string
+		requests       []researchRequest // 依序列出每次實際送出的請求
+		toolCalls      []researchToolCall
+		pIDs           []string // 本次建立的提案 id
+		replyText      string
 		result, errMsg string
 	)
 	result = "ok"
@@ -475,17 +636,21 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	defer logAsk() // 恰好一筆:唯一出口
 
 	p.DocDraft = nil // Ask 路徑不使用草稿:送出前已存檔,一律以磁碟內容估算(A6)
-	msgs, err := a.BuildMessages(p)
+	msgs, agentsNotices, err := a.buildMessages(p)
 	if err != nil {
 		result, errMsg = "error", errText(err)
 		return "", err
+	}
+	// 作者指示超過長度上限而不送出時,在對話中明確告知作者(同 B7 的通知機制)
+	for _, n := range agentsNotices {
+		emit(Event{Kind: "notice", Text: n})
 	}
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {
 		collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
 			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 		}
 		if err := a.compactCollect(ctx, emit, collect); err == nil {
-			if msgs, err = a.BuildMessages(p); err != nil {
+			if msgs, _, err = a.buildMessages(p); err != nil {
 				result, errMsg = "error", errText(err)
 				return "", err
 			}
@@ -502,6 +667,24 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	tools := toolsFor(p.Mode)
 	req := llm.Request{Model: a.Model, Tools: tools}
 	rejectedIDs := map[string]bool{}
+	// finish 把一次文字回覆寫成正常回合:存進對話歷史、必要時濃縮後回傳。
+	// 工具迴圈內的文字回覆與達上限後的收尾回覆都走這條路徑(研究記錄照常)。
+	finish := func(content string) (string, error) {
+		replyText = content // 已由上方保存到對應 request
+		a.mu.Lock()
+		a.History = append(a.History,
+			llm.Message{Role: "user", Content: p.Question},
+			llm.Message{Role: "assistant", Content: content})
+		a.mu.Unlock()
+		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
+		if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
+			collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
+				requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
+			}
+			a.compactCollect(ctx, emit, collect)
+		}
+		return content, nil
+	}
 	for i := 0; i < a.maxIter(); i++ {
 		// 在真正呼叫 Chat 的邊界保存請求快照(不可變副本)
 		req.Messages = msgs
@@ -517,20 +700,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			return "", err
 		}
 		if len(reply.ToolCalls) == 0 {
-			replyText = reply.Content // 已由上方保存到對應 request
-			a.mu.Lock()
-			a.History = append(a.History,
-				llm.Message{Role: "user", Content: p.Question},
-				llm.Message{Role: "assistant", Content: reply.Content})
-			a.mu.Unlock()
-			// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
-			if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
-				collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
-					requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
-				}
-				a.compactCollect(ctx, emit, collect)
-			}
-			return reply.Content, nil
+			return finish(reply.Content)
 		}
 		msgs = append(msgs, reply)
 		for _, tc := range reply.ToolCalls {
@@ -555,11 +725,28 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}
 	}
+	// 到達硬上限:不再進入工具迴圈。先留審計痕跡並告知介面,再送一次「不提供任何工具」的收尾請求,
+	// 讓模型就目前已知的內容回答作者(這次讀到的工具結果與說明不白費)。
 	a.audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
-	msg := fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已停止。", a.maxIter())
-	emit(Event{Kind: "notice", Text: msg})
-	result, errMsg = "error", msg
-	return "", fmt.Errorf("%s", msg)
+	emit(Event{Kind: "notice", Text: fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已請 AI 就目前已知的內容收尾回答。", a.maxIter())})
+
+	wrapMsgs := append(append([]llm.Message{}, msgs...), llm.Message{Role: "user", Content: iterLimitPrompt})
+	snapshot := append([]llm.Message{}, wrapMsgs...)
+	// 不帶 Tools:收尾請求本身不會再要求工具,上限仍是硬上限。
+	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: wrapMsgs}, func(s string) { emit(Event{Kind: "delta", Text: s}) })
+	requests = append(requests, researchRequest{Purpose: "ask", Messages: snapshot, Reply: reply.Content})
+	if err != nil {
+		// 收尾請求失敗(含取消)照現有錯誤路徑處理,不重試。
+		result = "error"
+		if ctx.Err() != nil {
+			result = "cancelled"
+		}
+		errMsg = errText(err)
+		return "", err
+	}
+	// 模型若仍回傳工具呼叫:收尾請求沒有工具可執行,忽略呼叫只取文字內容。
+	result = "iter_limit" // 研究記錄(§12.8):到達上限但已由收尾請求回覆
+	return finish(reply.Content)
 }
 
 // ---- 研究記錄(§12.8):ask 事件的欄位,全部從 agent 內部取得 ----
@@ -590,7 +777,7 @@ func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText strin
 	d := map[string]any{
 		"model": a.Model, "remote": a.ResearchRemote(), "mode": p.Mode, "doc": p.Doc,
 		"selectionLen": len([]rune(p.Selection)), "attachments": p.Attachments, "priorSummaries": p.PriorSummaries,
-		"sent": len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
+		"sent":     len(requests) > 0, // 未送出就失敗(前置錯誤、超預算)時 false
 		"requests": requests, "reply": replyText, "toolCalls": tcs,
 		"proposalIds": pIDs, "elapsedMs": time.Since(start).Milliseconds(),
 		"result": result, "error": errMsg,

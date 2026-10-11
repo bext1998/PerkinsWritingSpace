@@ -2,11 +2,15 @@
 // Perkins 第二階段前端 E2E 執行器:透過 wails dev 的瀏覽器端 (localhost:34115) 呼叫真實 Go 後端。
 //
 // 用法:
-//   node run.js --fixture <資料夾>   建立(重建)拋棄式測試專案;重建後必須重啟 wails dev(SKILL.md 已知陷阱)
+//   node run.js --fixture <資料夾>   建立(重建)拋棄式測試專案;重建後要重啟 wails dev(要重編譯時)或加 --reuse
 //   node run.js                      印出測試組清單與用法
 //   node run.js --all                全部測試組依序執行(合併前跑這個)
 //   node run.js --smoke              冒煙組(約 2 分鐘:開檔/存檔/提案預覽/關閉保護/標題欄禪模式/搜尋)
 //   node run.js <組名> [組名...]     只跑指定組(破壞驗證、返工時只跑受影響的組)
+//   node run.js --reuse ...          重用已經在 34115 上的 wails dev:重建 fixture → 叫後端重新開啟作品
+//                                    → 前端重載頁面,不必冷啟動(每次省下約 40 秒的 Go 重編譯與啟動)。
+//                                    重申:改了 Go 程式碼(wails dev -noreload 不會重編譯)或改前後端
+//                                    介面時仍要冷啟動重跑。詳見 .agent/skills/e2e/SKILL.md。
 //
 // 環境:E2E_SKIP_AI=1 跳過需本機模型的步驟;PROJ=<測試專案> 指定專案。
 // 流程與副作用見 .agent/skills/e2e/SKILL.md(鎖檔、settings.json 備份還原、清書櫃垃圾)。
@@ -31,7 +35,7 @@ const SUITES = [
     ['research', '研究記錄 R1–R3'],
     ['polish', '介面打磨 U1-U8(新增章節、選取標籤、還原、浮動列、預覽)'],
     ['visual-1b', '1B 視覺:AI 浮窗回覆與提案卡、資訊欄(深/淺)'],
-    ['save-flow', '存檔按鈕 E3、序列化存檔 E5、重開同章 E6、過期導覽 E7'],
+    ['save-flow', '存檔按鈕 E3、序列化存檔 E5、重開同章 E6、過期導覽 E7、定時自動存檔(#36)'],
     ['notion', 'Notion 逐頁分類匯入與撤銷'],
     ['settings-layout', '設定頁導覽版面 900/640/1280'],
     ['error-guard', '錯誤防護 E1/E2/E2b/E4/E4a(開發模式崩潰點)'],
@@ -42,7 +46,8 @@ const SUITES = [
 ];
 
 const printUsage = () => {
-    console.log('用法:node run.js [--fixture <dir> | --all | --smoke | <組名...>]');
+    console.log('用法:node run.js [--reuse] [--fixture <dir> | --all | --smoke | <組名...>]');
+    console.log('  --reuse 重用已在 34115 上的 wails dev(重建 fixture + 後端重新開啟作品 + 前端重載),不冷啟動');
     console.log('');
     console.log('測試組(依完整測試的執行順序):');
     for (const [n, d] of SUITES) console.log(`  ${n.padEnd(16)} ${d}`);
@@ -70,8 +75,19 @@ if (args.length === 0) { printUsage(); process.exit(1); }
 const PROJ = process.env.PROJ;
 if (!PROJ) { console.error('需要 PROJ=<測試專案> 環境變數(wails dev 的 PERKINS_OPEN 同一個專案)'); process.exit(1); }
 
-const only = args[0] === '--all' ? SUITES.map(s => s[0])
-    : args.flatMap(a => a === '--smoke' ? ['__smoke'] : [a]);
+// --reuse 是旗標(可放任意位置),不是組名:先從參數裡拿掉再判模式
+const REUSE = args.includes('--reuse');
+const argv = args.filter(a => a !== '--reuse');
+const only = argv[0] === '--all' ? SUITES.map(s => s[0])
+    : argv.flatMap(a => a === '--smoke' ? ['__smoke'] : [a]);
+// 只寫 --reuse 沒寫組名:不能重建 fixture 後回報成功(PR #68 審查)
+if (only.length === 0) { printUsage(); process.exit(1); }
+// 會呼叫模型的執行被中斷時,後端舊請求(含研究記錄)可能還在跑,重新開啟作品不會等它結束,
+// 會跨輪寫進新 fixture。只有不呼叫模型時才可 reuse;要跑模型就冷啟動(PR #68 審查)
+if (REUSE && process.env.E2E_SKIP_AI !== '1') {
+    console.error('--reuse 只能搭配 E2E_SKIP_AI=1:會呼叫模型的執行請冷啟動(taskkill + 重建 fixture + 重啟 wails dev)');
+    process.exit(1);
+}
 if (only.includes('__smoke')) console.log('含冒煙組(不重建 fixture;建議先重建 + 重啟 wails dev 再跑)');
 
 const loader = n => n === '__smoke' ? require('./suites/smoke') : require(`./suites/${n}.js`);
@@ -79,10 +95,51 @@ for (const n of only) {
     try { loader(n); } catch (e) { console.error(`找不到測試組:${n}(${e.message})`); printUsage(); process.exit(1); }
 }
 
+// 隔離全域作者指示:後端會從真實 settings 目錄讀 %APPDATA%\Perkins\AGENTS.md,
+// 不隔離的話 PreviewContext/Ask 會讀到作者真實的全域指示,測試結果取決於本機環境(PR #75 審查)。
+// 開跑前把真實檔改名移出讀取路徑,結束(含 process.exit 與未捕捉例外)改名還原——改名即逐位元組相同;
+// 原本不存在就保持不存在(不寫入拋棄內容)。
+const APPDATA_AGENTS = path.join(process.env.APPDATA || '', 'Perkins', 'AGENTS.md');
+const APPDATA_AGENTS_BAK = APPDATA_AGENTS + '.e2e-bak';
+if (fs.existsSync(APPDATA_AGENTS_BAK)) {
+    console.error(`發現殘留備份 ${APPDATA_AGENTS_BAK}(上次 E2E 未正常還原),請先手動改回 ${APPDATA_AGENTS} 再執行`);
+    process.exit(1);
+}
+const agentsIsolated = fs.existsSync(APPDATA_AGENTS);
+if (agentsIsolated) {
+    fs.renameSync(APPDATA_AGENTS, APPDATA_AGENTS_BAK);
+    console.log(`已隔離全域 AGENTS.md → ${APPDATA_AGENTS_BAK}(結束時自動還原)`);
+}
+let agentsRestored = !agentsIsolated;
+const restoreAgents = () => {
+    if (agentsRestored) return;
+    // 測試期間作者在原路徑重建了檔案:改名會覆蓋它,兩份都保留交給作者處理(PR #75 複審)
+    if (fs.existsSync(APPDATA_AGENTS)) {
+        console.error(`未還原全域 AGENTS.md:測試期間 ${APPDATA_AGENTS} 被重建,原檔保留在 ${APPDATA_AGENTS_BAK},請手動合併兩份`);
+        return;
+    }
+    fs.renameSync(APPDATA_AGENTS_BAK, APPDATA_AGENTS);
+    agentsRestored = true;
+};
+process.on('exit', restoreAgents);
+// Ctrl+C、Ctrl+Break、關閉終端不會觸發 'exit',要攔截訊號才能還原(強制結束仍會留下 .e2e-bak,開跑時會擋下)
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.on(sig, () => process.exit(130));
+
 (async () => {
+  try {
     const reporter = new lib.Reporter();
     const {check, skip, maybe} = reporter;
+    if (REUSE && !await lib.serverUp()) {
+        console.error('--reuse 需要 34115 上已經有 wails dev(不自己啟動):先在 app/ 執行 ' +
+            'PERKINS_OPEN=' + PROJ + ' wails dev -noreload,等它回應後再跑');
+        process.exit(1);
+    }
     const {browser, page, errors} = await lib.launch(reporter);
+    if (REUSE) {
+        const t = Date.now();
+        await lib.reuseProject(page, PROJ);
+        console.log(`reuse:fixture 已重建、後端已重新開啟作品、前端已重載(${Date.now() - t} ms,未重啟 wails dev)`);
+    }
     const shot = n => page.screenshot({path: path.join(__dirname, 'shots', n + '.png')});
     const ctx = {
         page, check, skip, maybe, shot, errors,
@@ -95,6 +152,7 @@ for (const n of only) {
         ensureProject: (c, panel) => lib.ensureProject(page, c, panel),
         ensureChapter: (c, panel) => lib.ensureChapter(page, c, panel),
         ensureBookshelf: () => lib.ensureBookshelf(page),
+        projectCard: p => lib.projectCard(page, p),
     };
     const T0 = Date.now();
     for (const n of only) {
@@ -115,4 +173,7 @@ for (const n of only) {
     await browser.close();
     console.log(`總耗時 ${((Date.now() - T0) / 1000).toFixed(0)}s`);
     process.exit(reporter.summary());
+  } finally {
+    restoreAgents(); // process.exit 不會走 finally,但改名會由 'exit' 處理器同步完成
+  }
 })();

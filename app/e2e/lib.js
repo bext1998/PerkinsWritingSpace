@@ -66,6 +66,11 @@ async function launch(reporter) {
     const {chromium} = require('playwright-core');
     const browser = await chromium.launch({executablePath: EDGE, headless: true});
     const context = await browser.newContext({viewport: {width: 1440, height: 900}});
+    // 定時自動存檔(#36)預設在 E2E 關掉:既有測試大多假設「打字後仍是未存狀態」
+    // (未儲存標記、關閉保護、緊急存檔的時序),自動存檔會隨著機器快慢不定時打斷它們。
+    // 驗自動存檔本身的步驟在自己的測試組裡以 __perkinsAutosaveTiming 明確打開。
+    // init script 在每次導覽/重載前執行,Workspace 載入時讀這個旗標。
+    await context.addInitScript(() => { window.__perkinsE2eAutosaveOff = true; });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']); // E4 複製全文用
     const page = await context.newPage();
     const errors = [];
@@ -89,6 +94,27 @@ async function clickProjectCard(page) {
     const i = titles.findIndex(t => norm(t) === norm(PROJ));
     if (i < 0) throw new Error(`書櫃找不到測試專案封面:${PROJ}`);
     await cards.nth(i).click();
+}
+
+// 指定作品的書櫃卡片選擇器:路徑正規化成正斜線與反斜線兩個變體,並忽略大小寫。
+// Windows 路徑不能直接放進 CSS 屬性選擇器 — 反斜線會被 CSS 轉義規則吃掉
+// (\U、\8334f1 這類不是合法轉義),該變體永遠匹配不到。卡片 title 是啟動時
+// PERKINS_OPEN 的字串形式(後端原樣存進最近清單),所以只給一種斜線形式的
+// 選擇器會在另一種形式的那輪全部等不到卡片(Issue #63)。
+function cardSelector(projPath) {
+    const str = s => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+    const fwd = projPath.replace(/\\/g, '/');
+    const bwd = fwd.replace(/\//g, '\\');
+    return `button[title=${str(fwd)} i], button[title=${str(bwd)} i]`;
+}
+
+// 等指定作品的卡片 render 再回傳 locator:書櫃只在 mount 時取一次 ListRecent,
+// 等到卡片就是等到資料落地的穩定狀態(不是加長固定等待)。回傳的 locator 後續
+// 點擊會自動重試。
+async function projectCard(page, projPath, timeout = 15000) {
+    const card = page.locator(cardSelector(projPath));
+    await card.first().waitFor({timeout});
+    return card.first();
 }
 
 // 開啟 E2E 測試專案;chapter 指定時確認該章在編輯器中(crumbs 含章名);
@@ -204,12 +230,39 @@ async function ensureBookshelf(page) {
     await page.waitForSelector('[data-testid=bookshelf-title]', {timeout: 20000});
 }
 
-module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM,
+module.exports = {BASE, EDGE, notionSrcFor, buildFixture, Reporter, launch, ensureProject, ensureChapter, ensureBookshelf, settleDOM, projectCard, cardSelector, serverUp, reuseProject,
     makeFs: (PROJ) => ({
         P: rel => (require('path').join(PROJ, ...rel.split('/'))),
         read: rel => fs.readFileSync(require('path').join(PROJ, ...rel.split('/')), 'utf8'),
         hash: rel => crypto.createHash('sha256').update(fs.readFileSync(require('path').join(PROJ, ...rel.split('/')))).digest('hex'),
     })};
+
+// 34115 上是否已有 wails dev(只偵測,不自己啟動)。--reuse 需要它:Go 程式碼改了沒重啟就測不到。
+async function serverUp() {
+    try {
+        const res = await fetch(BASE, {signal: AbortSignal.timeout(3000)});
+        return res.ok;
+    } catch {
+        return false;
+    }
+}
+
+// E2E 重用同一個 wails dev(--reuse):重建 fixture 後叫後端重新開啟作品,再讓前端重載回起始畫面。
+// 後端的作品狀態(proj、agent 含對話與提案快取、research、在途 cancel)由 OpenProjectAt → setProject 整個換掉,
+// 與作者從書櫃換作品是同一條產品路徑;冷啟動只多了 Go 重編譯與行程重啟。
+// 注意:改了 Go 程式碼一定要冷啟動(wails dev -noreload 不會重編譯);改前端 vite 會熱更新,
+// 這裡仍然會重載頁面,所以測到的一定是磁碟上的最新前端程式。
+async function reuseProject(page, projDir) {
+    buildFixture(projDir);
+    await page.goto(BASE);
+    const bound = await page.waitForFunction(() => !!(window.go && window.go.main && window.go.main.App && window.go.main.App.OpenProjectAt),
+        null, {timeout: 20000}).then(() => true).catch(() => false);
+    if (!bound) throw new Error('34115 上的 wails dev 沒有回應綁定:確認伺服器還活著(見 .agent/skills/e2e/SKILL.md)');
+    await page.evaluate(dir => window.go.main.App.OpenProjectAt(dir), projDir);
+    await page.goto(BASE);
+    await page.waitForSelector('[data-testid=bookshelf-title], [data-testid=chapter-row]', {timeout: 30000});
+    return true;
+}
 
 // 條件式等待:等 DOM 靜默(連續 quietMs 無 mutation)或超過 maxMs 上限。
 // 取代「click 後固定等 N ms」的寫法:UI 早就更新完就提早返回,更新中就繼續等。

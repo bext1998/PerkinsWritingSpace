@@ -45,11 +45,14 @@ type Settings struct {
 	BaseURL string `json:"baseUrl,omitempty"` // 第一代欄位:載入時轉為 Profile
 	Model   string `json:"model,omitempty"`
 
-	Profiles  []Profile         `json:"profiles"`
-	Active    string            `json:"active"`
-	Recent    []Recent          `json:"recent"`
+	Profiles  []Profile          `json:"profiles"`
+	Active    string             `json:"active"`
+	Recent    []Recent           `json:"recent"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string            `json:"theme"` // dark | light
+	Theme     string             `json:"theme"` // dark | light
+	// 定時自動存檔(SPEC §17.3)。指標用來區分「作者明確關閉」與「舊設定檔沒有這個欄位」,
+	// 後者視為開啟;用 bool 的話兩者都是 false,分不出來。
+	Autosave *bool `json:"autosave,omitempty"`
 
 	// 稿紙化第二階段(二)(SPEC §17.3):編輯區版面的作者全域偏好(與主題同一處),不是作品設定
 	PaperWidth    string `json:"paperWidth"`    // 版心寬度(正文欄最大寬度)
@@ -177,6 +180,9 @@ func (s *Store) Save(v Settings) error {
 	return os.WriteFile(filepath.Join(s.Dir, "settings.json"), b, 0o600)
 }
 
+// AutosaveOn 回傳定時自動存檔是否啟用:沒設定過(舊設定檔)時預設開啟。
+func (v Settings) AutosaveOn() bool { return v.Autosave == nil || *v.Autosave }
+
 func (v *Settings) ProfileByID(id string) *Profile {
 	for i := range v.Profiles {
 		if v.Profiles[i].ID == id {
@@ -249,7 +255,7 @@ func SetProfileAPIKey(profileID, k string) error {
 }
 
 // APIKey / SetAPIKey 對應 default 設定檔(保留給第一代呼叫者)。
-func APIKey() (string, error) { return ProfileAPIKey("default") }
+func APIKey() (string, error)  { return ProfileAPIKey("default") }
 func SetAPIKey(k string) error { return SetProfileAPIKey("default", k) }
 
 // ValidProfileID 限制 id 字元,避免被拼進憑證名稱時產生歧義。

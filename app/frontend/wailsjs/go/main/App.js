@@ -98,6 +98,10 @@ export function GetTree() {
   return window['go']['main']['App']['GetTree']();
 }
 
+export function HealthCheck() {
+  return window['go']['main']['App']['HealthCheck']();
+}
+
 export function IgnoreVariant(arg1) {
   return window['go']['main']['App']['IgnoreVariant'](arg1);
 }
@@ -224,6 +228,10 @@ export function SaveSummary(arg1, arg2) {
 
 export function SetActiveModel(arg1, arg2) {
   return window['go']['main']['App']['SetActiveModel'](arg1, arg2);
+}
+
+export function SetAutosave(arg1) {
+  return window['go']['main']['App']['SetAutosave'](arg1);
 }
 
 export function SetChapterStatus(arg1, arg2) {
