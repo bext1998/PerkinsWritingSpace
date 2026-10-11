@@ -337,6 +337,7 @@ export namespace main {
 	    active: string;
 	    platforms: publish.Platform[];
 	    theme: string;
+	    autosave: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsView(source);
@@ -348,6 +349,7 @@ export namespace main {
 	        this.active = source["active"];
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
 	        this.theme = source["theme"];
+	        this.autosave = source["autosave"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
