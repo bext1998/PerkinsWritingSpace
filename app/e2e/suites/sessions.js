@@ -77,6 +77,8 @@ module.exports = {
             await page.click('[data-testid=session-tab-deleted]');
             await page.waitForSelector('[data-testid=session-row]');
             check('刪除後在「已刪除」分頁(回收區)', (await page.textContent('[data-testid=session-row]')).includes('E2E 對話記錄測試'));
+            // 刪的是目前會話:畫面要清空,否則之後接續別份時會把被刪的對話當新會話重存回「最近」
+            check('刪除目前會話後對話清空', (await page.$$('[data-testid=assistant-turn]')).length === 0);
             await page.click('[data-testid=session-restore]');
             await page.click('[data-testid=session-tab-active]');
             await page.waitForSelector('[data-testid=session-row]');

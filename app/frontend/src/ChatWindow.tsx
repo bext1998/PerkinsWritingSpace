@@ -428,8 +428,9 @@ export default function ChatWindow(props: Props) {
     const archiveSession = async (m: sessions.Meta) => {
         try { await ArchiveSession(m.id, m.status !== 'archived'); await loadSessions(); } catch (e) { setError(errText(e)); }
     };
-    const removeSession = async (id: string) => {
-        try { await DeleteSession(id); await loadSessions(); } catch (e) { setError(errText(e)); }
+    // 刪的是目前會話:畫面也清空(等同新對話),否則下一次保存或接續別份時會把它當新會話重存回來
+    const removeSession = async (m: sessions.Meta) => {
+        try { await DeleteSession(m.id); if (m.current) reset(); await loadSessions(); } catch (e) { setError(errText(e)); }
     };
     const restoreSession = async (id: string) => {
         try { await RestoreSession(id); await loadSessions(); } catch (e) { setError(errText(e)); }
@@ -888,7 +889,7 @@ export default function ChatWindow(props: Props) {
                                             <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" data-testid="session-archive"
                                                     onClick={() => archiveSession(m)}>{m.status === 'archived' ? '取消封存' : '封存'}</Button>
                                             <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-destructive" data-testid="session-delete"
-                                                    onClick={() => removeSession(m.id)}>刪除</Button>
+                                                    onClick={() => removeSession(m)}>刪除</Button>
                                         </>
                                     )}
                                 </div>
