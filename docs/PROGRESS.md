@@ -1,5 +1,20 @@
 # PROGRESS.md
 
+## 2026-10-11 — 稿紙化第二階段(一):打字機捲動與專注模式(Issue #44)
+
+- **新模組 `app/frontend/src/paperModes.ts`**(與 paper.ts 並列,`Editor.tsx` 以兩個 Compartment 開關):兩者都是只改呈現的 CodeMirror extension;狀態在 `Workspace.tsx`(記憶體,與禪模式同一模式)、選單在 `TitleBar.tsx`(與禪模式同一區)、快捷鍵在 Workspace 的全域 keydown(`Ctrl+Shift+T`/`Ctrl+Shift+D`,進出同鍵)。
+- **打字機捲動**:輸入或移動游標後以 `coordsAtPos` 把游標行對到編輯區上方約 40%(rAF 量測後調 `scrollDOM.scrollTop`,上下界夾住:文件開頭不足以捲動時不硬拉)。**只在 `docChanged`/`selectionSet` 後定位**:作者滾輪/捲軸捲動(只有 `viewportChanged`)不搶回,直到下一次輸入或移動游標;明確定位(scrollToLine、場景跳轉)後同樣停在固定位置。文件結尾另由 `.cm-host.cm-typewriter .cm-content` 的 `padding-bottom: 62vh` 支撐(預設 40vh 不到 60vh,結尾游標只能停在約 60% 處;關閉即恢復)。IME 組字中不捲動(會打斷組字),記 pending、`compositionend` 後補定位。
+- **專注模式**:line decoration(`cm-paper-dim`,`opacity: 0.35`)只算可見範圍前後各 60 行;不淡化的判準與 paper.ts 的 touching 相同(游標或選取碰到該行),所以選取跨多段時選取涵蓋的段落都不淡化;空行不套用(沒有文字,分隔空行另由 paper.ts 折起);標題、場景分隔、程式碼區塊一樣依是否在游標所在段落淡化。游標行從不淡化(IME 組字中不動到組字的行);decoration 實例重複使用(同 paper.ts,CM 才只更新變動的行)。
+- **快捷鍵查證**:既有快捷鍵(存檔 `Ctrl+S`、禪模式 `Ctrl+Shift+F`、搜尋 `Ctrl+F/H`、`Alt` 系列)與 CodeMirror defaultKeymap/historyKeymap/searchKeymap 皆無 `Ctrl+Shift+T`/`Ctrl+Shift+D`;組字中(`isComposing`/keyCode 229)不動作。
+- **E2E(paper 組 +18 項)**:選單開啟後開頭不硬拉、選單反映狀態且選完能回到編輯器、輸入與方向鍵移動時游標行維持固定範圍(同時驗游標真的有動、內容捲動而非游標往下跑)、快捷鍵關閉後恢復一般行為、快捷鍵開啟後回固定位置、滾動閱讀不被拉回、移動游標後才拉回、IME 組字中不捲動、組字結束後才定位、專注模式(游標段落不淡化/其他淡化、換段跟著換、選取跨段不淡化、場景分隔依游標淡化、快捷鍵關閉後全不淡化)、640 寬可用、禪模式下可用、大文件效能。截圖 3 張(`44-typewriter-focus-dark`/`-light`/`-640`,深/淺各一,已實際檢視:游標段落在約 40% 處不淡化、其餘段落淡化)。
+- **破壞驗證 9 輪**(拿掉或改壞對應實作 → 對應檢查 FAIL → 還原):R1 定位不動作 → 7 項 FAIL;R2 捲動也搶回 → 不被拉回 FAIL;R3 組字中也捲動 → IME FAIL;R4 不做淡化 → 5 項 FAIL;R5 只看游標行(忽略選取涵蓋段落)→ 選取跨段 FAIL;R6 開頭硬拉(加頂部留白)→ 不硬拉 FAIL;R7 選單項目不動作 → 13 項 FAIL;R8 禪模式藏起兩個開關 → 禪模式項 FAIL;R9 移除快捷鍵 → 3 項 FAIL。18 項新檢查各有至少一輪讓它 FAIL(效能項是量測,無對應破壞,以實測值核對)。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**527/527 passed**,略過 8 項,214s(= 上一輪基準 509 + 本次 18,零 FAIL、既有組檢查數未變)。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
+- **效能(實測,兩者同時開啟)**:約 7.6 萬字章節(75,892 字、2200 段),按鍵到畫面更新中位數 **14.8ms**、最大 **21.3ms**(40 次)——不低於 SPEC §17.3 既有基準(中位數約 20ms、最大約 30ms)。
+- **返工(hemingway 審查 1 Minor,直接修)**:兩個模式快捷鍵原本在 Workspace 的 window bubble listener 處理,Caps Lock 下 `Ctrl+Shift+D` 的 key 是小寫 'd',CodeMirror keymap 的 `Mod-d`(selectNextOccurrence)會先在 contentDOM 把游標所在的英文字選起來,切換專注模式後下一個輸入就取代被選的字;CM 處理後 bubble 到 window 時 `preventDefault` 救不回已發生的選字。改用 **capture 階段的 window listener + `stopPropagation`** 攔截(`Ctrl+Shift+T` 同機制):事件根本到不了 CM 的 keymap。E2E 新增 2 項回歸(CDP 送真實 `key='d'/'t'`+Ctrl+Shift+keyCode 68 模擬 Caps Lock:狀態切換、原本游標/選取不變、document 上的探針看不到事件);破壞驗證:換回 bubble 攔截(無 capture/stopPropagation)→ 2 項 FAIL(選字重現、探針收到事件)→ 還原後 paper 組全過。
+- **E2E 陷阱(本次踩到)**:標題欄應用程式選單(Radix DropdownMenu)浮層開著時,後續鍵盤與滑鼠都被浮層吃掉(方向鍵/滾輪無效、點 `.cm-content` 被 `<html>` 攔截而 timeout),整段檢查會空轉後中斷。讀完選單文字後要等 `[data-testid=app-menu-content]` 真的 detach(必要時點中性處關閉)再操作;破壞驗證時選單項目不存在也要避免直接點它,讓檢查自己 FAIL。
+- **未做(第二階段)**:名稱/別名比對提示。
+- **待作者實機**:打字機捲動在真實注音/倉頡組字下的手感(無頭環境以 CDP 組字事件驗;#47)。
+
 ## 2026-10-11 — 稿紙化第二階段(二):版心寬度、字級、段距可調(Issue #44)
 
 - **設定(作者全域偏好,不是作品設定)**:入口與主題(夜間書房／白紙)同一處——設定頁導覽欄底部「稿紙版面」(`data-testid=paper-layout`)三個預設檔下拉,同一種保存方式(全域 `settings.json` 的 `paperWidth`/`paperFontSize`/`paperParaGap`,綁定 `SetPaperLayout`)。預設檔:版心寬度 36/44/52rem(預設 44rem)、字級 0.95/1.08/1.25/1.45rem(預設 1.08rem)、段距 0.35/0.7/1.15em(預設 0.7em);不做任意數值輸入,Go 端 `Settings.SetPaperLayout` 只接受預設檔(任一項不是就整筆不變更),載入與存回都會把非預設檔的值(舊檔沒欄位、被手改壞)正規化回預設,其他欄位照原樣保留。

@@ -11,6 +11,7 @@ import {tags} from '@lezer/highlight';
 import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'lucide-react';
 import {QUICK_ACTIONS, Quick} from './quick';
 import {paperExtensions} from './paper';
+import {focusExtensions, typewriterExtensions} from './paperModes';
 
 export interface Selection {
     text: string;
@@ -210,6 +211,10 @@ interface Props {
     reveal?: {from: number; to: number} | null; // 掛載時捲到此處並短暫標示(#45 方案 A「在稿件中顯示」別章時)
     // 唯讀(接受提案、版本還原期間,#56):可捲動、選取,不能修改;程式直接送出的修改(右鍵剪下/貼上)也擋下
     readOnly?: boolean;
+    // 打字機捲動與專注模式(#44 第二階段(一),SPEC §17.3):只改呈現,各自獨立開關;
+    // 以 Compartment 開關,狀態在 Workspace(記憶體)
+    typewriter?: boolean;
+    focusMode?: boolean;
 }
 
 const theme = EditorView.theme({
@@ -509,11 +514,13 @@ const openReplace: Command = view => {
 };
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
-const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false}, ref) {
+const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false, typewriter = false, focusMode = false}, ref) {
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
     const revealTimer = useRef(0);
     const readOnlyComp = useRef(new Compartment());
+    const typewriterComp = useRef(new Compartment());
+    const focusComp = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
     const onAskAIRef = useRef(onAskAI); // 快捷鍵在掛載時建立,要呼叫最新的 onAskAI
@@ -640,6 +647,9 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     syntaxHighlighting(highlight),
                     aiFlashField,
                     readOnlyComp.current.of(lockExt(readOnly)),
+                    // 打字機捲動與專注模式(#44 第二階段(一)):只改呈現,各自獨立開關
+                    typewriterComp.current.of(typewriter ? typewriterExtensions() : []),
+                    focusComp.current.of(focusMode ? focusExtensions() : []),
                     EditorView.lineWrapping,
                     theme,
                     EditorView.updateListener.of(u => {
@@ -743,6 +753,12 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                     const r = v.scrollDOM.getBoundingClientRect();
                     return c.top >= r.top - 1 && c.bottom <= r.bottom + 1;
                 },
+                // 打字機捲動 E2E:游標(游標行)在編輯區內的螢幕位置與編輯區高度
+                cursorScreen: () => {
+                    const c = v.coordsAtPos(v.state.selection.main.head);
+                    const r = v.scrollDOM.getBoundingClientRect();
+                    return c ? {y: c.top - r.top, h: r.height} : null;
+                },
                 posAll: () => [...(posStore || new Map()).entries()],
             };
         }
@@ -778,6 +794,14 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     useEffect(() => {
         view.current?.dispatch({effects: readOnlyComp.current.reconfigure(lockExt(readOnly))});
     }, [readOnly]);
+
+    // 打字機捲動/專注模式切換(#44 第二階段(一)):掛載後隨 prop 重新設定
+    useEffect(() => {
+        view.current?.dispatch({effects: typewriterComp.current.reconfigure(typewriter ? typewriterExtensions() : [])});
+    }, [typewriter]);
+    useEffect(() => {
+        view.current?.dispatch({effects: focusComp.current.reconfigure(focusMode ? focusExtensions() : [])});
+    }, [focusMode]);
 
     const onContextMenu = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -827,7 +851,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const flip = menu ? menu.x > window.innerWidth - 420 : false;
 
     return (
-        <div className="cm-host relative" ref={host} onContextMenu={onContextMenu}>
+        <div className={`cm-host relative${typewriter ? ' cm-typewriter' : ''}`} ref={host} onContextMenu={onContextMenu}>
             {/* 選取浮動列(§16 第 1 項 04):有選取時出現在編輯器頂部右側;帶入當下選取,右鍵選單保留 */}
             {current && (
                 <div data-testid="selection-bar"
