@@ -229,3 +229,65 @@ func TestDeleteCurrentSessionStartsNew(t *testing.T) {
 		}
 	}
 }
+
+// 接續期間不能開始新請求:否則接續完成時會把執行中請求的 History 換成舊會話(PR #89 審查)。
+func TestResumeHoldsRunSlotUntilDone(t *testing.T) {
+	a := sessionApp(t)
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "old"}, {Role: "assistant", Content: "old answer"}}, nil)
+	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "old"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.ResetChat()
+	entered, release := make(chan struct{}), make(chan struct{})
+	resumeHook = func() { close(entered); <-release }
+	defer func() { resumeHook = nil }()
+	done := make(chan error, 1)
+	go func() { _, err := a.ResumeSession(m.ID, nil); done <- err }()
+	<-entered
+	if _, _, _, err := a.begin(); err == nil || !strings.Contains(err.Error(), "上一個請求尚未結束") {
+		t.Fatalf("接續途中不該能開始新請求,得到 %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	a.mu.Lock()
+	busy := a.cancel != nil
+	a.mu.Unlock()
+	if busy {
+		t.Fatal("接續結束後要釋放執行權")
+	}
+}
+
+// 回合存檔之後才拒絕提案(實際常見順序),接著開新對話再接續,拒絕原因仍要在(PR #89 審查)。
+func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.agent.Proposals.Create("m", rel, "original", "replacement", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}, nil)
+	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "q"}, {Role: "assistant", Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RejectProposal(p.ID, "保持敘事口吻"); err != nil {
+		t.Fatal(err)
+	}
+	a.ResetChat()
+	s, err := a.ResumeSession(m.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Rejections) != 1 || !strings.Contains(s.Rejections[0], "保持敘事口吻") {
+		t.Fatalf("拒絕原因應隨會話保存,得到 %q", s.Rejections)
+	}
+	if _, rej := a.agent.Snapshot(); len(rej) != 1 {
+		t.Fatalf("接續後 Agent 應載回拒絕原因,得到 %q", rej)
+	}
+}

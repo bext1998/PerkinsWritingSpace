@@ -1055,11 +1055,22 @@ func (a *App) SaveSession(turns []sessions.Turn) (sessions.Meta, error) {
 // ResumeSession 接續一份對話記錄:目前會話先存好(currentTurns 是前端目前顯示的對話列)再切換,
 // 該會話的 History 與拒絕原因載回 Agent(前端載回 turns);請求進行中時拒絕切換。
 func (a *App) ResumeSession(id string, currentTurns []sessions.Turn) (sessions.Session, error) {
+	// 整個切換期間佔住執行權(與 begin 同一個 a.cancel):檢查後到載回之間不能開始新請求,
+	// 否則載回會覆寫執行中請求的 History(PR #89 審查)
 	a.mu.Lock()
-	busy := a.cancel != nil
-	a.mu.Unlock()
-	if busy {
+	if a.cancel != nil {
+		a.mu.Unlock()
 		return sessions.Session{}, errors.New("有請求進行中,請先停止再切換對話記錄")
+	}
+	a.cancel = func() {}
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.cancel = nil
+		a.mu.Unlock()
+	}()
+	if resumeHook != nil {
+		resumeHook()
 	}
 	if len(currentTurns) > 0 { // 目前會話先存好再切換
 		if _, err := a.SaveSession(currentTurns); err != nil {
@@ -1083,6 +1094,9 @@ func (a *App) ResumeSession(id string, currentTurns []sessions.Turn) (sessions.S
 	a.mu.Unlock()
 	return *sess, nil
 }
+
+// resumeHook 只供測試在接續途中插入時序(PR #89 審查:接續期間不能開始新請求)。
+var resumeHook func()
 
 // ArchiveSession 封存(on=true)/取消封存(on=false)。
 func (a *App) ArchiveSession(id string, on bool) error {
@@ -1269,9 +1283,33 @@ func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 		proposal.LogReject(a.research, p, reason)
 		if reason != "" {
 			a.agent.NoteRejection(p, reason)
+			if err := a.saveRejections(); err != nil {
+				return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
+			}
 		}
 	}
 	return p, err
+}
+
+// saveRejections 把目前的拒絕原因寫進已保存的目前會話(#33):拒絕常發生在回合存檔之後,
+// 不寫回的話作者接著開新對話或關閉程式,接續時就會遺失(PR #89 審查)。尚未存過的會話不處理。
+func (a *App) saveRejections() error {
+	ag, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	id := a.curSess
+	a.mu.Unlock()
+	if id == "" {
+		return nil
+	}
+	sess, err := st.Get(root, id)
+	if err != nil {
+		return err
+	}
+	_, sess.Rejections = ag.Snapshot()
+	return st.Save(root, sess)
 }
 
 // ---- 版本(G3) ----
