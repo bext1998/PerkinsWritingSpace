@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {
     AlertTriangle, Bot, Check, ChevronDown, Eye, FileText, GripHorizontal, Loader2, Maximize2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
-    RotateCcw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
+    ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
     AcceptProposal, AskAI, CancelAsk, ListModels, ListProposals, PreviewContext, RejectProposal, ResetChat, SetActiveModel,
@@ -45,6 +45,7 @@ interface Props {
     setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
     onAccepted: (p: proposal.Proposal) => Promise<void>;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
+    onReveal: (p: proposal.Proposal) => void;               // 審查視窗「在稿件中顯示」(#45 方案 A)
     lockEdits: () => () => void;   // 接受期間(存檔→套用→重載)鎖住編輯器,避免新輸入被重載覆蓋(#56);回傳解鎖函式
     onPending: (n: number) => void;
     pending: number;
@@ -93,7 +94,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
 }
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -508,44 +509,22 @@ export default function ChatWindow(props: Props) {
                         <div className="mt-3 space-y-2" data-testid="proposals">
                             <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
                             {openProposals.map(p => {
-                                const mine = edited[p.id] ?? p.replacement;
-                                const changed = mine !== p.replacement;
+                                // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
+                                const changed = edited[p.id] !== undefined && edited[p.id] !== p.replacement;
                                 return (
                                     <div key={p.id} data-testid="proposal"
                                          className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
-                                        <div className="mb-1.5 flex items-center gap-1 text-xs text-muted-foreground">
-                                            <FileText className="h-3 w-3"/>{titleOf(p.target)}
-                                            {/* 放大審查(#35):在較大空間比對原文與修改,內容與卡片共用 */}
-                                            <Tip label="放大審查" side="top">
-                                                <Button variant="ghost" size="iconSm" className="ml-auto h-5 w-5" data-testid="review-open"
-                                                        onClick={() => setReviewId(p.id)}><Maximize2 className="h-3.5 w-3.5"/></Button>
-                                            </Tip>
-                                            <span>{p.model}</span>
+                                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                            <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                            <span className="ml-auto shrink-0">{p.model}</span>
                                         </div>
-                                        <div className="diff-del whitespace-pre-wrap rounded px-2 py-1 font-serif text-[13px]">{p.original}</div>
-                                        <Textarea className="diff-add mt-1 min-h-[3.5rem] resize-y rounded-md border border-border bg-transparent font-serif text-[13px] focus-visible:ring-primary"
-                                                  value={mine} data-testid="proposal-edit"
-                                                  disabled={p.status === 'conflict'}
-                                                  onChange={e => setEdited(m => ({...m, [p.id]: e.target.value}))}/>
-                                        {changed && (
-                                            <div className="mt-1 flex items-center gap-2 text-xs text-primary">
-                                                已修改 · 接受時會寫入你的版本
-                                                <button className="flex items-center gap-0.5 text-muted-foreground hover:text-foreground"
-                                                        onClick={() => setEdited(m => { const n = {...m}; delete n[p.id]; return n; })}>
-                                                    <RotateCcw className="h-3 w-3"/>還原 AI 版本
-                                                </button>
-                                            </div>
-                                        )}
-                                        {p.rationale && <p className="mt-1.5 text-xs text-muted-foreground">理由:{p.rationale}</p>}
-                                        {p.assumptions?.length > 0 && <p className="text-xs text-muted-foreground">假設:{p.assumptions.join('；')}</p>}
-                                        {p.status === 'conflict' && <p className="mt-1 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
-                                        <div className="mt-2 flex justify-end gap-1.5">
-                                            <Button size="sm" variant="ghost" className="h-7" onClick={() => reject(p)}>
-                                                {p.status === 'conflict' ? '捨棄' : '拒絕'}
-                                            </Button>
-                                            {p.status !== 'conflict' && (
-                                                <Button size="sm" className="h-7" onClick={() => accept(p)} data-testid="accept"><Check/>接受</Button>
-                                            )}
+                                        <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                        {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
+                                        {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
+                                        {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
+                                        <div className="mt-1.5 flex justify-end">
+                                            <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
+                                                    onClick={() => setReviewId(p.id)}><Maximize2/>審查</Button>
                                         </div>
                                     </div>
                                 );
@@ -737,7 +716,7 @@ export default function ChatWindow(props: Props) {
             {reviewId && (
                 <ProposalReview items={openProposals} id={reviewId} onStep={dir => reviewStep(reviewId, dir)}
                                 edited={edited} setEdited={setEdited} titleOf={titleOf}
-                                onAccept={accept} onReject={reject} onClose={() => setReviewId(null)}/>
+                                onAccept={accept} onReject={reject} onReveal={onReveal} onClose={() => setReviewId(null)}/>
             )}
         </>
     );
