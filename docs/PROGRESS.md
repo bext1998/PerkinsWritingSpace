@@ -1,5 +1,19 @@
 # PROGRESS.md
 
+## 2026-10-11 — 系統提示去掉寫死的作品類型、對話中可展開工具呼叫(Issue #34 第 5、7 項)
+
+- **A. 系統提示中性化**(#34 第 5 項,`app/internal/agent/agent.go`):`systemPrompt` 第一行「作品是中文輕小說。」改為「作品類型、讀者與風格以作者在 AGENTS.md 的說明與作品內容為準。」(作品指示已由 #75 讀進系統訊息,不另做讀取);`summaryPrompt` 的「你是輕小說編輯助手」改「你是寫作編輯助手」。`app/internal/publish/publish.go` 的平台名稱「菠蘿包輕小說」不動。G1–G4 相關句子一字未動。
+- **B. 對話中可展開的工具呼叫**(#34 第 7 項,含 #37 移交的「Agent 以工具讀取或搜尋到的內容」):
+  - 後端:`Event` 加 `Result`(`json:"result,omitempty"`),工具迴圈改為**執行完才 emit** `tool` 事件,帶上回給模型的同一段結果;錯誤帶「錯誤:…」,被拒帶回給模型的那段拒絕訊息(含可用工具清單)。顯示端由 `displayResult` 截斷到 2000 字並附「…(已截斷,共 N 字)」;送給模型的內容、審計與研究記錄都不變。
+  - 前端(`ChatWindow.tsx`):工具列改為 `<details>` 可展開——收合是一行摘要(「讀取 path」/「搜尋 query」…),錯誤/被拒在收合就以【錯誤】/【已拒絕】標示並用警示色;展開顯示完整參數(JSON 排版)與結果,`whitespace-pre-wrap break-words` 換行、框內捲動(max-height + overflow-y-auto)。`Turn` 以 `args`/`result`/`bad` 攜帶顯示資料,`__perkinsChatInject` 因此可注入工具列(截圖用)。只改顯示,不新增任何工具權限。
+- **測試(Go,1 個新測試)**:`TestToolEventsCarryResult` — 成功/錯誤/被拒/超長四種工具事件都帶結果;成功與被拒時顯示的與回給模型的訊息逐字一致;錯誤帶「錯誤:」前綴;超長時顯示端截斷到 2000 字並註明總字數、送給模型的仍是完整內容。
+- **破壞驗證 2 輪**(拿掉對應實作 → 該測試 FAIL → 還原,還原後 `cmp` 逐位元組相同):①tool 事件不帶 `Result` → FAIL;②`toolResultDisplayLimit` 改 1000000(不截斷)→ FAIL。
+- **驗證**:`go test ./...`(app/ 全模組,含根套件 embed)全過;前端 `npm run build`(tsc 型別檢查 + vite)通過。E2E(冷啟動後執行,E2E_SKIP_AI=1)`bot-chat polish visual-1b --smoke` **104/104 passed,略過 8 項**,零 FAIL。既有 E2E 沒有檢查工具列文字(搜 `role === 'tool'` 與 tool 列 testid 皆無),無需更新。
+- **截圖(實際 render,放在工作樹外)**:`C:\Users\tiger\AppData\Local\Temp\perkins-f1b5681\shots\tool-turn-640.png` / `tool-turn-1280.png`(640×672 與 1280×800,以 DEV hook `__perkinsChatInject` 注入工具事件後展開成功/錯誤/被拒/截斷四種;已實際檢視:參數 JSON、結果、錯誤與被拒的警示標示、長結果框內捲動)。640 實測無水平捲軸(文件/浮窗/對話區 scrollWidth 皆不超出)。
+- **E2E 環境**:`settings.json` 備份後逐位元組還原(md5 一致)、無殘留程序、書櫃無垃圾、鎖檔已釋放;`shelf` 組本次未跑(未覆寫剪貼簿)。破壞驗證依任務只要求 Go 測試層(上方 2 輪);前端未加 E2E 檢查、未做破壞輪,以型別檢查、建置與實際 render 核對。
+- **SPEC 同步**:§12.3 新增「系統提示不寫死作品類型」「對話中可展開的工具呼叫」兩條。
+- **未做**(依任務限制):不動提案卡/審查視窗、不動工具權限與 G1–G4 行為、`publish.go` 平台名稱不動;研究記錄與 `audit.jsonl` 內容不變。
+
 ## 2026-10-11 — 設定集側欄改資料夾檔案樹(#31 第一步,SPEC §12.2)
 
 - **只改呈現**:`app/frontend/src/panels/BiblePanel.tsx` 設定集清單從「依分類分組」改為依 `tree.canon` 路徑組成**資料夾檔案樹**(canon/... 遞迴,後端 `listMD` 本來就是遞迴的)。同層「資料夾在前、檔案在後」,各自依 `localeCompare(..., 'zh-Hant')` 排序;資料夾列可點擊展開/收合(預設展開,狀態只存記憶體,搜尋時強制展開);檔案列顯示檔名(去 `.md`),`index.entities` 該路徑有別名時以淡色接在檔名後,右側沿用登場次數;點擊開檔、目前檔案高亮,沿用 `entity-row` 樣式與 testid(另附 `data-file`,資料夾列 `data-testid=canon-folder`+`data-folder`,供 E2E 精確定位)。

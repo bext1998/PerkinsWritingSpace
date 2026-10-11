@@ -35,7 +35,7 @@ const DefaultMaxIter = 8
 // agentsLimit 是單份作者指示(AGENTS.md)的長度上限(以 EstimateTokens 估算)。超過的整份不送出。
 const agentsLimit = 4000
 
-const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品的唯一主導者。作品是中文輕小說。
+const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品的唯一主導者。作品類型、讀者與風格以作者在 AGENTS.md 的說明與作品內容為準。
 - 你不能直接修改稿件或設定;你只能閱讀、分析、提出建議。
 - 具體的改寫請使用 propose_patch 提出提案(original 必須逐字複製原文且在檔案中唯一),由作者審核後才會套用。你無法套用提案。
 - 提案前先用 read_document 讀取目標檔,或確認作者本次附加、目前文件的內容;original 從讀到的內容逐字複製,不要憑記憶或摘要改寫。
@@ -78,6 +78,9 @@ type Event struct {
 	Tool    string `json:"tool,omitempty"`
 	Args    string `json:"args,omitempty"`
 	Allowed bool   `json:"allowed,omitempty"`
+	// Result 是這次工具呼叫的結果(或錯誤、拒絕訊息),在工具執行完才帶上,只顯示給作者看(#34 第 7 項)。
+	// 送給模型的內容不變;過長時顯示端由 displayResult 截斷。
+	Result string `json:"result,omitempty"`
 }
 
 type Agent struct {
@@ -706,21 +709,23 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		for _, tc := range reply.ToolCalls {
 			if !allowed(tc.Name, tools) {
 				a.audit(auditRecord{Event: "tool_denied", Tool: tc.Name, Args: tc.Arguments, Detail: "mode=" + p.Mode})
-				emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: false})
+				denyMsg := "錯誤:此工具不存在或本次不被允許。你只能使用: " + strings.Join(names(tools), ", ")
+				emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: false, Result: displayResult(denyMsg)})
 				rejectedIDs[tc.ID] = true
 				toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Denied: true})
-				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: "錯誤:此工具不存在或本次不被允許。你只能使用: " + strings.Join(names(tools), ", ")})
+				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: denyMsg})
 				continue
 			}
 			result2, prID, terr := a.runTool(tc.Name, tc.Arguments, g)
 			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
-			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true})
+			if terr != nil {
+				result2 = "錯誤:" + terr.Error()
+			}
+			// 執行完才 emit,帶上回給模型的同一段結果(錯誤也在內),讓作者看得到工具讀到/搜到什麼(#34 第 7 項)。
+			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2)})
 			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
 			if terr == nil && prID != "" {
 				pIDs = append(pIDs, prID)
-			}
-			if terr != nil {
-				result2 = "錯誤:" + terr.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}
@@ -793,7 +798,7 @@ func (a *Agent) rlogAsk(p AskParams, requests []researchRequest, replyText strin
 // ResearchRemote 回傳目前模型端點是否在本機之外(研究記錄用;由 App 在 prepare 時設定)。
 func (a *Agent) ResearchRemote() bool { return a.Remote }
 
-const summaryPrompt = `你是輕小說編輯助手。為下面這一章寫一份「之後寫作時參考用」的摘要,300 字以內,條列:
+const summaryPrompt = `你是寫作編輯助手。為下面這一章寫一份「之後寫作時參考用」的摘要,300 字以內,條列:
 1. 主要事件(依發生順序)
 2. 登場人物與其狀態、關係的變化
 3. 新揭露的設定或資訊
@@ -825,4 +830,16 @@ func errText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// toolResultDisplayLimit 是工具結果顯示給作者的長度上限(字);超過就截斷並註明總長度(#34 第 7 項)。
+// 只影響對話中的顯示(Event.Result),送給模型的工具結果不變。
+const toolResultDisplayLimit = 2000
+
+func displayResult(s string) string {
+	r := []rune(s)
+	if len(r) <= toolResultDisplayLimit {
+		return s
+	}
+	return string(r[:toolResultDisplayLimit]) + fmt.Sprintf("\n…(已截斷,共 %d 字)", len(r))
 }
