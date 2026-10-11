@@ -953,6 +953,12 @@ func (a *App) WriteAgentsMd(scope, text string) (AgentsMdView, error) {
 	if err != nil {
 		return AgentsMdView{}, err
 	}
+	// 全域層:首次使用時設定目錄可能還不存在,先建立(作品目錄不自行重建)
+	if scope == "global" {
+		if err := os.MkdirAll(a.store.Dir, 0o755); err != nil {
+			return AgentsMdView{}, fmt.Errorf("無法建立設定目錄 %s: %w", a.store.Dir, err)
+		}
+	}
 	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
 		return AgentsMdView{}, fmt.Errorf("無法寫入 %s: %w", p, err)
 	}

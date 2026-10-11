@@ -292,7 +292,8 @@ func TestCompactChatWiringAndPreparePassesSwitch(t *testing.T) {
 // 意圖(#38 設定頁編輯作者指示):全域與作品兩層各自讀寫;檔案不存在時讀為空(不是錯誤),
 // 儲存即建立;內容清空並儲存 = 寫入空檔(不刪檔);寫檔失敗回錯;範圍不對回錯。
 func TestAgentsMdReadWrite(t *testing.T) {
-	cfg := t.TempDir()
+	// 設定目錄尚不存在 = 全新使用者首次儲存全域指示(PR #92 審查)
+	cfg := filepath.Join(t.TempDir(), "Perkins")
 	a := NewApp()
 	a.store = &settings.Store{Dir: cfg}
 
