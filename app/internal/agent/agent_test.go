@@ -616,7 +616,8 @@ func TestSummaryDraftNotUsedUntilSavedAndStaleAfterEdit(t *testing.T) {
 // B7 意圖:對話變長時濃縮一定要讓作者知道;濃縮後下一次的預覽仍等於實際送出。
 func TestCompactionNotifiesAndPreviewStillMatches(t *testing.T) {
 	a, s, _ := setup(t)
-	a.ContextTokens = 1200
+	// 預算以系統提示為基準再加固定額度:系統提示加規則時不必回頭調這個數字,濃縮觸發點維持不變
+	a.ContextTokens = EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 950
 	long := strings.Repeat("很長的討論內容。", 12)
 	var notices []string
 	emit := func(e Event) {
