@@ -253,7 +253,7 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 			Path         string          `json:"path"`
 			Original     string          `json:"original"`
 			Replacement  string          `json:"replacement"`
-			Label        string          `json:"label"`
+			Label        json.RawMessage `json:"label"` // 選填方向說明;型別不對時略過,不讓提案失敗(#39 系統邊界)
 			Alternatives json.RawMessage `json:"alternatives"` // 格式驗證交給 parseAlternatives(#39 系統邊界)
 			Rationale    string          `json:"rationale"`
 			Assumptions  []string        `json:"assumptions"`
@@ -271,8 +271,12 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 			return "", "", fmt.Errorf("提案功能未啟用")
 		}
 		alts, notes := parseAlternatives(p.Alternatives, p.Original, p.Replacement)
+		var label string
+		if len(p.Label) > 0 && string(p.Label) != "null" && json.Unmarshal(p.Label, &label) != nil {
+			notes = append(notes, "label 格式不對(應為一句文字),已略過。")
+		}
 		pr, err := a.Proposals.CreateVersions(a.Model, p.Path, p.Original,
-			proposal.Version{Label: strings.TrimSpace(p.Label), Replacement: p.Replacement}, p.Rationale, p.Assumptions, alts)
+			proposal.Version{Label: strings.TrimSpace(label), Replacement: p.Replacement}, p.Rationale, p.Assumptions, alts)
 		if err != nil {
 			return "", "", err
 		}

@@ -1978,3 +1978,22 @@ func TestProposePatchAlternativesSanitizedAtBoundary(t *testing.T) {
 		t.Fatalf("只應留下未重複的 C: %+v", list3[0].Alternatives)
 	}
 }
+
+// 意圖(#39 審查發現):主版本的選填 label 型別不對時,原本有效的提案仍要建立(略過 label 並告知模型),
+// 不能因為新加的選填欄位讓整個提案失敗。
+func TestProposePatchMalformedMainLabelStillCreatesProposal(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","label":["收斂"],"rationale":"r"}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.reqs[1].Messages[len(s.reqs[1].Messages)-1].Content
+	list, _ := a.Proposals.List()
+	if len(list) != 1 || list[0].Replacement != "小明獨自闖入森林。" || list[0].Label != "" || !strings.Contains(res, "label 格式不對") {
+		t.Fatalf("label 型別不對時仍應建立提案並說明: res=%q list=%+v", res, list)
+	}
+}
