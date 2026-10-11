@@ -1,4 +1,5 @@
-// Package llm 是 OpenAI 相容 /chat/completions 的最小串流客戶端(涵蓋 LM Studio 與雲端端點)。
+// Package llm 是模型端點的最小串流客戶端:OpenAI 相容 /chat/completions 與 Anthropic 原生 Messages API
+// (#30)。涵蓋 LM Studio 等本機端點與雲端端點。
 package llm
 
 import (
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -24,6 +26,10 @@ type Message struct {
 	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"toolCalls,omitempty"`
 	ToolCallID string     `json:"toolCallId,omitempty"`
+	// Thinking 保存 Anthropic 原生 API 的 thinking 區塊(JSON 陣列,含 signature)。
+	// 官方規定工具迴圈中要把 assistant 的 thinking 區塊完整、不修改地傳回下一次請求(#30),
+	// 所以它只在同一個請求的記憶體中隨 Message 往返;不進對話歷史、不進研究記錄、不給前端。
+	Thinking json.RawMessage `json:"-"`
 }
 
 type ToolDef struct {
@@ -43,10 +49,43 @@ type Client interface {
 	Chat(ctx context.Context, req Request, onDelta func(string)) (Message, error)
 }
 
+// ModelLister 另有列出模型的端點(設定頁選模型用)。
+type ModelLister interface {
+	ListModels(ctx context.Context) ([]string, error)
+}
+
+// Service 是 App 需要的客戶端能力:Agent 對話 + 列模型;OpenAI 相容與 Anthropic 原生客戶端都實作。
+type Service interface {
+	Client
+	ModelLister
+}
+
 type OpenAI struct {
 	BaseURL string // 例如 http://localhost:1234/v1
 	APIKey  string
 	HTTP    *http.Client
+	// ReasoningEffort 是思考強度(#30):空字串 = 不送任何思考參數。
+	// 允許值 low/medium/high;xhigh/max 只有 Anthropic 原生支援,設在 OpenAI 相容端點視為不指定。
+	ReasoningEffort string
+}
+
+// openAIEfforts 是 OpenAI 相容端點的 reasoning_effort 允許值。
+var openAIEfforts = []string{"low", "medium", "high"}
+
+// sendableEffort 回傳實際要送出的思考強度;不在允許值內(含 Anthropic 專有的 xhigh/max)視為不指定。
+func sendableEffort(v string, allowed []string) string {
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	return ""
+}
+
+// isOpenRouter 判斷端點是否為 OpenRouter(思考參數用 reasoning.effort,不是 reasoning_effort)。
+func isOpenRouter(baseURL string) bool {
+	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
+	return err == nil && u.Hostname() == "openrouter.ai"
 }
 
 func (c *OpenAI) client() *http.Client {
@@ -105,6 +144,10 @@ type wireMsg struct {
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
 
+type wireReasoning struct {
+	Effort string `json:"effort"`
+}
+
 type wireToolCall struct {
 	Index    int    `json:"index"`
 	ID       string `json:"id,omitempty"`
@@ -121,11 +164,21 @@ func (c *OpenAI) Chat(ctx context.Context, req Request, onDelta func(string)) (M
 		Function ToolDef `json:"function"`
 	}
 	body := struct {
-		Model    string     `json:"model"`
-		Messages []wireMsg  `json:"messages"`
-		Tools    []wireTool `json:"tools,omitempty"`
-		Stream   bool       `json:"stream"`
+		Model           string         `json:"model"`
+		Messages        []wireMsg      `json:"messages"`
+		Tools           []wireTool     `json:"tools,omitempty"`
+		Stream          bool           `json:"stream"`
+		Reasoning       *wireReasoning `json:"reasoning,omitempty"`
+		ReasoningEffort string         `json:"reasoning_effort,omitempty"`
 	}{Model: req.Model, Stream: true}
+	// 思考強度(#30):空值或不合法時不送任何欄位,請求 JSON 與未支援思考強度前逐位元組相同。
+	if eff := sendableEffort(c.ReasoningEffort, openAIEfforts); eff != "" {
+		if isOpenRouter(c.BaseURL) {
+			body.Reasoning = &wireReasoning{Effort: eff}
+		} else {
+			body.ReasoningEffort = eff
+		}
+	}
 	for _, m := range req.Messages {
 		w := wireMsg{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID}
 		for i, tc := range m.ToolCalls {

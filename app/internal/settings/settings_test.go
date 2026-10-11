@@ -298,3 +298,87 @@ func TestSetPaperLayoutOnlyAcceptsPresets(t *testing.T) {
 		}
 	}
 }
+
+// 意圖:舊設定檔(沒有 provider/reasoningEffort 欄位)必須載入成現行行為——
+// OpenAI 相容端點、不指定思考強度;不需要遷移(#30)。
+func TestLoadLegacyProfileIsOpenAICompatWithoutEffort(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	if err := os.MkdirAll(st.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"profiles":[{"id":"default","name":"本機","baseUrl":"http://localhost:1234/v1","model":"m","contextTokens":8192}],"active":"default"}`
+	if err := os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := st.Load()
+	p := s.ActiveProfile()
+	if p.Provider != "" || p.ReasoningEffort != "" {
+		t.Fatalf("舊設定檔應為 OpenAI 相容且不指定思考強度: %+v", p)
+	}
+	if p.ContextTokens != 8192 || p.Model != "m" {
+		t.Fatalf("既有欄位不應被改動: %+v", p)
+	}
+}
+
+// 意圖:設定檔可能被手改壞;未知的 Provider 與不合法的思考強度載入時視為不指定,不會被送出。
+func TestLoadNormalizesProviderAndEffort(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	if err := os.MkdirAll(st.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := `{"profiles":[
+		{"id":"a","name":"a","baseUrl":"https://a/v1","provider":"claude","reasoningEffort":"ultra","contextTokens":100},
+		{"id":"b","name":"b","baseUrl":"https://b/v1","provider":"anthropic","reasoningEffort":"xhigh","contextTokens":100},
+		{"id":"c","name":"c","baseUrl":"https://c/v1","provider":"openai","reasoningEffort":"high","contextTokens":100}
+	],"active":"a"}`
+	if err := os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := st.Load()
+	if p := s.ProfileByID("a"); p.Provider != "" || p.ReasoningEffort != "" {
+		t.Fatalf("未知 Provider/思考強度應視為不指定: %+v", p)
+	}
+	if p := s.ProfileByID("b"); p.Provider != ProviderAnthropic || p.ReasoningEffort != "xhigh" {
+		t.Fatalf("Anthropic + xhigh 應保留: %+v", p)
+	}
+	if p := s.ProfileByID("c"); p.Provider != ProviderOpenAI || p.ReasoningEffort != "high" {
+		t.Fatalf("OpenAI 相容 + high 應保留: %+v", p)
+	}
+}
+
+// 意圖:預設 Profile 是作者新增端點的起點(#43);id 要能當設定檔 id、不得含金鑰。
+func TestPresetsAreValid(t *testing.T) {
+	seen := map[string]bool{}
+	for _, p := range Presets() {
+		if err := ValidProfileID(p.ID); err != nil {
+			t.Errorf("preset id %q: %v", p.ID, err)
+		}
+		if seen[p.ID] {
+			t.Errorf("preset id 重複: %q", p.ID)
+		}
+		seen[p.ID] = true
+		if p.Name == "" || p.BaseURL == "" {
+			t.Errorf("preset %q 缺名稱或網址", p.ID)
+		}
+		if p.Provider != "" && p.Provider != ProviderAnthropic {
+			t.Errorf("preset %q provider = %q", p.ID, p.Provider)
+		}
+		switch p.Region {
+		case "", "intl", "cn":
+		default:
+			t.Errorf("preset %q region = %q", p.ID, p.Region)
+		}
+	}
+	// 作者點名的服務商都要在清單裡(含國際站/中國站各一組)
+	for _, id := range []string{"lmstudio", "ollama", "llamacpp", "vllm", "jan", "openrouter", "fireworks",
+		"together", "openai", "google-ai-studio", "deepseek", "xai", "groq", "mistral", "cerebras",
+		"deepinfra", "siliconflow", "anthropic",
+		"zai-intl", "zai-cn", "dashscope-intl", "dashscope-cn", "minimax-intl", "minimax-cn", "moonshot-intl", "moonshot-cn"} {
+		if !seen[id] {
+			t.Errorf("預設清單缺少 %q", id)
+		}
+	}
+	if n := len(Presets()); n != 26 {
+		t.Fatalf("預設檔數量 = %d", n)
+	}
+}

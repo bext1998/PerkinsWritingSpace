@@ -26,7 +26,7 @@ const (
 	DefaultContextTokens = 16384
 )
 
-// Profile 是一個模型端點設定(本機 LM Studio、OpenRouter…)。金鑰不在這裡。
+// Profile 是一個模型端點設定(本機 LM Studio、OpenRouter、Anthropic…)。金鑰不在這裡。
 type Profile struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
@@ -36,7 +36,25 @@ type Profile struct {
 	// DisableAutoCompact 關閉自動上下文壓縮(#32):超過預算時擋下不送出,由作者 /compact 手動壓縮。
 	// 缺省(false)= 自動壓縮開啟;舊設定檔沒有這個欄位時不需遷移。
 	DisableAutoCompact bool `json:"disableAutoCompact,omitempty"`
+	// Provider 是端點的 API 型別(#30):"" 或 "openai" = OpenAI 相容 /chat/completions(現行);
+	// "anthropic" = Anthropic 原生 Messages API。舊設定檔沒有這個欄位 = 現行行為。
+	Provider string `json:"provider,omitempty"`
+	// ReasoningEffort 是思考強度(#30):"" = 不指定(不送任何思考參數,用服務商預設)。
+	// 允許值 low/medium/high/xhigh/max;載入時不合法的值視為 ""。
+	// OpenAI 相容端點只送 low/medium/high;xhigh/max 視為不指定(各自驗證)。
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
 }
+
+const (
+	// ProviderOpenAI 是 OpenAI 相容 /chat/completions(空字串與它同義)。
+	ProviderOpenAI = "openai"
+	// ProviderAnthropic 是 Anthropic 原生 Messages API(#30)。
+	ProviderAnthropic = "anthropic"
+)
+
+// ReasoningEfforts 是思考強度的允許值全集(OpenAI 相容端點只用 low/medium/high,
+// xhigh/max 是 Anthropic 原生專有,設在 OpenAI 相容端點時不指定)。
+var ReasoningEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 type Recent struct {
 	Path     string `json:"path"`
@@ -103,6 +121,22 @@ func (v *Settings) SetPaperLayout(width, fontSize, paraGap string) error {
 	return nil
 }
 
+// normalizeProfile 把載入的設定檔欄位正規化:未知的 Provider 視為 OpenAI 相容、
+// 不合法的思考強度視為不指定(#30,與稿紙版面同一種做法)。
+func normalizeProfile(p *Profile) {
+	switch p.Provider {
+	case "", ProviderOpenAI, ProviderAnthropic:
+	default:
+		p.Provider = ""
+	}
+	for _, e := range ReasoningEfforts {
+		if p.ReasoningEffort == e {
+			return
+		}
+	}
+	p.ReasoningEffort = ""
+}
+
 func defaults() Settings {
 	return Settings{
 		Profiles:      []Profile{{ID: "default", Name: "本機 LM Studio", BaseURL: "http://localhost:1234/v1", ContextTokens: DefaultContextTokens}},
@@ -150,6 +184,7 @@ func (s *Store) Load() Settings {
 		if raw.Profiles[i].ContextTokens <= 0 {
 			raw.Profiles[i].ContextTokens = DefaultContextTokens
 		}
+		normalizeProfile(&raw.Profiles[i])
 	}
 	if raw.ProfileByID(raw.Active) == nil {
 		raw.Active = raw.Profiles[0].ID
@@ -175,6 +210,10 @@ func (s *Store) Save(v Settings) error {
 		return err
 	}
 	v.BaseURL, v.Model = "", ""
+	// 存回時正規化設定檔欄位(同載入):未知 Provider / 不合法思考強度不進設定檔
+	for i := range v.Profiles {
+		normalizeProfile(&v.Profiles[i])
+	}
 	// 存回時正規化稿紙版面:設定檔裡永遠是有效的預設檔(直接呼叫 Save 的測試與舊資料也一樣)
 	v.PaperWidth = paperPreset(v.PaperWidth, PaperWidths, PaperWidthDefault)
 	v.PaperFontSize = paperPreset(v.PaperFontSize, PaperFontSizes, PaperFontSizeDefault)

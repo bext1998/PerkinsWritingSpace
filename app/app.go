@@ -896,7 +896,9 @@ func (a *App) SetAutosave(on bool) error {
 	return a.store.Save(s)
 }
 
-func (a *App) clientFor(profileID string) (*llm.OpenAI, settings.Profile, error) {
+// clientFor 依設定檔的 Provider 回傳對應客戶端(OpenAI 相容或 Anthropic 原生,#30),
+// 並把思考強度帶進去;回傳型別同時支援 Agent 對話與設定頁的 ListModels。
+func (a *App) clientFor(profileID string) (llm.Service, settings.Profile, error) {
 	s := a.store.Load()
 	p := s.ActiveProfile()
 	if profileID != "" {
@@ -907,7 +909,15 @@ func (a *App) clientFor(profileID string) (*llm.OpenAI, settings.Profile, error)
 		p = *pp
 	}
 	k, _ := settings.ProfileAPIKey(p.ID)
-	return &llm.OpenAI{BaseURL: p.BaseURL, APIKey: k}, p, nil
+	if p.Provider == settings.ProviderAnthropic {
+		return &llm.Anthropic{BaseURL: p.BaseURL, APIKey: k, ReasoningEffort: p.ReasoningEffort}, p, nil
+	}
+	return &llm.OpenAI{BaseURL: p.BaseURL, APIKey: k, ReasoningEffort: p.ReasoningEffort}, p, nil
+}
+
+// ListProfilePresets 回傳端點預設檔清單(#43):只有網址、名稱與建議值,不含金鑰。
+func (a *App) ListProfilePresets() []settings.Preset {
+	return settings.Presets()
 }
 
 func (a *App) ListModels(profileID string) ([]string, error) {
