@@ -422,6 +422,75 @@ func TestToolsCannotReachUncheckedCanon(t *testing.T) {
 	}
 }
 
+// #34 第 7 項意圖:工具事件要在執行完才帶上結果(含錯誤與被拒時的拒絕訊息),作者才看得到
+// Bot 讀了什麼、搜到什麼、提案成功與否。顯示的就是回給模型的同一段內容;只有過長時
+// 顯示端截斷並註明總長度,送給模型的內容不變。
+func TestToolEventsCarryResult(t *testing.T) {
+	a, s, _ := setup(t)
+	long := strings.Repeat("很長的一段內容。", 400) // 3200 字,超過顯示上限 2000
+	if err := a.Proj.WriteFile("manuscript/長文.md", long); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "read_document", Arguments: `{"path":"manuscript/第一章.md"}`},
+			{ID: "2", Name: "read_document", Arguments: `{"path":"canon/secret.md"}`},
+			{ID: "3", Name: "write_file", Arguments: `{"path":"manuscript/第一章.md"}`},
+			{ID: "4", Name: "read_document", Arguments: `{"path":"manuscript/長文.md"}`},
+		}},
+		{Role: "assistant", Content: "ok"},
+	}
+	var events []Event
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) {
+		if e.Kind == "tool" {
+			events = append(events, e)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("應有 4 個工具事件, got %d", len(events))
+	}
+	toModel := s.reqs[1].Messages
+	if len(toModel) < 4 {
+		t.Fatalf("四個工具呼叫都要有結果訊息: %+v", toModel)
+	}
+	// 成功:帶讀到的內容,且與回給模型的一致
+	if ok := events[0]; !ok.Allowed || !strings.Contains(ok.Result, "小明走進森林。") {
+		t.Errorf("讀取成功的事件應帶結果: %+v", ok)
+	} else if got := toModel[len(toModel)-4]; got.Content != ok.Result {
+		t.Errorf("顯示的結果應與回給模型的一致: %q vs %q", ok.Result, got.Content)
+	}
+	// 錯誤:帶「錯誤:」前綴的錯誤訊息(讀取未附加的設定)
+	if bad := events[1]; !bad.Allowed || !strings.HasPrefix(bad.Result, "錯誤:") || !strings.Contains(bad.Result, "附加") {
+		t.Errorf("讀取未附加設定的事件應帶錯誤訊息: %+v", bad)
+	}
+	// 被拒:帶回給模型的那段拒絕訊息(含可用工具清單),且內容一致
+	denied := events[2]
+	if denied.Allowed || !strings.Contains(denied.Result, "此工具不存在或本次不被允許") || !strings.Contains(denied.Result, "read_document") {
+		t.Errorf("被拒的事件應帶拒絕訊息: %+v", denied)
+	}
+	if got := toModel[len(toModel)-2]; got.Content != denied.Result {
+		t.Errorf("被拒時顯示的應與回給模型的一致: %q vs %q", denied.Result, got.Content)
+	}
+	// 過長:顯示端截斷並註明總長度,送給模型的仍是完整內容
+	trunc := events[3]
+	r := []rune(long)
+	note := fmt.Sprintf("\n…(已截斷,共 %d 字)", len(r))
+	if !strings.HasSuffix(trunc.Result, note) {
+		t.Errorf("長結果應以「已截斷,共 N 字」收尾: %q", trunc.Result)
+	}
+	if n := len([]rune(trunc.Result)); n != toolResultDisplayLimit+len([]rune(note)) {
+		t.Errorf("截斷後顯示長度應為 %d 字, got %d", toolResultDisplayLimit+len([]rune(note)), n)
+	}
+	if !strings.HasPrefix(trunc.Result, string(r[:toolResultDisplayLimit])) {
+		t.Error("截斷後的前段應是原結果的前 2000 字")
+	}
+	if got := toModel[len(toModel)-1]; got.Content != long {
+		t.Error("送給模型的工具結果不得被截斷")
+	}
+}
+
 // B2 意圖:大綱(含尚未寫到的劇情)與私人筆記,跟設定一樣只有附加時 AI 才看得到;工具也不能繞過。
 func TestOutlineAndNotesProtectedLikeCanon(t *testing.T) {
 	a, s, _ := setup(t)
@@ -1812,4 +1881,38 @@ func mustMsgs(t *testing.T, a *Agent, p AskParams) []llm.Message {
 		t.Fatal(err)
 	}
 	return msgs
+}
+
+// 意圖(#40):作者拒絕提案時寫的原因,要真的送到模型手上,之後的提案才會避開同樣的問題;
+// 開新對話(Reset)後不再帶上,避免上一段對話的偏好悄悄延續。
+func TestRejectionReasonSentUntilReset(t *testing.T) {
+	a, s, _ := setup(t)
+	a.NoteRejection(&proposal.Proposal{Target: "manuscript/001.md", Original: "小明走進森林。"}, "太口語")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := s.reqs[0].Messages[0].Content; !strings.Contains(sys, "太口語") || !strings.Contains(sys, "小明走進森林。") {
+		t.Fatalf("拒絕原因應送出: %q", sys)
+	}
+	a.Reset()
+	a.Ask(context.Background(), AskParams{Question: "新對話"}, func(Event) {})
+	if strings.Contains(s.reqs[1].Messages[0].Content, "太口語") {
+		t.Fatal("Reset 後不應再帶上拒絕原因")
+	}
+}
+
+// 意圖(G2):拒絕的若是設定集等受保護檔案的提案(可能是先前對話附加時產生的),
+// 本次沒附加就不能把其中的原文片段送出;只送檔名與作者寫的原因。
+func TestRejectionReasonOmitsProtectedOriginal(t *testing.T) {
+	a, s, _ := setup(t)
+	a.NoteRejection(&proposal.Proposal{Target: "canon/secret.md", Original: "祕密設定:反派是小明的哥哥。"}, "語氣太硬")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sys := s.reqs[0].Messages[0].Content
+	if strings.Contains(sys, "反派") || !strings.Contains(sys, "語氣太硬") {
+		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", sys)
+	}
 }

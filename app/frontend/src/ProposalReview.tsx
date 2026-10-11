@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from 'react';
 import {Check, ChevronLeft, ChevronRight, Crosshair, FileText, RotateCcw, X} from 'lucide-react';
 import {proposal} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
-import {Textarea} from '@/components/ui/basic';
+import {Input, Textarea} from '@/components/ui/basic';
 import {Tip} from '@/components/ui/overlay';
 import {cn} from '@/lib/utils';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
@@ -21,7 +21,7 @@ interface Props {
     setEdited: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     titleOf: (path: string) => string;
     onAccept: (p: proposal.Proposal) => void;
-    onReject: (p: proposal.Proposal) => void;
+    onReject: (p: proposal.Proposal, reason: string) => void; // reason:作者選填的拒絕原因(#40),Bot 在本次對話記住
     onReveal: (p: proposal.Proposal) => void; // 在稿件中顯示:捲到原文並短暫標示(#45 方案 A)
     onClose: () => void;
 }
@@ -38,6 +38,9 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
     const mine = p ? edited[p.id] ?? p.replacement : '';
     const changed = !!p && mine !== p.replacement;
     const conflict = p?.status === 'conflict';
+    // 拒絕原因輸入列(#40):null = 未在拒絕中;換到別張提案就收起
+    const [reason, setReason] = useState<string | null>(null);
+    useEffect(() => setReason(null), [p?.id]);
 
     // 開啟時置中:預設尺寸由 style 的 min() 決定,量到實際尺寸後才定位
     useEffect(() => {
@@ -73,16 +76,17 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
         return () => window.removeEventListener('resize', fit);
     }, [pos]);
 
-    // Esc 只關閉視窗,不改變提案狀態;用 capture 攔下,不讓底下的面板/編輯器也處理同一個按鍵
+    // Esc 只關閉視窗(正在填拒絕原因時先收起輸入列),不改變提案狀態;用 capture 攔下,不讓底下的面板/編輯器也處理同一個按鍵
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
             e.stopPropagation();
-            onClose();
+            if (reason !== null) setReason(null);
+            else onClose();
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
-    }, [onClose]);
+    }, [onClose, reason]);
 
     // 標題列可拖曳;整扇窗保持在可見範圍內(標題列不會被拖到畫面外拿不回來)
     const startDrag = (e: React.MouseEvent) => {
@@ -154,7 +158,17 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                 )}
             </div>
 
-            {/* 頁尾:還原 AI 版本、拒絕/捨棄、接受 */}
+            {/* 頁尾:還原 AI 版本、拒絕/捨棄、接受;按「拒絕」後改成選填原因的輸入列 */}
+            {reason !== null ? (
+            <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
+                <Input autoFocus className="h-8 min-w-0 flex-1 text-sm" data-testid="review-reject-reason"
+                       placeholder="拒絕原因(選填),例如:太口語、角色不會這樣說話" value={reason}
+                       onChange={e => setReason(e.target.value)}
+                       onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) onReject(p, reason); }}/>
+                <Button size="sm" variant="ghost" onClick={() => setReason(null)}>取消</Button>
+                <Button size="sm" variant="secondary" onClick={() => onReject(p, reason)} data-testid="review-reject-confirm">確認拒絕</Button>
+            </div>
+            ) : (
             <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
                 {!conflict && (
                     <Button size="sm" variant="ghost" data-testid="review-reveal" onClick={() => onReveal(p)}><Crosshair/>在稿件中顯示</Button>
@@ -167,9 +181,10 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                 )}
                 <span className="flex-1"/>
                 {changed && <span className="shrink-0 text-xs text-primary">已修改 · 接受時會寫入你的版本</span>}
-                <Button size="sm" variant="ghost" onClick={() => onReject(p)} data-testid="review-reject">{conflict ? '捨棄' : '拒絕'}</Button>
+                <Button size="sm" variant="ghost" onClick={() => conflict ? onReject(p, '') : setReason('')} data-testid="review-reject">{conflict ? '捨棄' : '拒絕'}</Button>
                 {!conflict && <Button size="sm" onClick={() => onAccept(p)} data-testid="review-accept"><Check/>接受</Button>}
             </div>
+            )}
         </div>
     );
 }

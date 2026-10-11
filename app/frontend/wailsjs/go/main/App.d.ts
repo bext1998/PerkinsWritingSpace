@@ -104,7 +104,7 @@ export function ProjectPath():Promise<string>;
 
 export function ReadFile(arg1:string):Promise<string>;
 
-export function RejectProposal(arg1:string):Promise<proposal.Proposal>;
+export function RejectProposal(arg1:string,arg2:string):Promise<proposal.Proposal>;
 
 export function RemoveRecent(arg1:string):Promise<void>;
 

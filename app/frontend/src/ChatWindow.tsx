@@ -1,6 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {
-    AlertTriangle, Bot, Check, ChevronDown, Eye, FileText, GripHorizontal, Loader2, Maximize2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
+    AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Eye, FileText, GripHorizontal, Loader2, Maximize2, MessageCircle, Minus, Paperclip, Plus, RefreshCw,
     ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
@@ -61,15 +61,26 @@ interface ChatEvent {
     tool?: string;
     args?: string;
     allowed?: boolean;
+    result?: string; // 工具執行完才會有:結果或「錯誤:…」/拒絕訊息,只是顯示給作者看(#34 第 7 項)
 }
 
 interface Turn {
     role: 'user' | 'assistant' | 'tool' | 'notice';
     text: string;
     meta?: string;
+    // 工具呼叫列(#34 第 7 項):args/result 只用於顯示,收合時 text 就是一行摘要
+    args?: string;
+    result?: string;
+    bad?: boolean; // 錯誤或被拒:收合的一行就要看得出來
 }
 
 const KIND_LABEL: Record<string, string> = {canon: '設定', outline: '大綱', notes: '筆記', manuscript: '章節'};
+
+// 工具參數展開時以排版 JSON 顯示;不是 JSON 就原樣顯示(#34 第 7 項)。
+const prettyArgs = (s?: string) => {
+    if (!s) return '';
+    try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
+};
 
 function Chip({children, onRemove, dashed, onClick, className, title, warning, shrinkText}: {
     children: React.ReactNode; onRemove?: () => void; dashed?: boolean; onClick?: () => void; className?: string; title?: string; warning?: boolean;
@@ -194,7 +205,10 @@ export default function ChatWindow(props: Props) {
                 const label = {read_document: '讀取', search_project: '搜尋', list_files: '列出檔案', propose_patch: '提出修改提案'}[e.tool ?? ''] ?? e.tool;
                 let arg = '';
                 try { const a = JSON.parse(e.args ?? '{}'); arg = a.path ?? a.query ?? ''; } catch { /* 參數不是 JSON 時不顯示 */ }
-                setTurns(t => [...t, {role: 'tool', text: `${e.allowed ? '' : '【已拒絕】'}${label} ${arg}`}]);
+                // 錯誤或被拒在收合的一行就看得出來;結果在工具執行完才會有(#34 第 7 項)
+                const bad = !e.allowed || (e.result ?? '').startsWith('錯誤');
+                const prefix = !e.allowed ? '【已拒絕】' : bad ? '【錯誤】' : '';
+                setTurns(t => [...t, {role: 'tool', text: `${prefix}${label} ${arg}`, args: e.args, result: e.result, bad}]);
             } else if (e.kind === 'notice') {
                 setTurns(t => [...t, {role: 'notice', text: e.text ?? ''}]);
             }
@@ -336,8 +350,8 @@ export default function ChatWindow(props: Props) {
         refreshProposals();
     };
 
-    const reject = async (p: proposal.Proposal) => {
-        try { await RejectProposal(p.id); } catch (e) { setError(errText(e)); }
+    const reject = async (p: proposal.Proposal, reason: string) => {
+        try { await RejectProposal(p.id, reason); } catch (e) { setError(errText(e)); }
         refreshProposals();
     };
 
@@ -516,7 +530,29 @@ export default function ChatWindow(props: Props) {
                                     <MdLite text={t.text}/>
                                 </div>
                             )}
-                            {t.role === 'tool' && <div className="px-1 text-xs text-muted-foreground">· {t.text}</div>}
+                            {/* 工具呼叫列:收合是一行摘要,展開看完整參數與結果(#34 第 7 項) */}
+                            {t.role === 'tool' && (
+                                <details className="group mx-0.5 text-xs text-muted-foreground" data-testid="tool-turn">
+                                    <summary className="flex cursor-pointer select-none list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+                                        <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90"/>
+                                        <span className={cn('min-w-0 truncate', t.bad && 'text-warning')}>· {t.text}</span>
+                                    </summary>
+                                    <div className="ml-2.5 mt-1 space-y-1.5 rounded-md border bg-muted/30 p-2">
+                                        {t.args && (
+                                            <div>
+                                                <div className="mb-0.5 font-medium">參數</div>
+                                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-[11px] leading-relaxed">{prettyArgs(t.args)}</pre>
+                                            </div>
+                                        )}
+                                        {t.result && (
+                                            <div>
+                                                <div className="mb-0.5 font-medium">結果</div>
+                                                <pre className={cn('max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 leading-relaxed', t.bad && 'text-warning')}>{t.result}</pre>
+                                            </div>
+                                        )}
+                                    </div>
+                                </details>
+                            )}
                             {t.role === 'notice' && (
                                 <div className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning" data-testid="notice">
                                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>{t.text}
