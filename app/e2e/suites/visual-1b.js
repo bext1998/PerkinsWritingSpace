@@ -88,7 +88,14 @@ module.exports = {
         }));
         await page.evaluate(() => window.__perkinsRefreshProposals());
         await page.click('[data-testid=chat-fab]');
-        await page.click('[data-testid=proposal]:has-text("雨停了") [data-testid=accept]');
+// 接受提案一律經審查視窗(#45 方案 A:卡片只做通知);送出後關掉視窗,讓後續操作點得到底下的編輯器
+        const reviewAccept = async text => {
+            await page.click(`[data-testid=proposal]:has-text("${text}") [data-testid=review-open]`);
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.click('[data-testid=review-accept]');
+            await page.evaluate(() => document.querySelector('[data-testid=review-close]')?.click());
+        };
+        await reviewAccept('雨停了');
         await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
         const flash = await page.evaluate(() => {
             const els = [...document.querySelectorAll('.cm-ai-flash')];
@@ -161,7 +168,7 @@ module.exports = {
         try {
             await gateRead(raceA);
             await page.click('[data-testid=chat-fab]');
-            await page.click('[data-testid=proposal]:has-text("甲章原文") [data-testid=accept]');
+            await reviewAccept('甲章原文');
             // 接受已送出,重載卡在章節 A 的 ReadFile;等待期間切到章節 B
             await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
             await page.locator('[data-testid=chapter-row]:has-text("重載競態B")').first().click({timeout: 15000});
@@ -197,7 +204,7 @@ module.exports = {
             }));
             await page.evaluate(() => window.__perkinsRefreshProposals());
             await gateRead(raceA);
-            await page.click('[data-testid=proposal]:has-text("甲章已接受") [data-testid=accept]');
+            await reviewAccept('甲章已接受');
             await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
@@ -226,11 +233,13 @@ module.exports = {
             }));
             await page.evaluate(() => window.__perkinsRefreshProposals());
             await gateRead(raceA);
-            const acc3 = '[data-testid=proposal]:has-text("甲章三改") [data-testid=accept]';
-            await page.click(acc3);
+            await page.click('[data-testid=proposal]:has-text("甲章再改") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.click('[data-testid=review-accept]');
             await page.waitForFunction(() => !!window.__perkinsReadGate, null, {timeout: 5000});
-            await page.click(acc3); // 提案已接受 → 第二次失敗,其解鎖不得解開第一次仍需要的鎖
+            await page.click('[data-testid=review-accept]'); // 提案已接受 → 第二次失敗,其解鎖不得解開第一次仍需要的鎖
             await page.waitForSelector('[data-testid=chat-error]', {timeout: 5000});
+            await page.evaluate(() => document.querySelector('[data-testid=review-close]')?.click());
             await page.click('.cm-content');
             await page.keyboard.press('Control+End');
             await page.keyboard.type('重複接受後輸入');
@@ -291,9 +300,9 @@ module.exports = {
             }, raceA);
             await page.click('[data-testid=chat-fab]');
             await page.evaluate(() => window.__perkinsRefreshProposals());
-            await page.click('[data-testid=proposal]:has-text("甲章四改") [data-testid=accept]');
+            await reviewAccept('甲章再改'); // 卡片顯示原文(#45 方案 A)
             await page.waitForFunction(() => window.__perkinsHolds.length === 1, null, {timeout: 5000});
-            await page.click('[data-testid=proposal]:has-text("解鎖後五改") [data-testid=accept]');
+            await reviewAccept('解鎖後輸入');
             await page.waitForFunction(() => window.__perkinsHolds.length === 2, null, {timeout: 5000});
             await page.evaluate(() => window.__perkinsHolds[1]()); // 較新的先回
             await settle(80, 700);
@@ -349,14 +358,19 @@ module.exports = {
             '#35 1280 寬:審查視窗內容左右並排',
             '#35 標題列可拖曳(視窗跟著移動)',
             '#35 右下角可調整大小(拖曳後尺寸變大)',
-            '#35 審查視窗內編輯:聊天卡片同步顯示「已修改」與同一份內容',
-            '#35 聊天卡片內編輯:審查視窗同步顯示作者版本',
+            '#35 審查視窗內編輯:聊天卡片顯示「已修改」',
+            '#45 卡片只做通知:沒有接受/拒絕/編輯,只有「審查」',
             '#35 審查視窗接受:磁碟寫入作者版本、視窗切到下一個待審提案',
             '#35 審查視窗拒絕最後一個:視窗關閉、提案從待審消失(磁碟 rejected)',
             '#35 返工 手動放大後縮到 640:視窗尺寸跟著縮、接受/拒絕仍在畫面內',
-            '#35 返工 接受等待中從卡片拒絕下一張:完成後依最新清單切到再下一張',
+            '#35 返工 接受等待中下一張被拒絕:完成後依最新清單切到再下一張',
             '#35 返工 接受失敗(衝突):視窗留在目前提案並顯示衝突',
-            '#35 返工 目前提案從卡片處理掉:視窗關閉且之後縮放不拋錯',
+            '#35 返工 目前提案在視窗外被處理掉:視窗關閉且之後縮放不拋錯',
+            '#45 在稿件中顯示:從其他章節切回目標章節並標示原文',
+            '#45 在稿件中顯示:原文因前面打字而位移時仍找得到',
+            '#45 Ctrl+Shift+Enter:選取後開啟 Perkins Bot 並帶入選取',
+            '#45 返工 CRLF 多行原文:直接顯示與在原文外打字後都能標示',
+            '#45 返工 640 寬已修改狀態:頁尾按鈕都在視窗內且可點',
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
@@ -436,6 +450,24 @@ module.exports = {
                 JSON.stringify({b640, clickable640}));
             revCheck(REV_CHECKS[5], b640.o.bottom <= b640.e.top + 1 && b640.o.right > b640.e.left,
                 JSON.stringify({o: b640.o, e: b640.e}));
+            await page.fill('[data-testid=review-edit]', '春日照進了院子,640 寬的已修改狀態。');
+            await settle(80, 400);
+            const foot640 = await page.evaluate(() => {
+                const box = document.querySelector('[data-testid=proposal-review]').getBoundingClientRect();
+                const probe = sel => {
+                    const el = document.querySelector(sel);
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return {inBox: r.left >= box.left - 1 && r.right <= box.right + 1 && r.bottom <= box.bottom + 1 && r.top >= box.top - 1,
+                            hits: !!at && (el.contains(at) || at.contains(el))};
+                };
+                return {reveal: probe('[data-testid=review-reveal]'), reset: probe('[data-testid=review-reset]'),
+                        reject: probe('[data-testid=review-reject]'), accept: probe('[data-testid=review-accept]')};
+            });
+            revCheck(REV_CHECKS[21], ['reveal', 'reset', 'reject', 'accept'].every(k => foot640[k]?.inBox && foot640[k]?.hits), JSON.stringify(foot640));
+            await page.click('[data-testid=review-reset]');
+            await settle(80, 300);
             await shot('80-proposal-review-640');
             // --- 1280×800:內容左右並排 ---
             await page.setViewportSize({width: 1280, height: 800});
@@ -498,18 +530,51 @@ module.exports = {
                 await page.click('[data-testid=toggle-inspector]');
                 await settle(80, 600);
             }
-            // --- 編輯內容與聊天卡片共用同一份狀態(兩邊互相反映) ---
+            // --- #45 在稿件中顯示:先切到別章再按,應切回目標章節並標示原文 ---
+            const flashText = () => page.evaluate(() => [...document.querySelectorAll('.cm-ai-flash')].map(e => e.textContent).join(''));
+            await page.click('[data-testid=review-close]');
+            await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
+            await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});
+            await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.click('[data-testid=review-reveal]');
+            await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('審查視窗'), null, {timeout: 15000});
+            await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
+            const rv1 = await flashText();
+            revCheck(REV_CHECKS[17], rv1 === '春日在望。', JSON.stringify({flash: rv1}));
+            // 在原文前面打字(未存):提案記錄的位置已位移,仍要找到唯一的原文
+            await page.click('[data-testid=review-close]');
+            await page.waitForSelector('.cm-ai-flash', {state: 'detached', timeout: 6000}); // 等上一次標示消失,下面才量得到新的標示
+            await page.click('.cm-line >> nth=0'); // 點第一行(.cm-content 中央可能被 Bot 浮窗蓋住)
+            await page.keyboard.press('Control+Home');
+            await page.keyboard.type('序');
+            await settle(80, 400);
+            const shifted = await page.evaluate(() => document.querySelector('.cm-content').innerText.startsWith('序'));
+            await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.click('[data-testid=review-reveal]');
+            await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
+            const rv2 = await flashText();
+            revCheck(REV_CHECKS[18], shifted && rv2 === '春日在望。', JSON.stringify({shifted, flash: rv2}));
+            await page.click('[data-testid=review-close]');
+            await page.click('.cm-line >> nth=0');
+            await page.keyboard.press('Control+Home');
+            await page.keyboard.press('Delete'); // 拿掉剛打的字,內容回到原樣
+            await page.keyboard.press('Control+s');
+            await settle(80, 700);
+            await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            // --- 卡片只做通知;編輯在審查視窗做,卡片顯示「已修改」 ---
             await page.fill('[data-testid=review-edit]', '春日照進了院子,麻雀在叫。');
             await settle(80, 500);
             const cardAfterEdit = await page.evaluate(() => {
-                const card = document.querySelector('[data-testid=proposal]');
-                return {txt: card?.textContent || '', edit: card?.querySelector('[data-testid=proposal-edit]')?.value};
+                const card = document.querySelector('[data-testid=proposal]:not([hidden])');
+                return {txt: card?.textContent || '', controls: card ? [...card.querySelectorAll('button, textarea')].map(e => e.textContent.trim() || e.tagName) : []};
             });
-            revCheck(REV_CHECKS[9], cardAfterEdit.txt.includes('已修改') && cardAfterEdit.edit === '春日照進了院子,麻雀在叫。', JSON.stringify(cardAfterEdit));
-            await page.fill('[data-testid=proposal]:has-text("春日在望") [data-testid=proposal-edit]', '春日終究來了。');
+            revCheck(REV_CHECKS[9], cardAfterEdit.txt.includes('已修改'), JSON.stringify(cardAfterEdit));
+            revCheck(REV_CHECKS[10], cardAfterEdit.controls.length === 1 && cardAfterEdit.controls[0] === '審查', JSON.stringify(cardAfterEdit));
+            await page.fill('[data-testid=review-edit]', '春日終究來了。');
             await settle(80, 500);
-            const h4 = await revHead();
-            revCheck(REV_CHECKS[10], h4.edit === '春日終究來了。', JSON.stringify(h4));
             // --- 接受:磁碟寫入作者版本、視窗切到下一個 ---
             await page.click('[data-testid=review-accept]');
             await waitDisk(revRel, '春日終究來了。');
@@ -566,7 +631,7 @@ module.exports = {
                 });
                 await page.click('[data-testid=review-accept]');
                 await settle(80, 400);
-                await page.click('[data-testid=proposal]:has-text("乙句") button:has-text("拒絕")');
+                await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160200-revy').then(() => window.__perkinsRefreshProposals()));
                 await settle(80, 700);
                 await page.evaluate(() => window.__revRelease());
                 await waitDisk(revRel, '甲改。');
@@ -590,7 +655,7 @@ module.exports = {
             revCheck(REV_CHECKS[15], conf.win && conf.original === '丙句。' && conf.text.includes('無法套用') && !conf.accept,
                 JSON.stringify({...conf, text: conf.text.slice(-60)}));
             // 目前這張從聊天卡片捨棄:視窗關閉;之後縮放視窗不得拋錯(不能留下已卸載內容的監聽器)
-            await page.click('[data-testid=proposal]:has-text("丙句") button:has-text("捨棄")');
+            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-160100-revz').then(() => window.__perkinsRefreshProposals()));
             await settle(80, 900);
             await page.setViewportSize({width: 1400, height: 880});
             await settle(80, 500);
@@ -600,6 +665,60 @@ module.exports = {
             page.off('pageerror', onErr);
             revCheck(REV_CHECKS[16], winGone && errs.length === 0
                 && JSON.parse(read('.perkins/proposals/20261010-160100-revz.json')).status === 'rejected', JSON.stringify({winGone, errs}));
+            // --- #45 (c) Ctrl+Shift+Enter:選取後直接詢問 Perkins Bot ---
+            if (await page.$('[data-testid=chat-window]:visible')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.press('ArrowUp'); // 檔尾是空行:選上一行的文字
+            await page.keyboard.press('End');
+            await page.keyboard.press('Shift+Home');
+            await page.keyboard.press('Control+Shift+Enter');
+            await page.waitForSelector('[data-testid=chat-window]:visible', {timeout: 5000});
+            await settle(80, 500);
+            const askChips = await page.textContent('[data-testid=chips]');
+            const askFocus = await page.evaluate(() => document.activeElement?.getAttribute('data-testid'));
+            revCheck(REV_CHECKS[19], /選取 \d+ 字/.test(askChips) && askFocus === 'question', JSON.stringify({askChips, askFocus}));
+            // --- 返工(PR #66 審查):\r\n 稿件的多行原文;作者在原文外打字後,編輯器全文換成 LF,仍要找得到 ---
+            const crRel = 'manuscript/換行測試.md';
+            const crSrc = '\ufeff# 換行測試\r\n\r\n甲行\r\n乙行\r\n\r\n末\r\n';
+            const crOrig = '甲行\r\n乙行';
+            projWrite(crRel, crSrc);
+            const crAt = Buffer.byteLength(crSrc.slice(0, crSrc.indexOf(crOrig)));
+            projWrite('.perkins/proposals/20261010-170000-crlf.json', JSON.stringify({
+                id: '20261010-170000-crlf', createdAt: '2026-10-10T17:00:00+08:00', model: 'E2E審查', target: crRel, original: crOrig, replacement: '甲乙合一',
+                rationale: 'E2E \r\n', assumptions: [],
+                baseHash: require('crypto').createHash('sha256').update(crSrc).digest('hex'),
+                start: crAt, end: crAt + Buffer.byteLength(crOrig), status: 'pending',
+            }, null, 2));
+            await page.evaluate(() => window.__perkinsRefreshProposals());
+            await settle(80, 600);
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            const revealCr = async () => {
+                await page.click('[data-testid=proposal]:has-text("甲行") [data-testid=review-open]');
+                await page.waitForSelector('[data-testid=proposal-review]');
+                await page.click('[data-testid=review-reveal]');
+                await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('換行測試'), null, {timeout: 15000});
+                await page.waitForSelector('.cm-ai-flash', {timeout: 5000});
+                const t = await flashText();
+                await page.click('[data-testid=review-close]');
+                await page.waitForSelector('.cm-ai-flash', {state: 'detached', timeout: 6000});
+                return t;
+            };
+            const cr1 = await revealCr();
+            await page.click('.cm-line >> nth=0');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('！');
+            await settle(80, 400);
+            const crTyped = await page.evaluate(() => document.querySelector('.cm-content').innerText.includes('！'));
+            const cr2 = await revealCr();
+            revCheck(REV_CHECKS[20], cr1 === '甲行乙行' && crTyped && cr2 === '甲行乙行', JSON.stringify({cr1, crTyped, cr2}));
+            await page.click('.cm-line >> nth=0');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.press('Backspace');
+            await page.keyboard.press('Control+s');
+            await settle(80, 600);
+            await page.evaluate(() => window.go.main.App.RejectProposal('20261010-170000-crlf').then(() => window.__perkinsRefreshProposals()));
+            await settle(80, 500);
         } catch (e) {
             for (const n of REV_CHECKS) if (!revDone.has(n)) check(n, false, e.message);
             await page.keyboard.press('Escape').catch(() => {});
