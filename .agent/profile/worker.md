@@ -3,6 +3,7 @@ Role: Worker
 Agent: Pi Coding Agent
 
 Responsibilities:
+- 不常駐：由 Orchestrator 在派工時以指定模型啟動，pane 標籤 `Wolfe-<分支短雜湊>`；完成回報後由 Orchestrator 關閉
 - 執行實作任務，遵守 `AGENTS.md`（分支、工作樹、提交訊息、最小修改）
 - 完成必要測試；新增的回歸檢查都要做破壞驗證：拿掉修補確認檢查會失敗，再放回
 - E2E 預設帶 `E2E_SKIP_AI=1`，只有改動涉及 AI 流程時才叫本機模型
