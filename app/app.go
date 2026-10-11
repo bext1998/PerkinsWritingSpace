@@ -925,7 +925,8 @@ func (a *App) prepare() (*agent.Agent, error) {
 		return nil, err
 	}
 	a.agent.LLM, a.agent.Model, a.agent.ContextTokens = c, p.Model, p.ContextTokens
-	a.agent.Remote = settings.IsRemote(p.BaseURL) // 研究記錄:ask 筆記下 profile 是否 remote
+	a.agent.DisableAutoCompact = p.DisableAutoCompact // #32:每個端點各自的自動壓縮開關
+	a.agent.Remote = settings.IsRemote(p.BaseURL)     // 研究記錄:ask 筆記下 profile 是否 remote
 	return a.agent, nil
 }
 
@@ -951,6 +952,17 @@ func (a *App) ResetChat() {
 	if a.agent != nil {
 		a.agent.Reset()
 	}
+}
+
+// CompactChat 手動壓縮較早的對話(聊天輸入 /compact,#32):不論自動壓縮開關都可壓縮一次,
+// 沿用 compact 的通知(B7:壓縮成功一定發通知);對話太短沒有可壓縮內容時回錯誤明確告知。
+func (a *App) CompactChat() error {
+	ag, ctx, cancel, err := a.begin()
+	if err != nil {
+		return err
+	}
+	defer a.end(cancel)
+	return ag.Compact(ctx, func(e agent.Event) { runtime.EventsEmit(a.ctx, "chat:event", e) })
 }
 
 func (a *App) CancelAsk() {

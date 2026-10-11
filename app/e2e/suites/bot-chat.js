@@ -202,6 +202,16 @@ module.exports = {
             !!noticeEl && (await noticeEl.textContent()).includes('作品 AGENTS.md 超過長度上限') && !pvAg.includes('超長指示'),
             noticeEl ? await noticeEl.textContent() : '(無 notice)');
         await page.keyboard.press('Escape');
+        // #32 /compact 也會把對話送到目前端點:雲端端點未勾選確認時要擋下,不能繞過外流確認
+        {
+            const remoteUnconfirmed = !!(await page.$('[data-testid=chat-window] :text("不在這台電腦上")'));
+            await page.fill('[data-testid=question]', '/compact');
+            await page.click('[data-testid=send]');
+            await page.waitForSelector('[data-testid=chat-error]', {timeout: 5000}).catch(() => {});
+            const cErr = await page.$('[data-testid=chat-error]') ? await page.textContent('[data-testid=chat-error]') : '';
+            check('#32 雲端端點未確認時 /compact 被外流確認擋下', remoteUnconfirmed && cErr.includes('本機之外'), JSON.stringify({remoteUnconfirmed, cErr}));
+            await page.fill('[data-testid=question]', '');
+        }
         // 送出時對話也要有通知:照 research R3,暫時切到死端點走完整 Ask 路徑(不呼叫真模型)。
         // 切端點後要開關設定頁讓 Workspace 重讀設定,否則對話框沿用舊(雲端)端點會被送出前確認擋住。
         const origAg = await page.evaluate(() => window.go.main.App.GetSettings());

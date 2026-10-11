@@ -233,3 +233,58 @@ func TestPreviewContextDoesNotTouchRunningAgent(t *testing.T) {
 		t.Fatalf("閒置時 ContextTokens 應為設定的 999, got %d", idle.ContextTokens)
 	}
 }
+
+// 意圖(#32):App.CompactChat 綁定接到 Agent.Compact(手動 /compact):對話太短沒有可壓縮
+// 內容時把明確錯誤原樣回給前端(不靜默不做),結束後釋放執行權,忙碌時照 begin() 拒絕;
+// prepare 要把端點的 disableAutoCompact 套到 Agent。成功路徑會發 chat:event(runtime.EventsEmit),
+// 測試程序沒有 wails runtime 不能直接呼叫(EventsEmit 會終止程序,同上註),
+// 壓縮與通知行為由 internal/agent 的 TestManualCompact* 覆蓋。
+func TestCompactChatWiringAndPreparePassesSwitch(t *testing.T) {
+	keyring.MockInit() // 隔離憑證庫:prepare 會經 ProfileAPIKey 讀 keyring
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp()
+	a.proj = p
+	a.agent = &agent.Agent{Proj: p}
+	a.agent.History = []llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}} // compactKeep 以下:沒有可壓縮的較早對話
+	a.ctx = context.Background()
+	a.store = &settings.Store{Dir: t.TempDir()}
+	s := a.store.Load()
+	s.Profiles[0].Model = "m"
+	s.Profiles[0].DisableAutoCompact = true
+	if err := a.store.Save(s); err != nil {
+		t.Fatal(err)
+	}
+
+	// 情境 A:沒有可壓縮的對話 — 明確錯誤回給前端,且執行權已釋放(第二次呼叫不再報「尚未結束」)
+	err = a.CompactChat()
+	if err == nil || !strings.Contains(err.Error(), "沒有可濃縮") {
+		t.Fatalf("應回「沒有可濃縮的較早對話」: %v", err)
+	}
+	if err := a.CompactChat(); err == nil || strings.Contains(err.Error(), "尚未結束") {
+		t.Fatalf("壓縮結束後應釋放執行權: %v", err)
+	}
+
+	// 情境 B:忙碌(請求進行中)照 begin() 拒絕
+	a.mu.Lock()
+	a.cancel = func() {}
+	a.mu.Unlock()
+	if err := a.CompactChat(); err == nil || !strings.Contains(err.Error(), "尚未結束") {
+		t.Fatalf("忙碌時應拒絕: %v", err)
+	}
+
+	// prepare 把端點的開關套到 Agent(情境 A 的呼叫已跑過 prepare,這裡直接驗欄位)
+	a.mu.Lock()
+	a.cancel = nil
+	ag, perr := a.prepare()
+	a.mu.Unlock()
+	if perr != nil {
+		t.Fatal(perr)
+	}
+	if !ag.DisableAutoCompact {
+		t.Fatal("prepare 應把端點的 disableAutoCompact 套到 Agent")
+	}
+}

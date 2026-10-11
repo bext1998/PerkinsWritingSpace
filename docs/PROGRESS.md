@@ -1,5 +1,20 @@
 # PROGRESS.md
 
+## 2026-10-11 — 自動上下文壓縮開關＋/compact 手動壓縮(Issue #32)
+
+- **設定**(`app/internal/settings/settings.go`):`Profile` 加 `DisableAutoCompact bool json:"disableAutoCompact,omitempty"`,每個端點各自一個;缺省 = 自動壓縮**開啟**,舊設定檔沒有欄位不需遷移。`app.go` 的 `prepare` 套用端點時一併傳給 `Agent.DisableAutoCompact`(同 `ContextTokens` 的傳法)。
+- **後端 `Ask`(`app/internal/agent/agent.go`)**:自動壓縮關閉時,送出前超過預算**不呼叫** `compactCollect`,直接回錯誤(「送出內容約 N tokens,超過模型可用的 M,而自動壓縮已關閉。可輸入 /compact 手動壓縮較早的對話,或開新對話;也可以減少附加的檔案、取消前情摘要。」);`finish` 內回合結束後的 40% 門檻壓縮也加 `!DisableAutoCompact` 門檻,關閉時不做。開啟時行為完全不變(既有測試照過)。`Preview.Over` 註解同步改寫(開/關兩種語意)。
+- **`/compact`**(`App.CompactChat` 綁定 → `Agent.Compact`,即原本的 `compact` 匯出):不論開關都能手動壓縮一次,沿用 B7 的通知;對話太短(`History` ≤ compactKeep)回「沒有可濃縮的較早對話」明確告知。走 `begin()`/`end()`(同時只允許一個模型請求,結束釋放執行權)。聊天輸入送出內容剛好是 `/compact`(前後空白忽略)時呼叫它,不送給模型、不進對話歷史(前端也不加 user turn),錯誤顯示在對話框錯誤列。
+- **浮窗狀態指示**(`ChatWindow.tsx`):標題列「上下文 N%」旁加「自動壓縮開/關」(`data-testid=auto-compact`;關閉時警示色),tooltip 說明行為;640 寬放得下、無水平捲軸。`送出預覽` 的 `preview-over` 文案分支:關閉時不再說「送出時會先濃縮」,改說「送出會被擋下,可 /compact 或開新對話」。
+- **設定頁**(`SettingsPage.tsx` AI 模型分頁):端點表單加「自動壓縮上下文」核取方塊(勾 = 開啟,`data-testid=auto-compact-setting`)+ 關閉後行為說明;「上下文長度」提示同步改為「自動壓縮開啟時,超過會先濃縮」。跟表單其他欄位一樣按「儲存」才生效。
+- **測試(Go,5 個新測試)**:`TestAutoCompactDisabledBlocksOverBudgetWithoutCompacting`(超過預算回錯誤含 /compact 與既有建議、0 個模型請求=沒有壓縮請求);`TestAutoCompactDisabledSkipsPostTurnCompact`(3 回合後歷史越過 40% 門檻——測試內自檢前提——不發通知、不發壓縮請求、歷史 6 則不變);`TestManualCompactWorksWhenAutoCompactDisabled`(關閉時 /compact 仍壓縮成功且發通知);`TestManualCompactTellsWhenNothingToCompact`(太短時明確回錯);`TestCompactChatWiringAndPreparePassesSwitch`(app 層:綁定回傳「沒有可濃縮」原樣錯誤、結束釋放執行權、忙碌時拒絕、prepare 套開關到 Agent);`TestAutoCompactDefaultsOnForLegacyProfile`(settings:舊檔無欄位 = 開啟、關閉後存回保留)。
+- **破壞驗證 5 輪**(拿掉對應實作 → 該測試 FAIL → 還原,還原後 `cmp` 逐位元組相同):①拿掉送出前的關閉分支 → 超預算測試 FAIL;②拿掉回合後門檻的開關條件 → 回合後不壓縮測試 FAIL(同時證明該情境真的會觸發壓縮);③`Compact` 被開關擋住(錯誤實作)→ 手動壓縮測試 FAIL;④載入時強制關閉 → 舊設定檔預設開啟測試 FAIL;⑤`CompactChat` 吞掉錯誤 → 綁定測試 FAIL。
+- **驗證**:`go test ./...`(app/ 全模組)全過;前端 `npm run build`(tsc + vite)通過;`wails generate module` 更新綁定(`CompactChat`、Profile 欄位;runtime 三個檔只有 EOL 差異已還原不提交)。E2E(冷啟動,E2E_SKIP_AI=1)`settings-layout bot-chat polish visual-1b --smoke` **131/131 passed,略過 8 項**;tooltip 文字調整後以 `--reuse` 對最終程式碼再跑一次,同 131/131。
+- **截圖(實際 render,工作樹外)**:`C:\Users\tiger\AppData\Local\Temp\perkins-f2f049bc\shots\` 下 `compact-setting-1280-off/1280-on/640-on.png`(設定頁開關關/開狀態、含說明文字)與 `compact-indicator-640-on/640-off/1280-on/1280-off.png`(浮窗指示兩種狀態×兩個寬度,含 tooltip);已實際檢視:640 寬指示與 tooltip 完整、無水平捲軸(文件 scrollWidth 實測不超出)。
+- **E2E 環境**:`settings.json` 備份後逐位元組還原(md5 一致)、無殘留程序、書櫃無垃圾、鎖檔已釋放;`shelf` 組本次未跑(未覆寫剪貼簿)。
+- **SPEC 同步**:§12.3 新增「自動壓縮開關與 /compact」、§12.3 對話壓縮與 §15 上下文預算串接、B7 補手動壓縮語意。
+- **未做/邊界**:`/compact` 成功路徑未進研究記錄(§12.8 未列獨立 compact 事件;`audit.jsonl` 照舊記 compact,審計完整);E2E 未驗 `/compact` 成功壓縮(E2E_SKIP_AI=1 不呼叫模型),行為由 Go 測試覆蓋;未跑 `--all`。
+
 ## 2026-10-11 — 系統提示去掉寫死的作品類型、對話中可展開工具呼叫(Issue #34 第 5、7 項)
 
 - **A. 系統提示中性化**(#34 第 5 項,`app/internal/agent/agent.go`):`systemPrompt` 第一行「作品是中文輕小說。」改為「作品類型、讀者與風格以作者在 AGENTS.md 的說明與作品內容為準。」(作品指示已由 #75 讀進系統訊息,不另做讀取);`summaryPrompt` 的「你是輕小說編輯助手」改「你是寫作編輯助手」。`app/internal/publish/publish.go` 的平台名稱「菠蘿包輕小說」不動。G1–G4 相關句子一字未動。

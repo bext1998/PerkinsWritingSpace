@@ -92,6 +92,10 @@ type Agent struct {
 	ContextTokens int                // 端點上下文長度;0 = 不限制(測試用)
 	Research      *research.Recorder // 研究記錄(§12.8);nil 或關閉時不記錄
 	Remote        bool               // 目前端點是否在本機之外(研究記錄用)
+	// DisableAutoCompact 關閉自動上下文壓縮(#32;由 prepare 依啟用端點的設定套上):
+	// 送出前超過預算不自動濃縮、直接擋下(請作者 /compact 或開新對話),回合結束後的門檻壓縮也不做。
+	// 手動 Compact 不受這個欄位影響。
+	DisableAutoCompact bool
 	// GlobalAgentsPath 是全域作者指示(%APPDATA%\Perkins\AGENTS.md)的完整路徑。
 	// 空 = 不讀全域層(測試注入用);每次組裝訊息都重新讀取,改檔不必重啟。
 	GlobalAgentsPath string
@@ -544,7 +548,7 @@ type Preview struct {
 	Tokens   int           `json:"tokens"`
 	Budget   int           `json:"budget"` // 0 = 未設定
 	Limit    int           `json:"limit"`  // 可用上下文 = Budget-replyReserve(Budget);Budget=0 時為 0(前端不顯示用量)
-	Over     bool          `json:"over"`   // 超過預算:送出時會先濃縮較早對話,仍不夠則拒絕送出
+	Over     bool          `json:"over"`   // 超過預算:自動壓縮開啟時送出會先濃縮較早對話、仍不夠則拒絕;關閉時直接拒絕(請作者 /compact 或開新對話)
 	// Notices 列出因超過長度上限而未送出的作者指示等原因(送出預覽顯示,Ask 也以 notice 事件通知)。
 	Notices []string `json:"notices,omitempty"`
 }
@@ -589,6 +593,12 @@ const compactKeep = 4 // 最近 2 個回合原文保留
 
 const compactPrompt = `你是對話摘要助手。把下面「作者」與「寫作助手」的對話濃縮成條列摘要,保留:作者做出的決定與偏好、討論過的設定與劇情要點、尚未解決的問題。
 不要加入對話中沒有的內容,不要評論。`
+
+// Compact 手動壓縮較早的對話(#32:聊天輸入 /compact、App.CompactChat 用):
+// 不論自動壓縮開關都可壓縮一次,沿用 B7 的通知;對話太短沒有可壓縮內容時回錯誤明確告知。
+func (a *Agent) Compact(ctx context.Context, emit func(Event)) error {
+	return a.compactCollect(ctx, emit, nil)
+}
 
 // compact 把較早的對話濃縮成一段摘要(B7:一定發出通知)。
 func (a *Agent) compact(ctx context.Context, emit func(Event)) error {
@@ -670,6 +680,12 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		emit(Event{Kind: "notice", Text: n})
 	}
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {
+		if a.DisableAutoCompact {
+			// 自動壓縮關閉(#32):不自動濃縮,直接擋下,提示作者手動 /compact 或開新對話。
+			n := EstimateTokens(msgs)
+			result, errMsg = "error", fmt.Sprintf("送出內容約 %d tokens,超過模型可用的 %d,而自動壓縮已關閉。可輸入 /compact 手動壓縮較早的對話,或開新對話;也可以減少附加的檔案、取消前情摘要。", n, b-replyReserve(b))
+			return "", fmt.Errorf("%s", errMsg)
+		}
 		collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
 			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 		}
@@ -700,8 +716,8 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			llm.Message{Role: "user", Content: p.Question},
 			llm.Message{Role: "assistant", Content: content})
 		a.mu.Unlock()
-		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7)
-		if b := a.ContextTokens; b > 0 && a.historyTokens() > b*2/5 {
+		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7);自動壓縮關閉時不做(#32)
+		if b := a.ContextTokens; b > 0 && !a.DisableAutoCompact && a.historyTokens() > b*2/5 {
 			collect := func(purpose string, msgs []llm.Message, reply string, ok bool) {
 				requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 			}
