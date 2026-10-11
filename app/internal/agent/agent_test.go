@@ -112,21 +112,173 @@ func TestDeniedToolsDoNotTouchFilesAndAreAudited(t *testing.T) {
 	}
 }
 
-// A5 意圖:模型陷入無限工具循環時必須停下,不能燒光成本或卡住作者。
+// A5 意圖:模型陷入無限工具循環時必須停在上限 — 不再提供任何工具,並以一次收尾回覆回答作者
+// (這次讀到的工具結果不白費);上限、iter_limit 審計與告知介面的 notice 都不能少。
 func TestIterationLimitStopsLoop(t *testing.T) {
 	a, s, dir := setup(t)
 	a.MaxIter = 3
-	s.replies = []llm.Message{{Role: "assistant", ToolCalls: []llm.ToolCall{
-		{ID: "x", Name: "search_project", Arguments: `{"query":"小明"}`}}}}
-	_, err := a.Ask(context.Background(), AskParams{Question: "?"}, func(Event) {})
-	if err == nil {
-		t.Fatal("應因迭代上限而停止")
+	toolReply := llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+		{ID: "x", Name: "search_project", Arguments: `{"query":"小明"}`}}}
+	s.replies = []llm.Message{
+		toolReply, toolReply, toolReply,
+		{Role: "assistant", Content: "我查到小明怕黑;停在這裡,還缺其他章節的資料。"},
 	}
-	if len(s.reqs) != 3 {
-		t.Errorf("應恰好呼叫模型 3 次, got %d", len(s.reqs))
+	var events []Event
+	reply, err := a.Ask(context.Background(), AskParams{Question: "?"}, func(e Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatalf("達上限應以收尾回覆回答,不回錯誤: %v", err)
+	}
+	if !strings.Contains(reply, "怕黑") {
+		t.Errorf("應回傳收尾回覆內容, got %q", reply)
+	}
+	if len(s.reqs) != 4 {
+		t.Errorf("應呼叫模型 4 次(3 輪工具 + 1 次收尾), got %d", len(s.reqs))
+	}
+	if len(s.reqs[3].Tools) != 0 {
+		t.Errorf("收尾請求不得提供任何工具: %v", names(s.reqs[3].Tools))
+	}
+	last := s.reqs[3].Messages[len(s.reqs[3].Messages)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "工具呼叫上限") {
+		t.Errorf("收尾請求應告知模型已達上限: %+v", last)
+	}
+	a.mu.Lock()
+	hist := append([]llm.Message{}, a.History...)
+	a.mu.Unlock()
+	if len(hist) != 2 || hist[1].Content != reply {
+		t.Errorf("收尾回覆應寫入對話歷史: %+v", hist)
+	}
+	if !hasNotice(events, "迭代上限") {
+		t.Error("應照舊 emit 一則告知迭代上限的 notice")
 	}
 	if !strings.Contains(auditText(t, dir), `"event":"iter_limit"`) {
 		t.Error("審計紀錄缺少 iter_limit")
+	}
+}
+
+// hasNotice 回傳是否有一則內容含 part 的 notice。
+func hasNotice(events []Event, part string) bool {
+	for _, e := range events {
+		if e.Kind == "notice" && strings.Contains(e.Text, part) {
+			return true
+		}
+	}
+	return false
+}
+
+// failOn 前 failAt-1 次照 scripted 回放,第 failAt 次回傳錯誤(onFail 可先取消 context)。
+type failOn struct {
+	replies []llm.Message
+	failAt  int
+	onFail  func()
+	reqs    []llm.Request
+}
+
+func (f *failOn) Chat(ctx context.Context, req llm.Request, _ func(string)) (llm.Message, error) {
+	f.reqs = append(f.reqs, req)
+	if len(f.reqs) == f.failAt {
+		if f.onFail != nil {
+			f.onFail()
+		}
+		if ctx.Err() != nil {
+			return llm.Message{}, ctx.Err()
+		}
+		return llm.Message{}, fmt.Errorf("端點連不上")
+	}
+	r := f.replies[0]
+	if len(f.replies) > 1 {
+		f.replies = f.replies[1:]
+	}
+	return r, nil
+}
+
+// 意圖:收尾請求本身失敗(錯誤、取消)時照現有錯誤路徑處理 — 記 error/cancelled、不重試。
+func TestIterLimitWrapUpFailureUsesErrorPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+	}{{"錯誤", false}, {"取消", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, _, _ := setup(t)
+			a.Proj.SetResearch(true)
+			a.Research = research.New(a.Proj, "sess-1")
+			a.MaxIter = 1
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f := &failOn{
+				replies: []llm.Message{{Role: "assistant", ToolCalls: []llm.ToolCall{
+					{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}}},
+				failAt: 2,
+			}
+			if tc.cancel {
+				f.onFail = cancel // 收尾請求進行中作者按停止
+			}
+			a.LLM = f
+			if _, err := a.Ask(ctx, AskParams{Question: "q"}, func(Event) {}); err == nil {
+				t.Fatal("收尾請求失敗應回錯誤")
+			}
+			if len(f.reqs) != 2 {
+				t.Fatalf("失敗不重試:應恰好 2 次(1 輪工具 + 1 次收尾), got %d", len(f.reqs))
+			}
+			evs, _ := research.Read(a.Proj)
+			if len(evs) != 1 {
+				t.Fatalf("應恰好一筆 ask, got %d", len(evs))
+			}
+			var d struct {
+				Result   string `json:"result"`
+				Requests []json.RawMessage `json:"requests"`
+			}
+			if err := json.Unmarshal(evs[0].Detail, &d); err != nil {
+				t.Fatal(err)
+			}
+			want := "error"
+			if tc.cancel {
+				want = "cancelled"
+			}
+			if d.Result != want {
+				t.Errorf("result 應為 %s, got %q", want, d.Result)
+			}
+			if len(d.Requests) != 2 {
+				t.Errorf("失敗的收尾請求也要列入 requests: %d", len(d.Requests))
+			}
+		})
+	}
+}
+
+// 意圖:收尾請求不提供工具,模型仍夾帶的工具呼叫不得被執行 — 上限仍是硬上限(G4)。
+func TestIterLimitWrapUpIgnoresToolCalls(t *testing.T) {
+	a, s, dir := setup(t)
+	before := snapshot(t, dir)
+	a.MaxIter = 1
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", Content: "收尾回答", ToolCalls: []llm.ToolCall{{ID: "2", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"X","rationale":"r"}`}}},
+	}
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply != "收尾回答" {
+		t.Fatalf("reply=%q err=%v", reply, err)
+	}
+	if len(s.reqs) != 2 {
+		t.Fatalf("收尾的工具呼叫不得引發第三次請求: %d", len(s.reqs))
+	}
+	if len(s.reqs[1].Tools) != 0 {
+		t.Error("收尾請求不得提供工具")
+	}
+	log := auditText(t, dir)
+	if strings.Contains(log, `"event":"tool_call","tool":"propose_patch"`) {
+		t.Errorf("收尾回覆的 propose_patch 不應被執行:\n%s", log)
+	}
+	list, lerr := a.Proposals.List()
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if len(list) != 0 {
+		t.Errorf("收尾回覆不得建立提案: %d", len(list))
+	}
+	for k, v := range before {
+		if snapshot(t, dir)[k] != v {
+			t.Errorf("檔案被改動: %s", k)
+		}
 	}
 }
 
@@ -178,8 +330,8 @@ func TestAttachmentsMustBeProjectFiles(t *testing.T) {
 
 func TestWhitelistHasNoWriteTools(t *testing.T) {
 	got := strings.Join(ToolNames(), ",")
-	if got != "read_document,search_project,propose_patch" {
-		t.Fatalf("白名單應是兩個唯讀工具加提案工具,不得有寫入工具, got %s", got)
+	if got != "read_document,search_project,list_files,propose_patch" {
+		t.Fatalf("白名單應是三個唯讀工具加提案工具,不得有寫入工具, got %s", got)
 	}
 }
 
@@ -302,6 +454,84 @@ func TestOutlineAndNotesProtectedLikeCanon(t *testing.T) {
 	}
 }
 
+// writeMatches 在 path 寫入 n 行都含 keyword 的內容(測試搜尋筆數用)。
+func writeMatches(t *testing.T, a *Agent, path, keyword string, n int) {
+	t.Helper()
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "第 %d 行提到%s。\n", i, keyword)
+	}
+	if err := a.Proj.WriteFile(path, b.String()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 意圖:搜尋結果被截斷時,模型必須知道總筆數,不能以為符合的只有 30 筆;
+// 但片段仍只回傳 30 筆(不得為了計數而多回片段)。
+func TestSearchOverLimitReportsTotalCount(t *testing.T) {
+	a, _, _ := setup(t)
+	writeMatches(t, a, "manuscript/第一章.md", "龍", 45)
+	out, err := a.search("龍", gate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != searchMaxHits+1 {
+		t.Fatalf("應只回傳 %d 筆片段再加一行說明, got %d 行:\n%s", searchMaxHits, len(lines), out)
+	}
+	if n := strings.Count(out, "提到龍。"); n != searchMaxHits {
+		t.Errorf("片段數應為 %d, got %d", searchMaxHits, n)
+	}
+	hint := lines[len(lines)-1]
+	for _, want := range []string{"共 45 筆", "只列出前 30 筆", "更精確的關鍵字"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("截斷說明應包含 %q, got %q", want, hint)
+		}
+	}
+}
+
+// 意圖:沒有被截斷時輸出照舊,不多一行雜訊。
+func TestSearchAtOrUnderLimitHasNoNotice(t *testing.T) {
+	for _, n := range []int{searchMaxHits, searchMaxHits - 1, 1} {
+		a, _, _ := setup(t)
+		writeMatches(t, a, "manuscript/第一章.md", "龍", n)
+		out, err := a.search("龍", gate{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "只列出前") || strings.Contains(out, "共 ") {
+			t.Errorf("%d 筆不應出現截斷說明:\n%s", n, out)
+		}
+		if got := len(strings.Split(out, "\n")); got != n {
+			t.Errorf("%d 筆應回傳 %d 行, got %d", n, n, got)
+		}
+	}
+}
+
+// G2 意圖:計數同樣只看作者附加的受保護檔案,不能因為計數而讓未附加檔案的內容或檔名曝光。
+func TestSearchTotalCountsOnlyVisibleFiles(t *testing.T) {
+	a, _, _ := setup(t)
+	writeMatches(t, a, "manuscript/第一章.md", "龍", searchMaxHits)
+	writeMatches(t, a, "notes/伏筆.md", "龍", 5)
+	out, err := a.search("龍", gate{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "共 ") {
+		t.Errorf("未附加的受保護檔案不應計入總數:\n%s", out)
+	}
+	if strings.Contains(out, "伏筆") {
+		t.Errorf("未附加的受保護檔案不應出現在結果:\n%s", out)
+	}
+	out, err = a.search("龍", gate{"notes/伏筆.md": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "共 35 筆") {
+		t.Errorf("附加後的受保護檔案應計入總數(30+5):\n%s", out)
+	}
+}
+
 // B5 意圖:「只檢查」的請求不能變成偷改——不提供提案工具,模型硬要呼叫也會被拒絕並記錄。
 func TestReportModeHasNoProposeTool(t *testing.T) {
 	a, s, dir := setup(t)
@@ -326,6 +556,21 @@ func TestReportModeHasNoProposeTool(t *testing.T) {
 	}
 	if !strings.Contains(auditText(t, dir), `"event":"tool_denied","tool":"propose_patch"`) {
 		t.Error("報告模式下的提案嘗試應記錄為被拒")
+	}
+}
+
+// 意圖:模型憑記憶或摘要寫 original 會「找不到原文/出現多次」來回重試;系統提示要它先讀原文再逐字複製。
+func TestSystemPromptTellsModelToReadOriginalBeforeProposing(t *testing.T) {
+	a, _, _ := setup(t)
+	msgs, err := a.BuildMessages(AskParams{Question: "q", Doc: "manuscript/第一章.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := msgs[0].Content
+	for _, want := range []string{"read_document", "逐字複製", "不要憑記憶"} {
+		if !strings.Contains(sys, want) {
+			t.Errorf("系統提示缺少 %q:\n%s", want, sys)
+		}
 	}
 }
 
@@ -371,7 +616,8 @@ func TestSummaryDraftNotUsedUntilSavedAndStaleAfterEdit(t *testing.T) {
 // B7 意圖:對話變長時濃縮一定要讓作者知道;濃縮後下一次的預覽仍等於實際送出。
 func TestCompactionNotifiesAndPreviewStillMatches(t *testing.T) {
 	a, s, _ := setup(t)
-	a.ContextTokens = 1200
+	// 預算以系統提示為基準再加固定額度:系統提示加規則時不必回頭調這個數字,濃縮觸發點維持不變
+	a.ContextTokens = EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 950
 	long := strings.Repeat("很長的討論內容。", 12)
 	var notices []string
 	emit := func(e Event) {
@@ -994,7 +1240,7 @@ func TestResearchProposalIDsOnlyThisAsk(t *testing.T) {
 	}
 }
 
-// 意圖(第 3 點):迭代上限時 requests 只含已送出的快照,未送出的工具結果不列入。
+// 意圖(第 3 點):迭代上限時 requests 只含實際送出的快照(含最後的收尾請求),未送出的工具結果不列入。
 func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	a, s, _ := setup(t)
 	a.Proj.SetResearch(true)
@@ -1002,11 +1248,12 @@ func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	a.MaxIter = 2
 	s.replies = []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
-		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"森林"}`}}},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "search_project", Arguments: `{"query":"第一章"}`}}},
+		{Role: "assistant", Content: "已達上限前查到的內容。"},
 	}
-	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
-	if err == nil {
-		t.Fatal("應因迭代上限停止")
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply == "" {
+		t.Fatalf("達上限應以收尾回覆回答: reply=%q err=%v", reply, err)
 	}
 	evs, _ := research.Read(a.Proj)
 	if len(evs) != 1 {
@@ -1014,21 +1261,37 @@ func TestResearchIterLimitRequestsAreSentOnly(t *testing.T) {
 	}
 	var d struct {
 		Sent     bool `json:"sent"`
+		Result   string `json:"result"`
 		Requests []struct {
 			Purpose  string        `json:"purpose"`
 			Messages []llm.Message `json:"messages"`
 		} `json:"requests"`
 	}
 	json.Unmarshal(evs[0].Detail, &d)
-	if !d.Sent || len(d.Requests) != 2 {
-		t.Fatalf("應兩筆已送出的請求: sent=%v n=%d", d.Sent, len(d.Requests))
+	if !d.Sent || len(d.Requests) != 3 {
+		t.Fatalf("應三筆已送出的請求(2 輪工具 + 收尾): sent=%v n=%d", d.Sent, len(d.Requests))
 	}
-	// 最後一筆快照不應含尚未送出的工具結果(最後一輪的 search 結果)
-	last := d.Requests[1]
-	for _, m := range last.Messages {
-		if m.Role == "tool" && strings.Contains(m.Content, "森林: ") {
-			t.Fatalf("最後一筆請求快照不應含未送出的工具結果: %q", m.Content)
+	if d.Result != "iter_limit" {
+		t.Errorf("達上限已收尾的 result 應為 iter_limit, got %q", d.Result)
+	}
+	// 第 2 筆在第 2 輪工具執行前送出:不含該輪的工具結果(第 2 輪查詢命中的是「# 第一章」那一行)
+	for _, m := range d.Requests[1].Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "# 第一章") {
+			t.Fatalf("第 2 筆請求快照不應含尚未送出的工具結果: %q", m.Content)
 		}
+	}
+	// 收尾請求實際送出,包含最後一輪的工具結果
+	gotToolResult := false
+	for _, m := range d.Requests[2].Messages {
+		if m.Role == "tool" && strings.Contains(m.Content, "# 第一章") {
+			gotToolResult = true
+		}
+	}
+	if !gotToolResult {
+		t.Fatal("收尾請求應含最後一輪的工具結果")
+	}
+	if len(s.reqs) != 3 || len(s.reqs[2].Tools) != 0 {
+		t.Fatalf("收尾請求應不帶工具: n=%d tools=%v", len(s.reqs), names(s.reqs[2].Tools))
 	}
 }
 
@@ -1146,7 +1409,7 @@ func TestResearchToggleSaveFailureKeepsMemory(t *testing.T) {
 	}
 }
 
-// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆;MaxIter=1 逐筆比對。
+// 意圖(第 4 點):每次 Chat 回傳都保存該次回覆,含帶工具呼叫的中間回覆與達上限後的收尾回覆;MaxIter=1 逐筆比對。
 func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 	a, s, _ := setup(t)
 	a.Proj.SetResearch(true)
@@ -1154,10 +1417,11 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 	a.MaxIter = 1
 	s.replies = []llm.Message{
 		{Role: "assistant", Content: "先查資料", ToolCalls: []llm.ToolCall{{ID: "1", Name: "search_project", Arguments: `{"query":"小明"}`}}},
+		{Role: "assistant", Content: "收尾回答"},
 	}
-	_, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
-	if err == nil {
-		t.Fatal("MaxIter=1 應因迭代上限停止")
+	reply, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {})
+	if err != nil || reply != "收尾回答" {
+		t.Fatalf("MaxIter=1 應以收尾回覆回答: reply=%q err=%v", reply, err)
 	}
 	evs, _ := research.Read(a.Proj)
 	if len(evs) != 1 {
@@ -1171,11 +1435,33 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 		} `json:"requests"`
 	}
 	json.Unmarshal(evs[0].Detail, &d)
-	if len(d.Requests) != 1 {
-		t.Fatalf("應一筆請求, got %d", len(d.Requests))
+	if len(d.Requests) != 2 {
+		t.Fatalf("應兩筆請求(1 輪工具 + 收尾), got %d", len(d.Requests))
 	}
 	if d.Requests[0].Reply != "先查資料" {
 		t.Fatalf("中間回覆應被保存: %q", d.Requests[0].Reply)
+	}
+	if d.Requests[1].Reply != "收尾回答" {
+		t.Fatalf("收尾回覆應被保存: %q", d.Requests[1].Reply)
+	}
+	last := d.Requests[1].Messages[len(d.Requests[1].Messages)-1]
+	if last.Role != "user" || !strings.Contains(last.Content, "工具呼叫上限") {
+		t.Fatalf("收尾請求快照應含上限說明: %+v", last)
+	}
+}
+
+// Issue #34 第 4 項意圖:系統提示含不確定性協定的三態回應——
+// 意圖明確直接做;意圖不明且影響故事方向先問 1–3 個問題;多個合理方向列條件式選項、不標「最佳」。
+// 只檢查關鍵句存在(提示詞是常數),行為效果由實機評測的「模糊要求應先澄清」情境人工比對。
+func TestSystemPromptUncertaintyRules(t *testing.T) {
+	for _, s := range []string{
+		"意圖明確時直接做,不要為了保險而提問",
+		"先問最多 1–3 個具體問題,再提案",
+		"不要標示哪個是「最佳」",
+	} {
+		if !strings.Contains(systemPrompt, s) {
+			t.Errorf("系統提示缺少不確定性規則關鍵句:%s", s)
+		}
 	}
 }
 

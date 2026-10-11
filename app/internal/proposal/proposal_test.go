@@ -59,6 +59,18 @@ func TestCreateRequiresUniqueExactOriginal(t *testing.T) {
 	}
 }
 
+// 意圖:失敗訊息要告訴模型怎麼修正——先用 read_document 讀該檔確認原文,而不是繼續憑記憶猜。
+func TestCreateErrorTellsModelToReadDocumentFirst(t *testing.T) {
+	s, rel, _ := setup(t)
+	s.Proj.WriteFile(rel, "他笑了。他笑了。\n")
+	for _, orig := range []string{"不存在的句子", "他笑了。"} {
+		_, err := s.Create("m", rel, orig, "x", "", nil)
+		if err == nil || !strings.Contains(err.Error(), "read_document") {
+			t.Errorf("original=%q 的錯誤訊息應提示先用 read_document 確認原文: %v", orig, err)
+		}
+	}
+}
+
 // 接受後只替換指定片段,其餘內容(含中文標點與換行)原樣保留,並留下快照與來源記錄。
 func TestAcceptAppliesOnlyTargetAndSnapshotsFirst(t *testing.T) {
 	s, rel, dir := setup(t)
