@@ -10,6 +10,10 @@ export function AddCategory(arg1) {
   return window['go']['main']['App']['AddCategory'](arg1);
 }
 
+export function AgentsMdTokens(arg1) {
+  return window['go']['main']['App']['AgentsMdTokens'](arg1);
+}
+
 export function ApplyEntityHeader(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ApplyEntityHeader'](arg1, arg2, arg3, arg4);
 }
@@ -202,6 +206,10 @@ export function PurgeSession(arg1) {
   return window['go']['main']['App']['PurgeSession'](arg1);
 }
 
+export function ReadAgentsMd(arg1) {
+  return window['go']['main']['App']['ReadAgentsMd'](arg1);
+}
+
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }
@@ -308,4 +316,8 @@ export function TrashFile(arg1) {
 
 export function WordCount(arg1) {
   return window['go']['main']['App']['WordCount'](arg1);
+}
+
+export function WriteAgentsMd(arg1, arg2) {
+  return window['go']['main']['App']['WriteAgentsMd'](arg1, arg2);
 }

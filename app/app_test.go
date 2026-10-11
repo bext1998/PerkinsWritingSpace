@@ -288,3 +288,80 @@ func TestCompactChatWiringAndPreparePassesSwitch(t *testing.T) {
 		t.Fatal("prepare 應把端點的 disableAutoCompact 套到 Agent")
 	}
 }
+
+// 意圖(#38 設定頁編輯作者指示):全域與作品兩層各自讀寫;檔案不存在時讀為空(不是錯誤),
+// 儲存即建立;內容清空並儲存 = 寫入空檔(不刪檔);寫檔失敗回錯;範圍不對回錯。
+func TestAgentsMdReadWrite(t *testing.T) {
+	// 設定目錄尚不存在 = 全新使用者首次儲存全域指示(PR #92 審查)
+	cfg := filepath.Join(t.TempDir(), "Perkins")
+	a := NewApp()
+	a.store = &settings.Store{Dir: cfg}
+
+	// 全域層:不存在 → 讀為空,路徑在設定目錄
+	v, err := a.ReadAgentsMd("global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Text != "" || v.Path != filepath.Join(cfg, "AGENTS.md") || v.Limit != agent.AgentsLimit {
+		t.Fatalf("檔案不存在應讀為空並帶路徑與上限: %+v", v)
+	}
+	// 儲存才寫檔;寫入後讀回同一份,估算長度與上限同一組
+	if _, err := a.WriteAgentsMd("global", "全域指示"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(cfg, "AGENTS.md"))
+	if err != nil || string(b) != "全域指示" {
+		t.Fatalf("儲存後檔案應存在且內容一致: %q %v", b, err)
+	}
+	v, err = a.ReadAgentsMd("global")
+	if err != nil || v.Text != "全域指示" || v.Tokens != agent.EstimateAgentsMd("全域指示") {
+		t.Fatalf("讀回內容與估算長度應一致: %+v %v", v, err)
+	}
+
+	// 作品層:沒有開作品 → 回錯;開啟後讀寫在作品資料夾根目錄
+	if _, err := a.ReadAgentsMd("project"); err == nil {
+		t.Fatal("沒有開作品時讀作品層應回錯")
+	}
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.proj = p
+	pf := filepath.Join(dir, "AGENTS.md")
+	if v, err := a.ReadAgentsMd("project"); err != nil || v.Text != "" || v.Path != pf {
+		t.Fatalf("作品層不存在應讀為空: %+v %v", v, err)
+	}
+	if _, err := a.WriteAgentsMd("project", "作品指示"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(pf); err != nil || string(b) != "作品指示" {
+		t.Fatalf("作品層應寫在作品資料夾根目錄: %q %v", b, err)
+	}
+
+	// 內容清空並儲存 = 寫入空檔(不刪檔)
+	if _, err := a.WriteAgentsMd("project", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(pf); err != nil || len(b) != 0 {
+		t.Fatalf("清空儲存應寫入空檔而不是刪檔: %q %v", b, err)
+	}
+	if v, err := a.ReadAgentsMd("project"); err != nil || v.Text != "" || v.Tokens != 0 {
+		t.Fatalf("空檔讀回應為空: %+v %v", v, err)
+	}
+
+	// 寫檔失敗回錯(路徑是目錄,寫入必然失敗)
+	bad := filepath.Join(t.TempDir(), "AGENTS.md")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a.store = &settings.Store{Dir: filepath.Dir(bad)}
+	if _, err := a.WriteAgentsMd("global", "x"); err == nil || !strings.Contains(err.Error(), "無法寫入") {
+		t.Fatalf("寫檔失敗應回錯並說明原因, got %v", err)
+	}
+
+	// 範圍不對回錯
+	if _, err := a.ReadAgentsMd("nope"); err == nil {
+		t.Fatal("未知範圍應回錯")
+	}
+}

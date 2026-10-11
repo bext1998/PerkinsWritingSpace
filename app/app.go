@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -894,6 +895,79 @@ func (a *App) SetAutosave(on bool) error {
 	s := a.store.Load()
 	s.Autosave = &on
 	return a.store.Save(s)
+}
+
+// ---- 作者指示 AGENTS.md 設定頁編輯(Issue #38)----
+// 這是作者本人在設定頁編輯指示,不是 AI 寫入(與 G1 不衝突);Bot 的工具仍碰不到這兩個檔。
+
+// AgentsMdView 是設定頁「作者指示(AGENTS.md)」編輯區的內容與估算。
+type AgentsMdView struct {
+	Text string `json:"text"` // 檔案內容;檔案不存在時為空字串
+	// Tokens 是目前內容的估算長度(與送出上限同一套 EstimateTokens 估算,以去除首尾空白後的文字計算);
+	// 超過 Limit 時整份不送出(不靜默截斷)。
+	Tokens int    `json:"tokens"`
+	Limit  int    `json:"limit"` // 單份上限(agent.AgentsLimit)
+	Path   string `json:"path"`  // 檔案完整路徑(顯示給作者)
+}
+
+// agentsMdPath 解析作者指示的範圍(global = %APPDATA%\Perkins\AGENTS.md;project = 作品資料夾根目錄 AGENTS.md)。
+func (a *App) agentsMdPath(scope string) (string, error) {
+	switch scope {
+	case "global":
+		if a.store == nil {
+			return "", errors.New("尚未初始化設定目錄")
+		}
+		return filepath.Join(a.store.Dir, "AGENTS.md"), nil
+	case "project":
+		if a.proj == nil {
+			return "", errNoProject
+		}
+		return filepath.Join(a.proj.Root, "AGENTS.md"), nil
+	}
+	return "", fmt.Errorf("未知的作者指示範圍:%s", scope)
+}
+
+// ReadAgentsMd 讀取一份作者指示;檔案不存在時內容為空(不是錯誤),儲存時才建立。
+func (a *App) ReadAgentsMd(scope string) (AgentsMdView, error) {
+	p, err := a.agentsMdPath(scope)
+	if err != nil {
+		return AgentsMdView{}, err
+	}
+	v := AgentsMdView{Limit: agent.AgentsLimit, Path: p}
+	b, err := os.ReadFile(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return v, nil
+	}
+	if err != nil {
+		return AgentsMdView{}, fmt.Errorf("無法讀取 %s: %w", p, err)
+	}
+	v.Text = string(b)
+	v.Tokens = agent.EstimateAgentsMd(v.Text)
+	return v, nil
+}
+
+// WriteAgentsMd 儲存一份作者指示(按「儲存」才寫檔);檔案不存在就建立,
+// 內容清空 = 寫入空檔(不刪檔)。寫檔失敗回錯。
+func (a *App) WriteAgentsMd(scope, text string) (AgentsMdView, error) {
+	p, err := a.agentsMdPath(scope)
+	if err != nil {
+		return AgentsMdView{}, err
+	}
+	// 全域層:首次使用時設定目錄可能還不存在,先建立(作品目錄不自行重建)
+	if scope == "global" {
+		if err := os.MkdirAll(a.store.Dir, 0o755); err != nil {
+			return AgentsMdView{}, fmt.Errorf("無法建立設定目錄 %s: %w", a.store.Dir, err)
+		}
+	}
+	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		return AgentsMdView{}, fmt.Errorf("無法寫入 %s: %w", p, err)
+	}
+	return a.ReadAgentsMd(scope)
+}
+
+// AgentsMdTokens 估算一份作者指示內容的長度(與送出上限同一套估算),供編輯區即時顯示。
+func (a *App) AgentsMdTokens(text string) int {
+	return agent.EstimateAgentsMd(text)
 }
 
 // clientFor 依設定檔的 Provider 回傳對應客戶端(OpenAI 相容或 Anthropic 原生,#30),

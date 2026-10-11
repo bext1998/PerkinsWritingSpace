@@ -319,6 +319,7 @@ module.exports = {
         // 淺色主題與 640 寬(視覺確認:段距、縮排、隱藏空行、◇◇◇)
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await settle(120, 900);
@@ -332,6 +333,7 @@ module.exports = {
         await settle(200, 1000);
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(120, 800);
@@ -361,10 +363,11 @@ module.exports = {
             };
         });
         const near = (a, b, eps = 0.05) => typeof a === 'number' && Math.abs(a - b) <= eps;
-        // 設定頁導覽欄底部的三個預設檔下拉(選項有穩定的 data-testid,不靠顯示文字)
+        // 外觀頁的三個稿紙版面預設檔下拉(選項有穩定的 data-testid,不靠顯示文字)
         const pickPaper = async (testid, value) => {
             await page.click('[data-testid=open-settings]');
             await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=tab-appearance]');
             await page.click(`[data-testid="${testid}"]`);
             await page.click(`[data-testid="${testid}-opt-${value}"]`);
             await page.click('[data-testid=close-settings]');
@@ -465,6 +468,7 @@ module.exports = {
         await shot('44-paper-layout-dark-big');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await shot('44-paper-layout-settings');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
@@ -472,6 +476,7 @@ module.exports = {
         await shot('44-paper-layout-light-big');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(120, 800);
@@ -769,12 +774,14 @@ module.exports = {
         await shot('44-typewriter-focus-dark');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("白紙")');
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);
         await shot('44-typewriter-focus-light');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
         await page.click('button:has-text("夜間書房")');
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);

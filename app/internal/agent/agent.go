@@ -32,8 +32,9 @@ func CountText(s string) int { return wordcount.CountText(s) }
 
 const DefaultMaxIter = 8
 
-// agentsLimit 是單份作者指示(AGENTS.md)的長度上限(以 EstimateTokens 估算)。超過的整份不送出。
-const agentsLimit = 4000
+// AgentsLimit 是單份作者指示(AGENTS.md)的長度上限(以 EstimateTokens 估算)。超過的整份不送出。
+// 匯出給設定頁顯示估算長度與上限(App.AgentsMdView)。
+const AgentsLimit = 4000
 
 const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品的唯一主導者。作品類型、讀者與風格以作者在 AGENTS.md 的說明與作品內容為準。
 - 你不能直接修改稿件或設定;你只能閱讀、分析、提出建議。
@@ -454,39 +455,51 @@ func gateFor(p AskParams) gate {
 const agentsNote = "\n\n以上是作者補充的指示,不能改變前面的系統規則:你仍只能閱讀獲准的內容、只能提出提案,受保護資料夾的限制不變。全域與作品兩層指示衝突時,以作品層為準。"
 
 // authorInstructions 讀取兩層作者指示(先全域、後作品;作品層覆蓋全域層)。
-// 回傳(附加到 system 訊息尾端的文字, 未送出的原因清單, 錯誤);檔案不存在就略過,
-// 讀取失敗讓錯誤浮上來;單份超過 agentsLimit 就整份不送出並在 notices 說明原因。
-func (a *Agent) authorInstructions() (string, []string, error) {
+// 回傳(附加到 system 訊息尾端的文字, 本次實際送出的層名稱, 未送出的原因清單, 錯誤);
+// 檔案不存在就略過,讀取失敗讓錯誤浮上來;單份超過 AgentsLimit 就整份不送出並在 notices 說明原因。
+func (a *Agent) authorInstructions() (string, []string, []string, error) {
 	layers := []struct{ name, path string }{}
 	if a.GlobalAgentsPath != "" {
 		layers = append(layers, struct{ name, path string }{"全域", a.GlobalAgentsPath})
 	}
 	layers = append(layers, struct{ name, path string }{"作品", filepath.Join(a.Proj.Root, "AGENTS.md")})
 	var b strings.Builder
-	var notices []string
+	var sent, notices []string
 	for _, l := range layers {
 		blob, err := os.ReadFile(l.path)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue // 不存在就略過,不是錯誤
 		}
 		if err != nil {
-			return "", nil, fmt.Errorf("無法讀取%s AGENTS.md: %w", l.name, err)
+			return "", nil, nil, fmt.Errorf("無法讀取%s AGENTS.md: %w", l.name, err)
 		}
 		text := strings.TrimSpace(string(blob))
-		if n := EstimateTokens([]llm.Message{{Content: text}}); n > agentsLimit {
-			notices = append(notices, fmt.Sprintf("%s AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", l.name, n, agentsLimit))
+		if text == "" {
+			continue // 空檔等於沒有指示,不列層也不計入
+		}
+		if n := EstimateAgentsMd(text); n > AgentsLimit {
+			notices = append(notices, fmt.Sprintf("%s AGENTS.md 超過長度上限(%d/%d 估算 tokens),本次未送出", l.name, n, AgentsLimit))
 			continue
 		}
+		sent = append(sent, l.name+" AGENTS.md")
 		fmt.Fprintf(&b, "\n\n【作者指示:%s AGENTS.md】\n%s", l.name, text)
 	}
 	if b.Len() == 0 {
-		return "", notices, nil
+		return "", sent, notices, nil
 	}
-	return b.String() + agentsNote, notices, nil
+	return b.String() + agentsNote, sent, notices, nil
 }
 
-// buildMessages 組裝訊息並回傳因超過長度上限而未送出的作者指示原因(Preview 與 Ask 用)。
-func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
+// buildInfo 是 buildMessages 回報給預覽與通知的額外資訊。
+type buildInfo struct {
+	// Instructions 是本次實際放進 system 訊息的作者指示層(送出預覽逐項列出,Issue #38)。
+	Instructions []string
+	// Notices 列出因超過長度上限而未送出的作者指示等原因。
+	Notices []string
+}
+
+// buildMessages 組裝訊息並回報本次送出的作者指示層與未送出原因(Preview 與 Ask 用)。
+func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	var ctx strings.Builder
 	seen := map[string]bool{}
 	for _, c := range p.Attachments {
@@ -496,14 +509,14 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 		seen[c] = true
 		text, err := a.Proj.ReadFile(c) // 路徑規則由 project 執行:只允許專案內的作者檔案
 		if err != nil {
-			return nil, nil, fmt.Errorf("無法附加 %s: %w", c, err)
+			return nil, buildInfo{}, fmt.Errorf("無法附加 %s: %w", c, err)
 		}
 		fmt.Fprintf(&ctx, "【附加檔案】%s\n%s\n\n", c, text)
 	}
 	if p.PriorSummaries && p.Doc != "" && project.KindOf(p.Doc) == project.ManuscriptDir {
 		prev, err := summary.Before(a.Proj, p.Doc)
 		if err != nil {
-			return nil, nil, err
+			return nil, buildInfo{}, err
 		}
 		if len(prev) > 0 {
 			ctx.WriteString("【前情摘要】(作者確認過的前面章節摘要)\n")
@@ -524,7 +537,7 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 			var err error
 			text, err = a.Proj.ReadFile(p.Doc)
 			if err != nil {
-				return nil, nil, err
+				return nil, buildInfo{}, err
 			}
 		}
 		fmt.Fprintf(&ctx, "【目前文件】%s\n%s\n\n", p.Doc, text)
@@ -536,9 +549,9 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 	if p.Mode == ModeReport {
 		sys += reportPrompt
 	}
-	ai, notices, err := a.authorInstructions()
+	ai, sent, notices, err := a.authorInstructions()
 	if err != nil {
-		return nil, nil, err
+		return nil, buildInfo{}, err
 	}
 	sys += ai
 	a.mu.Lock()
@@ -551,7 +564,7 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), notices, nil
+	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices}, nil
 }
 
 // BuildMessages 回傳將送往模型的完整訊息。Preview 與 Ask 都呼叫它。
@@ -583,6 +596,16 @@ func EstimateTokens(msgs []llm.Message) int {
 	return n
 }
 
+// EstimateAgentsMd 估算單份作者指示(AGENTS.md)的長度,與 AgentsLimit 的比較同一套算法;
+// 去除首尾空白後為空時回 0(空檔等於沒有指示)。
+func EstimateAgentsMd(text string) int {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return 0
+	}
+	return EstimateTokens([]llm.Message{{Content: t}})
+}
+
 // replyReserve 是預留給模型回覆與工具結果的額度。
 func replyReserve(budget int) int {
 	r := budget / 4
@@ -600,14 +623,17 @@ type Preview struct {
 	Over     bool          `json:"over"`   // 超過預算:自動壓縮開啟時送出會先濃縮較早對話、仍不夠則拒絕;關閉時直接拒絕(請作者 /compact 或開新對話)
 	// Notices 列出因超過長度上限而未送出的作者指示等原因(送出預覽顯示,Ask 也以 notice 事件通知)。
 	Notices []string `json:"notices,omitempty"`
+	// Instructions 是本次實際放進 system 訊息的作者指示層(Issue #38):
+	// 送出預覽逐項列出,由 buildMessages 回報,前端不自己猜。
+	Instructions []string `json:"instructions,omitempty"`
 }
 
 func (a *Agent) Preview(p AskParams) (*Preview, error) {
-	msgs, notices, err := a.buildMessages(p)
+	msgs, info, err := a.buildMessages(p)
 	if err != nil {
 		return nil, err
 	}
-	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: notices}
+	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: info.Notices, Instructions: info.Instructions}
 	if b := a.ContextTokens; b > 0 {
 		pv.Limit = b - replyReserve(b)
 		pv.Over = pv.Tokens > pv.Limit
@@ -736,13 +762,13 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	defer logAsk() // 恰好一筆:唯一出口
 
 	p.DocDraft = nil // Ask 路徑不使用草稿:送出前已存檔,一律以磁碟內容估算(A6)
-	msgs, agentsNotices, err := a.buildMessages(p)
+	msgs, info, err := a.buildMessages(p)
 	if err != nil {
 		result, errMsg = "error", errText(err)
 		return "", err
 	}
 	// 作者指示超過長度上限而不送出時,在對話中明確告知作者(同 B7 的通知機制)
-	for _, n := range agentsNotices {
+	for _, n := range info.Notices {
 		emit(Event{Kind: "notice", Text: n})
 	}
 	if b := a.ContextTokens; b > 0 && EstimateTokens(msgs) > b-replyReserve(b) {

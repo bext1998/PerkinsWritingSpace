@@ -1,5 +1,23 @@
 # PROGRESS.md
 
+## 2026-10-12 — 設定頁改版:Perkins Bot 獨立設定頁 + 外觀分頁(Issues #38、#88)
+
+- **導覽四頁**(`app/frontend/src/SettingsPage.tsx`):「作品 / Perkins Bot / 平台輸出 / 外觀」;「Perkins Bot」取代「AI 模型」(`tab-models` 沿用,舊 E2E 可用),外觀為新 `tab-appearance`;**導覽欄底部不再放主題與稿紙版面**。預設開啟頁維持 Perkins Bot;未開作品時沒有作品頁。
+- **Perkins Bot 頁**(原 `ModelsTab` 改寫為 `PerkinsBotTab`,分「模型端點」「作者指示(AGENTS.md)」兩個有標題與說明的區塊):端點清單與編輯表單(新增/刪除/金鑰 keyring/雲端外流標示不變);「**從預設新增**」下拉(`ListProfilePresets()`,依「本機/服務商」分組、國際站/中國站與 Anthropic 原生標示;選了就建立端點帶入名稱、網址、Provider、建議上下文長度(預設檔沒給值時用 16384)與預設模型,金鑰欄空白由作者填;仍可「新增空白端點」);**API 型別**(OpenAI 相容/Anthropic 原生)可切換;**思考強度**下拉(不指定/低/中/高/更高/最高,依 Provider 顯示允許值,切換 Provider 時不合法的值重設為不指定);模型(抓清單/手填)、上下文長度、自動壓縮、API 金鑰都在同頁。
+- **作者指示 AGENTS.md 編輯(#38)**:兩個編輯區——全域(`%APPDATA%\Perkins\AGENTS.md`)與目前作品(作品根目錄 `AGENTS.md`,沒開作品不顯示);顯示估算長度與上限(4000 估算 tokens)與超限警示,按「儲存」才寫檔(不存在即建立;清空儲存 = 寫入空檔不刪檔),寫檔失敗顯示錯誤;說明兩層關係(作品層優先、不能改變 G1–G4)。這是作者本人編輯(與 G1 不衝突),Bot 工具仍碰不到這兩個檔。
+- **後端綁定**(`app/app.go`):`ReadAgentsMd(scope)`/`WriteAgentsMd(scope, text)`(scope = `global`|`project`;沒有開作品讀寫專案層回錯、未知 scope 回錯、寫檔失敗回錯)/`AgentsMdTokens(text)`;`AgentsMdView{text, tokens, limit, path}`。
+- **Agent**(`internal/agent/agent.go`):`authorInstructions` 回傳實際送出的層名稱;`buildMessages` 回 `buildInfo{Instructions, Notices}`;**`Preview` 加 `Instructions`**(送出預覽逐項列出,前端不自己猜);`agentsLimit` 匯出為 `AgentsLimit`;新增 `EstimateAgentsMd`(與上限比較同一套估算,空內容為 0);空檔(去除首尾空白後為空)視為沒有指示,不列層也不送出標題。
+- **送出預覽**(`ChatWindow.tsx`):「本次直接送出」逐項列出作者指示(例如「· 作者指示:作品 AGENTS.md」,`preview-instructions`);超過上限未送出的不列入,原因照現有 notices 顯示。
+- **外觀頁(#88,`AppearanceTab`)**:主題兩張較大的選擇卡(`theme-dark`/`theme-light`,含圖示、名稱、說明與選中態);稿紙版面三列(左名稱+一句說明、右控制項),沿用 `paper-width`/`paper-font-size`/`paper-gap` 與 `*-opt-<值>` 選項 testid;行為不變(即按即存、立即套用、重開保留)。`overlay.tsx` 加 `SelectGroup`/`SelectLabel`。
+- **測試(Go,2 個新測試)**:`TestPreviewInstructionsListsSentLayers`(兩層依序列出、超過上限整份不送出的層不列入且原因在 Notices、都沒有時為空、列出的就是實際放進 system 的層);`TestAgentsMdReadWrite`(global/project 讀寫、檔案不存在讀為空、儲存即建立、清空儲存=寫入空檔不刪檔、寫檔失敗回錯、未知 scope 回錯、未開作品讀專案層回錯)。
+- **破壞驗證 2 輪**(拿掉實作 → 該測試 FAIL → 還原,還原後 `go test ./...` 全綠):①`authorInstructions` 不回報送出層 → Instructions 測試 FAIL(`got []`);②`WriteAgentsMd` 寫到錯路徑 → 讀寫測試 FAIL(儲存後檔案不存在)。
+- **E2E**:`settings-layout` 43 項(四頁導覽切換、導覽欄底部無主題/稿紙、外觀頁主題切換會保存、外觀頁 900/640/1280 捲軸與無水平捲軸、稿紙三項齊全、從預設新增帶入名稱/網址/Provider/金鑰留空、思考強度選項依 Provider 變化並保存(xhigh)、切回 OpenAI 相容時重設不指定、AGENTS.md 編輯儲存後寫入磁碟、估算長度與上限、全域編輯區與路徑);`bot-chat` 加 2 項(送出預覽列出本次送出的作者指示、超上限未送出的不列入清單);既有用到導覽欄底部主題/稿紙的組(bible、layout-visual、paper、search-editor、shelf、visual-1b)在點主題/稿紙前加「切到外觀頁」一步(16 處)。**基準:全新 fixture `--reuse --all` 621/621 passed、略過 8(E2E_SKIP_AI=1),268s**。另有一輪 `--all` 出現 `visual-1b`「#39 舊格式提案(單一版本)不顯示版本切換,照常接受」FAIL——單獨跑 visual-1b 50/50、`research polish visual-1b` 103/103 都無法重現,之後三輪全綠,**原因不明的偶發失敗**(與本次改動的區域無關)。
+- **截圖(實際 render,已檢視)**:`app/e2e/shots/`(已 .gitignore)——Perkins Bot 頁 `10-settings-models.png`(1440 寬)、`72-settings-models-900.png`、`76-settings-models-640.png`;外觀頁深 `78-settings-appearance-900.png`、淺 `79-settings-appearance-900-light.png`;640 寬兩頁 `76-settings-models-640.png`、`78-settings-appearance-640.png`。另以像素量測核對主題與選中卡一致(深色圖 = 夜間書房選中、淺色圖 = 白紙選中)。
+- **E2E 環境**:鎖檔(`D:\AgentCoding\.codex\worktrees\maze\e2e.lock`,noclobber)進出一次已釋放;`settings.json` 備份後 sha256 逐位元組還原一致;`%APPDATA%\Perkins\` 無 AGENTS.md 殘留(全程未寫作者真實全域檔)、`sessions\` 無殘留;依 PID 只結束自己啟動的程序(perkins-dev、wails、vite,無殘留);`clean-recent.js --dry-run` 0 項。**`--all` 含 `shelf` 組:系統剪貼簿被「複製到平台」覆寫(既有行為,無法還原)**。
+- **綁定生成**:`wails generate module` 更新 `App.d.ts`/`App.js`/`models.ts`(runtime 3 檔與 `go.mod` 只有 EOL 差異,未提交)。
+- **SPEC 同步**:§17.2 改寫(四頁、Perkins Bot 頁內容、AGENTS.md 編輯、外觀頁、驗收三頁→四頁、第 7 項改為外觀頁);§12.3 作者指示 AGENTS.md 補設定頁編輯與送出預覽逐項列出、思考強度與端點預設檔補設定頁 UI;§17.3 稿紙版面入口改為外觀頁;§13 主畫面設定頁一行描述更新。
+- **未做/邊界**(另待作者決定,不在本任務範圍):權限收緊(停用個別工具/呼叫前詢問)、Bot 以提案修改 AGENTS.md 皆未做;E2E 只實測作品層 AGENTS.md 寫入磁碟(不寫作者真實的全域檔,讀寫由 Go 測試覆蓋);估算長度是保守估算(與送出上限同一套,非模型 tokenizer);E2E_SKIP_AI=1 未跑模型段(bot-chat 提案 8 項照舊略過)。
+
 ## 2026-10-12 — Anthropic 原生 Messages API、思考強度、端點預設 Profile(後端與綁定;Issues #30、#43)
 
 - **設定**(`app/internal/settings/settings.go`):`Profile` 加 `Provider`(`""`/`openai` = OpenAI 相容 `/chat/completions`;`anthropic` = Anthropic 原生 Messages API)與 `ReasoningEffort`(空 = **不指定**,不送任何思考參數)。載入與存回時正規化(同稿紙版面做法):未知 Provider 視為 OpenAI 相容、不在 `low/medium/high/xhigh/max` 的思考強度視為不指定。舊設定檔沒有這兩個欄位 = 現行行為,不需遷移。

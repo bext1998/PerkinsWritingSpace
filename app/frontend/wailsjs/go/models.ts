@@ -35,6 +35,7 @@ export namespace agent {
 	    limit: number;
 	    over: boolean;
 	    notices?: string[];
+	    instructions?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -48,6 +49,7 @@ export namespace agent {
 	        this.limit = source["limit"];
 	        this.over = source["over"];
 	        this.notices = source["notices"];
+	        this.instructions = source["instructions"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -276,6 +278,24 @@ export namespace llm {
 
 export namespace main {
 	
+	export class AgentsMdView {
+	    text: string;
+	    tokens: number;
+	    limit: number;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentsMdView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.text = source["text"];
+	        this.tokens = source["tokens"];
+	        this.limit = source["limit"];
+	        this.path = source["path"];
+	    }
+	}
 	export class Option {
 	    id: string;
 	    label: string;
