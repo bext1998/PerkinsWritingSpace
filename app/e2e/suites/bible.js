@@ -26,6 +26,132 @@ module.exports = {
         check('設定的登場索引列出章節', ap.includes('第一章'));
         await shot('07-bible');
 
+        // ===== 設定集側欄資料夾檔案樹(#31 第一步,SPEC §12.2):fixture 自建自清 =====
+        // 子資料夾(人物/組織)、無 frontmatter 一檔多人物、別名搜尋、超長檔名(640 寬)
+        const tw = (rel, s) => { const f = P(rel); fs.mkdirSync(path.dirname(f), {recursive: true}); fs.writeFileSync(f, s); };
+        const tdel = rel => { try { fs.unlinkSync(P(rel)); } catch {} };
+        const LONG = '這是一個非常長的設定檔名用來驗證窄寬度下側欄不會產生水平捲軸';
+        tw('canon/人物/主要角色.md', '# 主要角色\n\n一檔多人物:艾莉絲、雷恩都在這一檔裡。\n');
+        tw(`canon/人物/${LONG}.md`, '# 長檔名\n\n窄寬度檢視用。\n');
+        tw('canon/組織/夜鶯團.md', '---\ntype: 勢力\nname: 夜鶯團\naliases: [小夜]\n---\n\n# 夜鶯團\n\n地下組織。\n');
+        // fs 建檔後讓前端重讀 tree 與索引(設定頁開關,同健康檢查段)
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
+        await page.click('[data-testid=close-settings]');
+        await settle(80, 700);
+        await ensureProject(null, 'bible');
+
+        const treeWait = sel => page.waitForSelector(sel, {timeout: 5000}).then(() => true).catch(() => false);
+        // 資料夾列的容器含其子層(子資料夾與檔案列)
+        const folderHas = (folder, file) => page.evaluate(({folder, file}) => {
+            const btn = document.querySelector(`[data-testid=canon-folder][data-folder="${folder}"]`);
+            return !!btn && [...(btn.parentElement?.querySelectorAll('[data-testid=entity-row]') ?? [])]
+                .some(r => r.getAttribute('data-file') === file);
+        }, {folder, file});
+        const visibleFiles = () => page.$$eval('[data-testid=entity-row]', els => els.map(e => e.getAttribute('data-file')));
+        const visibleFolders = () => page.$$eval('[data-testid=canon-folder]', els => els.map(e => e.getAttribute('data-folder')));
+
+        // 子資料夾內的檔案顯示在對應資料夾下(根層檔案不混進去)
+        const dPeople = await treeWait('[data-testid=canon-folder][data-folder="canon/人物"]');
+        const dOrg = await treeWait('[data-testid=canon-folder][data-folder="canon/組織"]');
+        const inPeople = await folderHas('canon/人物', 'canon/人物/主要角色.md');
+        const inOrg = await folderHas('canon/組織', 'canon/組織/夜鶯團.md');
+        const rootOutside = await page.evaluate(() => {
+            const btn = document.querySelector('[data-testid=canon-folder][data-folder="canon/人物"]');
+            const inFolder = !!btn && [...btn.parentElement.querySelectorAll('[data-testid=entity-row]')]
+                .some(r => r.getAttribute('data-file') === 'canon/雷恩.md');
+            return !inFolder && !!document.querySelector('[data-testid=entity-row][data-file="canon/雷恩.md"]');
+        });
+        check('設定集樹 子資料夾的檔案顯示在對應資料夾下', dPeople && dOrg && inPeople && inOrg && rootOutside,
+            JSON.stringify({dPeople, dOrg, inPeople, inOrg, rootOutside}));
+
+        // 資料夾收合隱藏子檔案、再展開恢復(根層檔案不受影響)
+        await page.click('[data-testid=canon-folder][data-folder="canon/人物"]');
+        await settle(80, 600);
+        const collapsedHidden = !(await page.$('[data-testid=entity-row][data-file="canon/人物/主要角色.md"]'))
+            && !(await page.$(`[data-testid=entity-row][data-file="canon/人物/${LONG}.md"]`))
+            && !!(await page.$('[data-testid=entity-row][data-file="canon/雷恩.md"]'));
+        await page.click('[data-testid=canon-folder][data-folder="canon/人物"]');
+        await settle(80, 600);
+        const expandedBack = !!(await page.$('[data-testid=entity-row][data-file="canon/人物/主要角色.md"]'));
+        check('設定集樹 資料夾收合隱藏子檔案、再展開恢復', collapsedHidden && expandedBack, JSON.stringify({collapsedHidden, expandedBack}));
+
+        // 搜尋檔名:只剩符合的檔案與其上層資料夾
+        await page.fill('[data-testid=canon-search]', '主要角');
+        await settle(80, 600);
+        const sNameRows = await visibleFiles();
+        const sNameDirs = await visibleFolders();
+        check('設定集樹 搜尋檔名只顯示符合項與上層資料夾',
+            sNameRows.length === 1 && sNameRows[0] === 'canon/人物/主要角色.md'
+            && sNameDirs.length === 1 && sNameDirs[0] === 'canon/人物',
+            JSON.stringify({rows: sNameRows, dirs: sNameDirs}));
+        // 搜尋別名:同上(夜鶯團的別名 小夜)
+        await page.fill('[data-testid=canon-search]', '小夜');
+        await settle(80, 600);
+        const sAliasRows = await visibleFiles();
+        const sAliasDirs = await visibleFolders();
+        check('設定集樹 搜尋別名只顯示符合項與上層資料夾',
+            sAliasRows.length === 1 && sAliasRows[0] === 'canon/組織/夜鶯團.md'
+            && sAliasDirs.length === 1 && sAliasDirs[0] === 'canon/組織',
+            JSON.stringify({rows: sAliasRows, dirs: sAliasDirs}));
+        await page.fill('[data-testid=canon-search]', '');
+        await settle(80, 600);
+
+        // 無 frontmatter 的檔可開啟(名稱 = 檔名,SPEC §12.2)
+        await page.click('[data-testid=entity-row][data-file="canon/人物/主要角色.md"]');
+        const noFmOpen = await page.waitForFunction(() =>
+            !!document.querySelector('.cm-content')
+            && (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('主要角色'),
+            null, {timeout: 10000}).then(() => true).catch(() => false);
+        await page.waitForSelector('[data-testid=entity-name]', {timeout: 5000}).catch(() => {});
+        // EntityHeader 由 ParseEntity 非同步更新:等欄位值真的換掉,不是讀到上一檔的殘值
+        const noFmNameOk = await page.waitForFunction(() =>
+            (document.querySelector('[data-testid=entity-name]')?.value ?? '') === '主要角色',
+            null, {timeout: 5000}).then(() => true).catch(() => false);
+        check('設定集樹 無 frontmatter 的檔可開啟(名稱 = 檔名)', noFmOpen && noFmNameOk, JSON.stringify({noFmOpen, noFmNameOk}));
+
+        // 640 寬無水平捲軸(超長檔名靠截斷收在列內)
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 800);
+        const wide = await page.evaluate(() => {
+            const pageOK = document.documentElement.scrollWidth <= document.documentElement.clientWidth;
+            const tree = document.querySelector('[data-testid=canon-tree]');
+            const treeOK = !tree || tree.scrollWidth <= tree.clientWidth + 1;
+            const rowsOK = [...document.querySelectorAll('[data-testid=entity-row]')].every(r => r.scrollWidth <= r.clientWidth + 1);
+            return {pageOK, treeOK, rowsOK, sw: document.documentElement.scrollWidth, cw: document.documentElement.clientWidth};
+        });
+        check('設定集樹 640 寬側欄無水平捲軸(超長檔名截斷)', wide.pageOK && wide.treeOK && wide.rowsOK, JSON.stringify(wide));
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 600);
+
+        // 截圖:深/淺主題含子資料夾的設定集側欄(結束還原原主題)
+        const theme0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => 'dark'));
+        const setTheme = async label => {
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
+            await page.click(`button:has-text("${label}")`);
+            await page.click('[data-testid=close-settings]');
+            await settle(80, 700);
+        };
+        await setTheme('夜間書房');
+        await shot('32-canon-tree-dark');
+        await setTheme('白紙');
+        await shot('33-canon-tree-light');
+        await setTheme(theme0 === 'light' ? '白紙' : '夜間書房');
+
+        // 清掉專用檔(不留痕跡給後面的測試組),並用設定頁開關讓前端重讀 tree 與索引
+        tdel('canon/人物/主要角色.md');
+        tdel(`canon/人物/${LONG}.md`);
+        tdel('canon/組織/夜鶯團.md');
+        try { fs.rmdirSync(P('canon/人物')); } catch {}
+        try { fs.rmdirSync(P('canon/組織')); } catch {}
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
+        await page.click('[data-testid=close-settings]');
+        await page.waitForSelector('[data-testid=entity-row][data-file="canon/人物/主要角色.md"]', {state: 'detached', timeout: 5000}).catch(() => {});
+        check('設定集樹 測試檔已清掉(不留痕跡給後面的測試組)',
+            !fs.existsSync(P('canon/人物')) && !fs.existsSync(P('canon/組織')) && !(await page.$('[data-testid=canon-folder]')));
+
         // ===== 設定集自訂分類(SPEC §12.2 與 §16 第 9 項):新增 → 建檔 → 側欄顯示 → 刪除 → 歸其他 =====
         // 每個步驟都設旗標再統一 check:現況(無此功能)要全部 FAIL 且不能中斷後續測試。
         const catWait = sel => page.waitForSelector(sel, {timeout: 5000}).then(() => true).catch(() => false);
@@ -60,8 +186,10 @@ module.exports = {
                     await page.click('[role=option]:has-text("組織")');
                     await page.fill('#ename', '天網');
                     await page.click('[role=dialog] button:has-text("建立")');
-                    cat.created = await catWait('[data-testid=group-組織] [data-testid=entity-row]:has-text("天網")');
-                    if (cat.created) await shot('81-sidebar-custom-category'); // 側欄出現自訂分類分組
+                    // 分組已改為資料夾檔案樹(#31):同一意圖改看「建立後出現在設定集清單」與檔案 frontmatter 的 type
+                    cat.created = await catWait('[data-testid=entity-row]:has-text("天網")');
+                    if (cat.created) cat.created = fs.existsSync(P('canon/天網.md')) && read('canon/天網.md').includes('type: 組織');
+                    if (cat.created) await shot('81-sidebar-custom-category'); // 側欄出現新建的設定檔(檔案樹)
                 }
                 // (回歸#1)刪除前先打字不存:確認刪除要把未存內容先存盤(快照才含最新內容)
                 if (cat.created) {
@@ -134,8 +262,11 @@ module.exports = {
                 try { return JSON.parse(fs.readFileSync(path.join(d, x, 'meta.json'), 'utf8')).reason === 'before-delete-category'; } catch { return false; }
             });
         })();
-        const grpGone = !(await page.$('[data-testid=group-組織]'));
-        cat.moved = grpGone && await catWait('[data-testid=group-其他] [data-testid=entity-row]:has-text("天網")');
+        // 分組已改為資料夾檔案樹(#31):同一意圖改看「檔案仍在設定集清單」與索引裡的 type 是否為其他
+        const movedRow = await catWait('[data-testid=entity-row]:has-text("天網")');
+        const movedType = await page.evaluate(() => window.go.main.App.BibleIndex()
+            .then(ix => (ix.entities || []).find(e => e.path === 'canon/天網.md')?.type ?? '').catch(() => ''));
+        cat.moved = movedRow && movedType === '其他';
 
         check('自訂分類 側欄有「管理分類」入口', cat.manage);
         check('自訂分類 管理對話框列出分類(內建在列)', cat.list);
@@ -208,7 +339,9 @@ module.exports = {
                         await page.click('[role=option]:has-text("組織")');
                         await page.fill('#ename', '天網二');
                         await page.click('[role=dialog] button:has-text("建立")');
-                        r4created = await catWait('[data-testid=group-組織] [data-testid=entity-row]:has-text("天網二")');
+                        // 分組已改為資料夾檔案樹(#31):同一意圖改看「建立後出現在設定集清單」與檔案 frontmatter 的 type
+                        r4created = await catWait('[data-testid=entity-row]:has-text("天網二")');
+                        if (r4created) r4created = fs.existsSync(P('canon/天網二.md')) && read('canon/天網二.md').includes('type: 組織');
                         r4dbg.created = r4created;
                     } else {
                         await page.keyboard.press('Escape');
