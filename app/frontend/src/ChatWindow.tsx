@@ -285,6 +285,8 @@ export default function ChatWindow(props: Props) {
 
     const send = async () => {
         if (!question.trim() || busy) return;
+        // 雲端外流確認在 /compact 之前:壓縮也會把對話送到目前端點
+        if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
         // 手動壓縮(#32):/compact 不送給模型、不進對話歷史,直接請後端壓縮一次(通知照舊出現)
         if (question.trim() === '/compact') {
             setBusy(true);
@@ -296,7 +298,6 @@ export default function ChatWindow(props: Props) {
             finally { setBusy(false); setUsageTick(t => t + 1); } // 歷史變了,用量要重算
             return;
         }
-        if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
         try {
             await beforeAsk();
             await AskAI(params());
