@@ -1,5 +1,5 @@
-import {useMemo, useState} from 'react';
-import {Box, Flag, Folder, MapPin, Plus, Search, Tag, User} from 'lucide-react';
+import {useMemo, useState, type ReactNode} from 'react';
+import {ChevronDown, ChevronRight, Folder, Plus, Search} from 'lucide-react';
 import {AddCategory, CategoryUsage, NewDoc} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
@@ -10,9 +10,38 @@ import {
 import {cn, errText} from '@/lib/utils';
 import {BUILTIN_TYPES, PanelProps, useCategories} from './types';
 
-export const TYPE_ICON: Record<string, typeof User> = {角色: User, 地點: MapPin, 勢力: Flag, 道具: Box, 名詞: Tag};
-// 「其他」沒有具象圖示,列表以文字標示(設計審查 18);自訂分類用通用資料夾圖示
-const iconFor = (t: string) => TYPE_ICON[t] ?? (BUILTIN_TYPES.includes(t) ? undefined : Folder);
+// 設定集側欄的資料夾檔案樹(SPEC §12.2 #31):依 tree.canon 的實際路徑組成(canon/... 遞迴)。
+// 同層「資料夾在前、檔案在後」,各自依名稱排序(zh-Hant)。
+interface FileNode { path: string; name: string; }
+interface DirNode { name: string; path: string; dirs: DirNode[]; files: FileNode[]; }
+
+function buildTree(files: FileNode[]): DirNode {
+    const root: DirNode = {name: '', path: 'canon', dirs: [], files: []};
+    const dirs = new Map<string, DirNode>([[root.path, root]]);
+    for (const f of files) {
+        const parts = f.path.split('/');
+        let node = root;
+        for (let i = 1; i < parts.length - 1; i++) {
+            const key = parts.slice(0, i + 1).join('/');
+            let d = dirs.get(key);
+            if (!d) {
+                d = {name: parts[i], path: key, dirs: [], files: []};
+                dirs.set(key, d);
+                node.dirs.push(d);
+            }
+            node = d;
+        }
+        node.files.push(f);
+    }
+    const byName = (a: {name: string}, b: {name: string}) => a.name.localeCompare(b.name, 'zh-Hant');
+    const sort = (d: DirNode) => {
+        d.dirs.sort(byName);
+        d.files.sort(byName);
+        d.dirs.forEach(sort);
+    };
+    sort(root);
+    return root;
+}
 
 export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail, deleteCategory}: PanelProps) {
     const [q, setQ] = useState('');
@@ -27,19 +56,56 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
     const [confirmDel, setConfirmDel] = useState<{name: string; usage: number} | null>(null);
     const [deleting, setDeleting] = useState(false); // 刪除在途(SPEC §12.2 第二輪):對話框不可關閉、確認鈕停用
 
-    const groups = useMemo(() => {
-        const ents = index?.entities ?? [];
-        const byType: Record<string, typeof ents> = {};
-        for (const e of ents) {
-            const hay = [e.name, ...(e.aliases ?? [])].join(' ');
-            if (q && !hay.includes(q)) continue;
-            (byType[e.type] ??= []).push(e);
-        }
-        const types = [...cats.filter(t => byType[t]), ...Object.keys(byType).filter(t => !cats.includes(t))];
-        return types.map(t => ({type: t, items: byType[t].sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'))}));
-    }, [index, q, cats]);
+    const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // 收合狀態只存記憶體(預設展開)
+    const entityByPath = useMemo(() => new Map((index?.entities ?? []).map(e => [e.path, e])), [index]);
+    // 檔名列顯示檔名(去 .md);有 frontmatter 的檔以索引裡的別名淡色補在後面
+    const files = useMemo(() => {
+        const all: FileNode[] = tree.canon.map(e => ({path: e.path, name: e.title}));
+        if (!q) return all;
+        return all.filter(f => {
+            const ent = entityByPath.get(f.path);
+            return [f.name, ent?.name ?? '', ...(ent?.aliases ?? [])].some(s => s.includes(q));
+        });
+    }, [tree, q, entityByPath]);
+    const root = useMemo(() => buildTree(files), [files]);
 
     const appearances = (path: string) => index?.appearances?.[path]?.reduce((n, c) => n + c.count, 0) ?? 0;
+
+    const fileRow = (f: FileNode, depth: number) => {
+        const aliases = entityByPath.get(f.path)?.aliases ?? [];
+        return (
+            <li key={f.path} data-testid="entity-row" data-file={f.path}
+                className={cn('flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-sm',
+                    f.path === current ? 'bg-accent' : 'hover:bg-accent/60')}
+                style={{paddingLeft: 8 + depth * 12}}
+                onClick={() => openFile(f.path)}>
+                <span className="min-w-0 flex-1 truncate">
+                    {f.name}
+                    {aliases.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{aliases.join('、')}</span>}
+                </span>
+                <span className="text-xs text-muted-foreground" title="在稿件中出現的次數">{appearances(f.path) || ''}</span>
+            </li>
+        );
+    };
+
+    // 資料夾列可點擊展開/收合(預設展開);有搜尋字時強制展開,只顯示符合的檔案與其上層資料夾
+    const dirBlock = (d: DirNode, depth: number): ReactNode => {
+        const open = !!q || !collapsed[d.path];
+        return (
+            <div key={d.path}>
+                <button type="button" data-testid="canon-folder" data-folder={d.path}
+                        className="flex w-full cursor-pointer items-center gap-1.5 rounded-md py-1.5 pr-2 text-sm text-muted-foreground hover:bg-accent/60"
+                        style={{paddingLeft: 8 + depth * 12}}
+                        onClick={() => setCollapsed(c => ({...c, [d.path]: !c[d.path]}))}>
+                    {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0"/> : <ChevronRight className="h-3.5 w-3.5 shrink-0"/>}
+                    <Folder className="h-3.5 w-3.5 shrink-0"/>
+                    <span className="min-w-0 flex-1 truncate text-left">{d.name}</span>
+                </button>
+                {open && d.dirs.map(sub => dirBlock(sub, depth + 1))}
+                {open && d.files.length > 0 && <ul>{d.files.map(f => fileRow(f, depth + 1))}</ul>}
+            </div>
+        );
+    };
 
     const create = async () => {
         const n = name.trim();
@@ -91,11 +157,11 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
 
     return (
         <div className="p-3">
+            <div className="relative mb-2">
+                <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground"/>
+                <Input className="h-8 pl-8 text-sm" data-testid="canon-search" placeholder="搜尋檔名、名稱或別名" value={q} onChange={e => setQ(e.target.value)}/>
+            </div>
             <div className="mb-3 flex gap-2">
-                <div className="relative flex-1">
-                    <Search className="absolute left-2 top-2 h-4 w-4 text-muted-foreground"/>
-                    <Input className="h-8 pl-8 text-sm" placeholder="搜尋名稱或別名" value={q} onChange={e => setQ(e.target.value)}/>
-                </div>
                 <Button size="sm" className="h-8" onClick={() => setCreating(true)} data-testid="new-entity"><Plus/>新增</Button>
                 <Button size="sm" variant="outline" className="h-8 shrink-0 px-2 text-xs"
                         data-testid="manage-categories"
@@ -106,30 +172,10 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                     還沒有設定。新增角色、地點、名詞後會自動建立登場索引;也可到「設定 › 作品」從 Notion 匯入。
                 </p>
             )}
-            {groups.map(g => {
-                const Icon = iconFor(g.type);
-                return (
-                    <div key={g.type} data-testid={`group-${g.type}`} className="mb-3">
-                        <div className="mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
-                            {Icon && <Icon className="h-3.5 w-3.5"/>}{g.type}<span className="font-normal opacity-60">{g.items.length}</span>
-                        </div>
-                        <ul>
-                            {g.items.map(e => (
-                                <li key={e.path} data-testid="entity-row"
-                                    className={cn('flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm',
-                                        e.path === current ? 'bg-accent' : 'hover:bg-accent/60')}
-                                    onClick={() => openFile(e.path)}>
-                                    <span className="flex-1 truncate">
-                                        {e.name}
-                                        {e.aliases?.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{e.aliases.join('、')}</span>}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground" title="在稿件中出現的次數">{appearances(e.path) || ''}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                );
-            })}
+            <div data-testid="canon-tree">
+                {root.dirs.map(d => dirBlock(d, 0))}
+                {root.files.length > 0 && <ul>{root.files.map(f => fileRow(f, 0))}</ul>}
+            </div>
             <p className="mt-4 px-1 text-xs leading-relaxed text-muted-foreground/80">
                 設定只有在對話框附加後 AI 才看得到,而且 AI 只能提案、不能直接修改。
             </p>

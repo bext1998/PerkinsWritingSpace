@@ -1,5 +1,18 @@
 # PROGRESS.md
 
+## 2026-10-11 — 設定集側欄改資料夾檔案樹(#31 第一步,SPEC §12.2)
+
+- **只改呈現**:`app/frontend/src/panels/BiblePanel.tsx` 設定集清單從「依分類分組」改為依 `tree.canon` 路徑組成**資料夾檔案樹**(canon/... 遞迴,後端 `listMD` 本來就是遞迴的)。同層「資料夾在前、檔案在後」,各自依 `localeCompare(..., 'zh-Hant')` 排序;資料夾列可點擊展開/收合(預設展開,狀態只存記憶體,搜尋時強制展開);檔案列顯示檔名(去 `.md`),`index.entities` 該路徑有別名時以淡色接在檔名後,右側沿用登場次數;點擊開檔、目前檔案高亮,沿用 `entity-row` 樣式與 testid(另附 `data-file`,資料夾列 `data-testid=canon-folder`+`data-folder`,供 E2E 精確定位)。
+- **搜尋**:改為比對檔名、實體名稱與別名;有搜尋字時只顯示符合的檔案及其上層資料夾。placeholder 改「搜尋檔名、名稱或別名」——原本與按鈕同列時新 placeholder 會被截成「搜尋檔…」,所以搜尋框改整行、「新增/管理分類」移到第二列(行為不變,僅版面)。
+- **移除分類分組**:`group-*` 區塊與 `TYPE_ICON`/`iconFor` 一併移除(`TYPE_ICON` 無其他使用處)。「新增」「管理分類」、對話框、空狀態、底部提示不變(新增仍建在 `canon/` 根目錄、帶 frontmatter)。後端、frontmatter/索引/寫法檢查/附加建議、Notion 匯入、EntityHeader 均未動。
+- **E2E(bible 組 +7 項)**:子資料夾檔案顯示在對應資料夾下(根層不混入)、資料夾收合隱藏子檔案再展開恢復、搜尋檔名/搜尋別名只剩符合項與上層資料夾、無 frontmatter 的檔可開啟(含 EntityHeader 名稱=檔名)、640 寬無水平捲軸(超長檔名截斷)、測試檔清掉不留痕跡。fixture 自建自清:`canon/人物/主要角色.md`(無 frontmatter、一檔多人物)、`canon/組織/夜鶯團.md`(別名 小夜)、超長檔名檔。
+- **既有 3 項檢查改看同一意圖**(不刪檢查、不弱化、名稱保留):原本依賴 `group-組織`/`group-其他` 的,改成「建立後出現在設定集清單 + 檔案 frontmatter `type: 組織`」(讀檔)、「刪除後檔案仍在清單 + `BibleIndex` 的 type=其他」(原「分組移到其他」)、「天網二 在清單 + 磁碟 `type: 組織`」。三者都比原本多一個型別條件,不弱於原斷言;因意圖的實作在 Go 端(`NewDoc` 模板/`DeleteCategory` 改型),前端破壞無法使它們 FAIL,未做破壞輪。
+- **破壞驗證 5 輪**(拿掉對應實作 → 對應檢查 FAIL → 還原):①`buildTree` 不建子層(檔案全放根層)→「子資料夾顯示」FAIL;②資料夾點擊不收合 →「收合/展開」FAIL;③搜尋不過濾 → 搜尋檔名/別名 2 項 FAIL;④子資料夾檔案列點擊不開檔 →「無 frontmatter 可開啟」FAIL;⑤檔名改 `whitespace-nowrap` 不截斷 →「640 無水平捲軸」FAIL(treeOK/rowsOK)。6 項新功能檢查各有至少一輪 FAIL;「測試檔已清掉」是測試自體清潔檢查、無對應產品實作,7 輪全 PASS。
+- **基準**:全新 fixture `--all`(E2E_SKIP_AI=1)**574/574 passed**,略過 8 項,257s(改動前同一基準實測 **567/567**、254s,= 567 + 本次 7,其他組檢查數未變;PROGRESS 舊記載的 527 已過時,其他合併陸續加檢查未更新該數字)。另跑 bible+冒煙 49/49。settings.json 已逐位元組還原、書櫃無殘留;`shelf` 組「複製到平台」覆寫了系統剪貼簿(既有行為,無法還原)。
+- **截圖**:`app/e2e/shots/32-canon-tree-dark`/`33-canon-tree-light`(深/淺各一、含子資料夾,已實際檢視:資料夾在前、縮排層級、別名淡色、超長檔名截斷、placeholder 完整可讀)。
+- **未做**(SPEC §12.2 明示不做):名詞清單、右鍵「追蹤這個名字」、AI 找名詞候選、段落級附加、Notion 匯入改版。
+- **待作者實機**:真實作品資料夾結構下的側欄手感(無頭環境只驗到 E2E 層)。
+
 ## 2026-10-11 — 稿紙化第二階段(一):打字機捲動與專注模式(Issue #44)
 
 - **新模組 `app/frontend/src/paperModes.ts`**(與 paper.ts 並列,`Editor.tsx` 以兩個 Compartment 開關):兩者都是只改呈現的 CodeMirror extension;狀態在 `Workspace.tsx`(記憶體,與禪模式同一模式)、選單在 `TitleBar.tsx`(與禪模式同一區)、快捷鍵在 Workspace 的全域 keydown(`Ctrl+Shift+T`/`Ctrl+Shift+D`,進出同鍵)。
