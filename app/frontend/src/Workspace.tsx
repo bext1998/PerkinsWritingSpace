@@ -107,7 +107,9 @@ function editorRange(text: string, start: number, s: string): {from: number; to:
 
 function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: number} | null {
     // 重載內容與寫入結果不符(期間檔案又變了):不標
-    return editorRange(text, p.start, p.authorEdited ? p.final ?? '' : p.replacement);
+    // 寫入的是作者選的版本(#39;acceptedVersion 0 = 主版本)或作者編輯後的版本
+    const chosen = p.acceptedVersion ? p.alternatives?.[p.acceptedVersion - 1]?.replacement : p.replacement;
+    return editorRange(text, p.start, p.authorEdited ? p.final ?? '' : chosen ?? '');
 }
 
 // 待審提案的原文位置(#45 方案 A「在稿件中顯示」):先用提案記錄的位置;作者在前面打過字而位移時,

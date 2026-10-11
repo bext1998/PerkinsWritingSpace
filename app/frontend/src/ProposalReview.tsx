@@ -20,7 +20,7 @@ interface Props {
     edited: Record<string, string>;
     setEdited: React.Dispatch<React.SetStateAction<Record<string, string>>>;
     titleOf: (path: string) => string;
-    onAccept: (p: proposal.Proposal) => void;
+    onAccept: (p: proposal.Proposal, version: number, edited: string | null) => void; // version:作者選的版本(#39);edited 非 null = 作者編輯過
     onReject: (p: proposal.Proposal, reason: string) => void; // reason:作者選填的拒絕原因(#40),Bot 在本次對話記住
     onReveal: (p: proposal.Proposal) => void; // 在稿件中顯示:捲到原文並短暫標示(#45 方案 A)
     onClose: () => void;
@@ -35,12 +35,19 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
     const shown = useRef<proposal.Proposal | null>(null);
     if (idx >= 0) shown.current = items[idx];
     const p = shown.current;
-    const mine = p ? edited[p.id] ?? p.replacement : '';
-    const changed = !!p && mine !== p.replacement;
+    // 多版本(#39):主版本 + alternatives(連主版本最多 3 個)。編輯以「提案#版本」分開存:
+    // 作者編輯過再切換版本,各版本的編輯都留著,切回來就看得到(不提示、不丟掉)。
+    const [ver, setVer] = useState(0); // 目前顯示的版本
+    const versions = p ? [{label: p.label, replacement: p.replacement}, ...(p.alternatives ?? [])] : [];
+    const vi = versions.length ? Math.min(ver, versions.length - 1) : 0;
+    const key = p ? `${p.id}#${vi}` : '';
+    const mine = p ? edited[key] ?? versions[vi].replacement : '';
+    const changed = !!p && mine !== versions[vi].replacement;
     const conflict = p?.status === 'conflict';
     // 拒絕原因輸入列(#40):null = 未在拒絕中;換到別張提案就收起
     const [reason, setReason] = useState<string | null>(null);
     useEffect(() => setReason(null), [p?.id]);
+    useEffect(() => setVer(0), [p?.id]); // 換到別張提案回到第 1 個版本(#39)
 
     // 開啟時置中:預設尺寸由 style 的 min() 決定,量到實際尺寸後才定位
     useEffect(() => {
@@ -143,10 +150,23 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                              data-testid="review-original">{p.original}</div>
                     </div>
                     <div className={cn('flex min-h-0 flex-col', !stacked && 'min-w-0')}>
+                        {/* 版本切換(#39):多於 1 個版本才顯示;label 是一句很短的方向說明,640 寬自動換行 */}
+                        {versions.length > 1 && (
+                            <div className="mb-1 flex shrink-0 flex-wrap gap-1" data-testid="review-versions">
+                                {versions.map((v, i) => (
+                                    <button key={i} type="button" data-testid={`review-version-${i}`}
+                                            className={cn('rounded-md border px-2 py-0.5 text-xs',
+                                                i === vi ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground')}
+                                            onClick={() => setVer(i)}>
+                                        {v.label || `版本 ${i + 1}`}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div className="mb-1 shrink-0 text-xs font-semibold text-muted-foreground">修改後{changed ? '(已修改)' : ''}</div>
                         <Textarea className="diff-add min-h-0 flex-1 resize-none rounded-md border border-border bg-transparent font-serif text-[13px] focus-visible:ring-primary"
                                   value={mine} data-testid="review-edit" disabled={conflict}
-                                  onChange={e => setEdited(m => ({...m, [p.id]: e.target.value}))}/>
+                                  onChange={e => setEdited(m => ({...m, [key]: e.target.value}))}/>
                     </div>
                 </div>
                 {(p.rationale || p.assumptions?.length > 0 || conflict) && (
@@ -175,14 +195,14 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                 )}
                 {changed && (
                     <button className="flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground" data-testid="review-reset"
-                            onClick={() => setEdited(m => { const n = {...m}; delete n[p.id]; return n; })}>
+                            onClick={() => setEdited(m => { const n = {...m}; delete n[key]; return n; })}>
                         <RotateCcw className="h-3 w-3"/>還原 AI 版本
                     </button>
                 )}
                 <span className="flex-1"/>
                 {changed && <span className="shrink-0 text-xs text-primary">已修改 · 接受時會寫入你的版本</span>}
                 <Button size="sm" variant="ghost" onClick={() => conflict ? onReject(p, '') : setReason('')} data-testid="review-reject">{conflict ? '捨棄' : '拒絕'}</Button>
-                {!conflict && <Button size="sm" onClick={() => onAccept(p)} data-testid="review-accept"><Check/>接受</Button>}
+                {!conflict && <Button size="sm" onClick={() => onAccept(p, vi, changed ? mine : null)} data-testid="review-accept"><Check/>接受</Button>}
             </div>
             )}
         </div>

@@ -12,7 +12,7 @@ import {notion} from '../models';
 import {publish} from '../models';
 import {settings} from '../models';
 
-export function AcceptProposal(arg1:string,arg2:any):Promise<proposal.Proposal>;
+export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposal.Proposal>;
 
 export function AddCategory(arg1:string):Promise<Array<string>>;
 

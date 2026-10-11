@@ -1,5 +1,20 @@
 # PROGRESS.md
 
+## 2026-10-11 — 提案一次提供多個改寫版本,最多 3 個(Issue #39)
+
+- **資料模型**(`app/internal/proposal/proposal.go`):保留 `Replacement`(主版本)+ 加 `Label`(主版本方向)與 `Alternatives []Version{Label, Replacement}`(最多 2 筆,由系統邊界驗證),另有 `AcceptedVersion`(接受時選的序號,0 = 主版本)。`Versions()` 回全部版本。舊提案 JSON 沒有這些欄位 → 照常可讀、視為單一版本、照常接受。原文比對、BaseHash、Start/End、衝突判斷不變(所有版本替換同一段原文,G3 不變)。
+- **工具 `propose_patch`**(`agent.go`):參數加選填 `label` 與 `alternatives`;邊界驗證 `parseAlternatives`——格式不對整個忽略(退回單一版本,提案不失敗)、超過 2 筆只取前 2 筆、空白或與原文/其他版本相同的丟掉,每一種都在工具結果說明給模型(含「(N 個版本)」)。系統提示補一句:多個合理改寫方向時可附最多 3 個版本並各自標短方向,只有一種時只給一個,不標示哪個「最佳」。
+- **接受流程**:`Store.Accept(id, version, edited)` 加 version 參數(超出範圍回錯且不動狀態);寫入 = 所選版本或作者編輯後的版本(編輯以所選版本為底,部分採用語意不變)。Provenance accept 事件與研究記錄 `proposal_accept` 記 `version`/`versions`(replacement 記所選版本的原文);提案 JSON 記 `acceptedVersion`。拒絕 = 全部版本一起拒絕(#85 行為不變)。`App.AcceptProposal(id, version, edited)` 綁定同步。
+- **前端**:`ProposalReview.tsx` 「修改後」上方加版本切換(顯示 label,`data-testid=review-version-<i>`,包在 `review-versions`;單一版本不顯示);**編輯以「提案#版本」為鍵分開保存**——作者編輯過再切換版本,各版本的編輯都留著、切回來就看得到(選擇另存一份的做法,不提示、不丟掉);「還原 AI 版本」還原為目前所選版本;接受鈕帶目前版本序號與編輯文字。`ChatWindow.tsx` 提案卡顯示「N 個版本」(`proposal-versions`),`edited` 鍵改「提案#版本」(卡片任一版本被編輯過就顯示已修改),`accept(p, version, mine)` 直通綁定。
+- **測試(Go,3 個新測試;既有 10 個 `Accept` 呼叫補上版本 0,機械改動)**:`TestCreateVersionsSavesAllAndLegacyJSONStaysReadable`(多版本建立與保存、舊 JSON 可讀可接受、選不存在的版本回錯);`TestAcceptSelectedVersionWritesThatVersion`(接受第 2 個版本寫入第 2 個、超範圍回錯不動狀態、編輯第 2 個版本以它為底、Provenance 與研究記錄記 version/versions);`TestProposePatchAlternativesSanitizedAtBoundary`(格式不對退回單一版本、超過 2 筆只取前 2 筆、空白/重複丟掉,三種都在工具結果說明)。
+- **破壞驗證 4 輪**(拿掉對應實作 → 該測試 FAIL → 還原,還原後 `cmp` 逐位元組相同):①Accept 忽略版本一律寫主版本 → FAIL;②`Versions()` 不回替代版本 → 3 項 FAIL;③格式不對時靜默吞掉(不說明)→ FAIL;④Provenance 不記版本 → FAIL。
+- **驗證**:`go test ./...`(app/ 全模組)全過;前端 `npm run build`(tsc + vite)通過;`wails generate module` 更新綁定(`AcceptProposal` 加 version、`proposal.Version` 類別;runtime 3 檔只有 EOL 差異未提交)。
+- **E2E(visual-1b 新增 9 項,`data-testid` 與現有 fixture 寫法)**:卡片顯示「2 個版本」、版本切換依 label 且預設第 1 個、切換版本編輯框換內容、編輯後切換不丟(各版本分開保留)、接受所選的第 2 個版本寫入磁碟(Provenance `version:1,versions:2`)、640 寬版本切換與接受/拒絕都在視窗內可點、編輯第 2 個版本後接受寫入作者版本、舊格式提案不顯示版本切換照常接受。基準:`bot-chat polish visual-1b close-guard --smoke`(E2E_SKIP_AI=1)**163/163 passed,略過 8 項**;單跑 visual-1b 49/49。
+- **截圖**:`app/e2e/shots/82-multi-version-card.png`(卡片「2 個版本」「3 個版本」)、`83-multi-version-review.png`(1280 寬版本切換)、`84-multi-version-review-640.png`(640 寬上下堆疊,版本切換與頁尾按鈕都在視窗內);已實際檢視。
+- **E2E 環境**:`settings.json` 備份後逐位元組還原(md5 一致)、依 PID 只結束自己啟動的程序(無殘留)、書櫃無垃圾、鎖檔已釋放;`shelf` 組未跑(未覆寫剪貼簿)。
+- **SPEC 同步**:§12.3 新增「多版本提案」,§12.8 `proposal_accept` 補 version/versions。
+- **未做/邊界**:版本數不提供作者自訂(固定最多 3 個,依作者定案);不改 #85 的拒絕原因流程;提案卡不給直接接受(卡片只做通知,#45 不變)。
+
 ## 2026-10-11 — 自動上下文壓縮開關＋/compact 手動壓縮(Issue #32)
 
 - **設定**(`app/internal/settings/settings.go`):`Profile` 加 `DisableAutoCompact bool json:"disableAutoCompact,omitempty"`,每個端點各自一個;缺省 = 自動壓縮**開啟**,舊設定檔沒有欄位不需遷移。`app.go` 的 `prepare` 套用端點時一併傳給 `Agent.DisableAutoCompact`(同 `ContextTokens` 的傳法)。

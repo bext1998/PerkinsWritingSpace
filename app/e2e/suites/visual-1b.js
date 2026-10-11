@@ -734,6 +734,158 @@ module.exports = {
         await page.setViewportSize({width: 1440, height: 900});
         await settle(80, 700);
 
+        // ===== #39 多版本提案:版本切換、接受所選版本寫入磁碟、640 寬元素在視窗內 =====
+        // 預先寫好的提案 JSON(含 label/alternatives),照既有 fixture 寫法;不呼叫模型。
+        // 用專用章節,不動其他組依賴的章節原始內容。
+        const mvRel = 'manuscript/多版本.md';
+        const mvSrc = '# 多版本\n\n夜色很美。\n\n雨聲很吵。\n\n風停了。\n';
+        projWrite(mvRel, mvSrc);
+        await ctx.ensureProject('第一章', 'manuscript');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.locator('[data-testid=chapter-row]:has-text("多版本")').first().click({timeout: 15000});
+        await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('多版本'), null, {timeout: 15000});
+        const mvAt = Buffer.byteLength(mvSrc.slice(0, mvSrc.indexOf('夜色很美。')));
+        const mvBase = require('crypto').createHash('sha256').update(mvSrc).digest('hex');
+        projWrite('.perkins/proposals/20261011-160000-multi.json', JSON.stringify({
+            id: '20261011-160000-multi', createdAt: '2026-10-11T16:00:00+08:00', model: 'E2E多版本', target: mvRel,
+            original: '夜色很美。', replacement: '夜色溫柔。', label: '收斂',
+            alternatives: [{label: '更誇張', replacement: '夜色張牙舞爪地撲了下來。'}],
+            rationale: 'E2E 多版本測試', assumptions: [],
+            baseHash: mvBase, start: mvAt, end: mvAt + Buffer.byteLength('夜色很美。'), status: 'pending',
+        }, null, 2));
+        // 第二個多版本提案(驗「編輯以所選版本為底」)
+        const mvAt2 = Buffer.byteLength(mvSrc.slice(0, mvSrc.indexOf('雨聲很吵。')));
+        projWrite('.perkins/proposals/20261011-160200-multi2.json', JSON.stringify({
+            id: '20261011-160200-multi2', createdAt: '2026-10-11T16:02:00+08:00', model: 'E2E多版本', target: mvRel,
+            original: '雨聲很吵。', replacement: '雨聲滴滴答答。',
+            alternatives: [{label: '安靜', replacement: '雨聲很輕。'}, {label: '吵', replacement: '雨聲吵得睡不著。'}],
+            rationale: 'E2E 多版本編輯底稿', assumptions: [],
+            baseHash: mvBase, start: mvAt2, end: mvAt2 + Buffer.byteLength('雨聲很吵。'), status: 'pending',
+        }, null, 2));
+        // 舊格式提案(沒有 label/alternatives 欄位):照常可讀、可接受,不顯示版本切換
+        const mvAt3 = Buffer.byteLength(mvSrc.slice(0, mvSrc.indexOf('風停了。')));
+        projWrite('.perkins/proposals/20261011-160100-single.json', JSON.stringify({
+            id: '20261011-160100-single', createdAt: '2026-10-11T16:01:00+08:00', model: 'E2E舊格式', target: mvRel,
+            original: '風停了。', replacement: '風停了,夜更深了。', rationale: 'E2E 舊格式', assumptions: [],
+            baseHash: mvBase, start: mvAt3, end: mvAt3 + Buffer.byteLength('風停了。'), status: 'pending',
+        }, null, 2));
+        await page.evaluate(() => window.__perkinsRefreshProposals());
+        await settle(80, 700);
+        const MV_CHECKS = [
+            '#39 聊天卡片顯示「2 個版本」(含截圖)',
+            '#39 審查視窗顯示版本切換(label 依序),預設第 1 個版本',
+            '#39 切換版本:編輯框換成該版本內容',
+            '#39 編輯後切換版本不丟掉:各版本的編輯分開保留',
+            '#39 接受所選版本:磁碟寫入第 2 個版本(未編輯)',
+            '#39 640 寬:版本切換與接受/拒絕都在視窗內可點',
+            '#39 編輯第 2 個版本後接受:寫入作者版本(以所選版本為底)',
+            '#39 舊格式提案(單一版本)不顯示版本切換,照常接受',
+            '#39 Provenance 記錄選了第幾個版本與版本總數',
+            '#39 接受第 2 個版本後,稿件標示的是寫入的第 2 個版本',
+        ];
+        const mvDone = new Set();
+        const mvCheck = (name, ok, detail = '') => { mvDone.add(name); check(name, ok, detail); };
+        const editVal = () => page.$eval('[data-testid=review-edit]', el => el.value);
+        const mvWaitDisk = async (mark) => {
+            const t0 = Date.now();
+            while (!read(mvRel).includes(mark) && Date.now() - t0 < 5000) await page.waitForTimeout(100);
+            return read(mvRel);
+        };
+        try {
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            await page.waitForSelector('[data-testid=proposal]:has-text("夜色很美")', {timeout: 10000});
+            await shot('82-multi-version-card');
+            const cardN = await page.$eval('[data-testid=proposal]:has-text("夜色很美") [data-testid=proposal-versions]', el => el.textContent.trim());
+            mvCheck(MV_CHECKS[0], cardN === '2 個版本', cardN);
+
+            await page.click('[data-testid=proposal]:has-text("夜色很美") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await settle(80, 500);
+            const labels = await page.$$eval('[data-testid=review-versions] button', els => els.map(e => e.textContent.trim()));
+            mvCheck(MV_CHECKS[1], labels.length === 2 && labels[0] === '收斂' && labels[1] === '更誇張'
+                && await editVal() === '夜色溫柔。', JSON.stringify(labels));
+            await page.click('[data-testid=review-version-1]');
+            await settle(80, 300);
+            mvCheck(MV_CHECKS[2], await editVal() === '夜色張牙舞爪地撲了下來。', await editVal());
+            // 編輯版本 0 → 切到版本 1 → 切回版本 0:編輯保留;版本 1 不受影響
+            await page.click('[data-testid=review-version-0]');
+            await page.fill('[data-testid=review-edit]', '夜色溫柔(作者改)。');
+            await page.click('[data-testid=review-version-1]');
+            const v1After = await editVal();
+            await page.click('[data-testid=review-version-0]');
+            const v0Back = await editVal();
+            mvCheck(MV_CHECKS[3], v0Back === '夜色溫柔(作者改)。' && v1After === '夜色張牙舞爪地撲了下來。',
+                JSON.stringify({v0Back, v1After}));
+            // 640 寬:版本切換與接受/拒絕都在視窗內可點(截圖)
+            await page.click('[data-testid=review-version-1]');
+            await page.setViewportSize({width: 640, height: 672});
+            await settle(80, 900);
+            await shot('84-multi-version-review-640');
+            const mv640 = await page.evaluate(() => {
+                const box = document.querySelector('[data-testid=proposal-review]').getBoundingClientRect();
+                const probe = sel => {
+                    const el = document.querySelector(sel);
+                    if (!el) return null;
+                    const r = el.getBoundingClientRect();
+                    const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return {inBox: r.left >= box.left - 1 && r.right <= box.right + 1 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1,
+                            inView: r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1,
+                            hits: !!at && (el.contains(at) || at.contains(el))};
+                };
+                return {v0: probe('[data-testid=review-version-0]'), v1: probe('[data-testid=review-version-1]'),
+                        accept: probe('[data-testid=review-accept]'), reject: probe('[data-testid=review-reject]')};
+            });
+            mvCheck(MV_CHECKS[5], ['v0', 'v1', 'accept', 'reject'].every(k => mv640[k]?.inBox && mv640[k]?.inView && mv640[k]?.hits),
+                JSON.stringify(mv640));
+            // 回 1280 接受所選的第 2 個版本(不編輯):磁碟寫入第 2 個版本
+            await page.setViewportSize({width: 1280, height: 800});
+            await settle(80, 900);
+            await shot('83-multi-version-review');
+            await page.click('[data-testid=review-accept]');
+            const mvDisk = await mvWaitDisk('夜色張牙舞爪地撲了下來。');
+            await page.waitForSelector('.cm-ai-flash', {timeout: 5000}).catch(() => {});
+            const mvFlash = await page.evaluate(() => [...document.querySelectorAll('.cm-ai-flash')].map(e => e.textContent).join(''));
+            mvCheck(MV_CHECKS[9], mvFlash === '夜色張牙舞爪地撲了下來。', JSON.stringify({flash: mvFlash}));
+            const prov = read('.perkins/provenance.jsonl').trim().split('\n').map(l => JSON.parse(l))
+                .find(x => x.proposal === '20261011-160000-multi' && x.event === 'accept');
+            mvCheck(MV_CHECKS[4], mvDisk.includes('夜色張牙舞爪地撲了下來。') && !mvDisk.includes('夜色溫柔'),
+                JSON.stringify({disk: mvDisk, prov}));
+            mvCheck(MV_CHECKS[8], prov?.version === 1 && prov?.versions === 2, JSON.stringify(prov));
+            await page.evaluate(() => document.querySelector('[data-testid=review-close]')?.click());
+            await settle(80, 400);
+
+            // 編輯第 2 個版本後接受:寫入作者版本(以所選版本為底)
+            await page.click('[data-testid=proposal]:has-text("雨聲很吵") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await page.click('[data-testid=review-version-1]');
+            await page.fill('[data-testid=review-edit]', '雨聲很輕(作者改)。');
+            await settle(80, 300);
+            await page.click('[data-testid=review-accept]');
+            const mvDisk2 = await mvWaitDisk('雨聲很輕(作者改)。');
+            mvCheck(MV_CHECKS[6], mvDisk2.includes('雨聲很輕(作者改)。') && !mvDisk2.includes('雨聲滴滴答答'), JSON.stringify(mvDisk2));
+            await page.evaluate(() => document.querySelector('[data-testid=review-close]')?.click());
+            await settle(80, 400);
+
+            // 舊格式提案(單一版本):不顯示版本切換,照常接受
+            await page.click('[data-testid=proposal]:has-text("風停了") [data-testid=review-open]');
+            await page.waitForSelector('[data-testid=proposal-review]');
+            await settle(80, 400);
+            const noVersions = !(await page.$('[data-testid=review-versions]'));
+            await page.click('[data-testid=review-accept]');
+            const mvDisk3 = await mvWaitDisk('風停了,夜更深了。');
+            mvCheck(MV_CHECKS[7], noVersions && mvDisk3.includes('風停了,夜更深了。'), JSON.stringify({noVersions}));
+            await page.evaluate(() => document.querySelector('[data-testid=review-close]')?.click());
+        } catch (e) {
+            for (const n of MV_CHECKS) if (!mvDone.has(n)) check(n, false, e.message);
+            await page.keyboard.press('Escape').catch(() => {});
+        }
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 700);
+
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
         if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
     },

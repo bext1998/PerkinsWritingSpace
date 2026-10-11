@@ -1081,12 +1081,13 @@ func (a *App) ListProposals() ([]*proposal.Proposal, error) {
 	return a.agent.Proposals.List()
 }
 
-// AcceptProposal 回傳更新後的提案;edited 非 nil 表示作者編輯過建議文字(部分採用)。
-func (a *App) AcceptProposal(id string, edited *string) (*proposal.Proposal, error) {
+// AcceptProposal 回傳更新後的提案;version 是作者選的版本序號(0 = 主版本,#39);
+// edited 非 nil 表示作者編輯過建議文字(部分採用)。
+func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
 	}
-	p, err := a.agent.Proposals.Accept(id, edited)
+	p, err := a.agent.Proposals.Accept(id, version, edited)
 	if err == nil && p != nil {
 		proposal.LogAccept(a.research, p)
 	}
