@@ -98,6 +98,8 @@ type Agent struct {
 
 	mu      sync.Mutex
 	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
+	// rejections 是本次會話作者拒絕提案時附的原因(#40);放在系統訊息,不受對話壓縮影響,Reset 清空。
+	rejections []string
 }
 
 // rlog 記錄研究事件(關閉或 nil 時為 no-op;失敗只留內部訊息,不影響 AI 流程)。
@@ -486,9 +488,11 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, []string, error) {
 		return nil, nil, err
 	}
 	sys += ai
-	msgs := []llm.Message{{Role: "system", Content: sys}}
 	a.mu.Lock()
-	msgs = append(msgs, a.History...)
+	if len(a.rejections) > 0 {
+		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】之後的提案請避免同樣的問題:\n- " + strings.Join(a.rejections, "\n- ")
+	}
+	msgs := append([]llm.Message{{Role: "system", Content: sys}}, a.History...)
 	a.mu.Unlock()
 	user := p.Question
 	if ctx.Len() > 0 {
@@ -561,6 +565,23 @@ func (a *Agent) Preview(p AskParams) (*Preview, error) {
 func (a *Agent) Reset() {
 	a.mu.Lock()
 	a.History = nil
+	a.rejections = nil
+	a.mu.Unlock()
+}
+
+// NoteRejection 記下作者拒絕提案的原因,本次會話之後的請求都會帶上(#40)。原因屬 Interpretation,只當參考。
+// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段:它可能來自先前對話的附加,本次未附加就不能送出(G2)。
+func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
+	note := fmt.Sprintf("%s 的提案:%s", p.Target, reason)
+	if !Protected(p.Target) {
+		orig := []rune(p.Original)
+		if len(orig) > 40 {
+			orig = append(orig[:40], '…')
+		}
+		note = fmt.Sprintf("%s 的提案(原文「%s」):%s", p.Target, string(orig), reason)
+	}
+	a.mu.Lock()
+	a.rejections = append(a.rejections, note)
 	a.mu.Unlock()
 }
 

@@ -32,12 +32,16 @@ func LogAccept(r *research.Recorder, p *Proposal) {
 	_ = r.Log("proposal_accept", d)
 }
 
-// LogReject 在 Reject 成功後呼叫。
-func LogReject(r *research.Recorder, p *Proposal) {
+// LogReject 在 Reject 成功後呼叫;reason 是作者選填的拒絕原因(#40),空字串時不記。
+func LogReject(r *research.Recorder, p *Proposal, reason string) {
 	if r == nil {
 		return
 	}
-	_ = r.Log("proposal_reject", map[string]any{
+	d := map[string]any{
 		"id": p.ID, "target": p.Target, "elapsedMs": decisionElapsedMs(p),
-	})
+	}
+	if reason != "" {
+		d["reason"] = reason
+	}
+	_ = r.Log("proposal_reject", d)
 }

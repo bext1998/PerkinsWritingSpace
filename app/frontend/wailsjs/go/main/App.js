@@ -182,8 +182,8 @@ export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }
 
-export function RejectProposal(arg1) {
-  return window['go']['main']['App']['RejectProposal'](arg1);
+export function RejectProposal(arg1, arg2) {
+  return window['go']['main']['App']['RejectProposal'](arg1, arg2);
 }
 
 export function RemoveRecent(arg1) {
