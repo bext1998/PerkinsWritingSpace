@@ -32,6 +32,8 @@ export function ClearCover():Promise<void>;
 
 export function CloseProject():Promise<void>;
 
+export function CompactChat():Promise<void>;
+
 export function ConfirmQuit():Promise<void>;
 
 export function ConvertOptions():Promise<Array<main.Option>>;

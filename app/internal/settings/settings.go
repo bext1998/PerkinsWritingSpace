@@ -33,6 +33,9 @@ type Profile struct {
 	BaseURL       string `json:"baseUrl"`
 	Model         string `json:"model"`
 	ContextTokens int    `json:"contextTokens"` // 模型上下文長度,用於對話壓縮的預算(SPEC §12.3)
+	// DisableAutoCompact 關閉自動上下文壓縮(#32):超過預算時擋下不送出,由作者 /compact 手動壓縮。
+	// 缺省(false)= 自動壓縮開啟;舊設定檔沒有這個欄位時不需遷移。
+	DisableAutoCompact bool `json:"disableAutoCompact,omitempty"`
 }
 
 type Recent struct {

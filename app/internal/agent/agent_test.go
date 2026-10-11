@@ -674,6 +674,96 @@ func TestOverBudgetRefusesToSend(t *testing.T) {
 	}
 }
 
+// #32 意圖:自動壓縮關閉時,送出前超過預算要直接擋下(不自動濃縮),提示作者 /compact
+// 手動壓縮或開新對話(減少附加檔案/取消前情摘要的建議保留);不得呼叫模型(含壓縮請求)。
+func TestAutoCompactDisabledBlocksOverBudgetWithoutCompacting(t *testing.T) {
+	a, s, _ := setup(t)
+	a.DisableAutoCompact = true
+	a.ContextTokens = 200
+	a.Proj.WriteFile("canon/巨大.md", strings.Repeat("設定。", 200))
+	_, err := a.Ask(context.Background(), AskParams{Question: "q", Attachments: []string{"canon/巨大.md"}}, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "/compact") {
+		t.Fatalf("應提示輸入 /compact 手動壓縮: %v", err)
+	}
+	if !strings.Contains(err.Error(), "開新對話") || !strings.Contains(err.Error(), "減少附加的檔案") {
+		t.Fatalf("既有建議要保留: %v", err)
+	}
+	if len(s.reqs) != 0 {
+		t.Fatal("自動壓縮關閉時不得呼叫模型(含壓縮請求)")
+	}
+}
+
+// #32 意圖:自動壓縮關閉時,回合結束後的 40% 門檻壓縮也不做(開啟時的既有行為見
+// TestCompactionNotifiesAndPreviewStillMatches)。
+func TestAutoCompactDisabledSkipsPostTurnCompact(t *testing.T) {
+	a, s, _ := setup(t)
+	a.DisableAutoCompact = true
+	a.ContextTokens = 4800
+	long := strings.Repeat("很長的討論內容。", 50) // 每則約 400 tokens:3 回合後歷史 6 則超過 40% 門檻,但預算內送得出
+	var notices []string
+	emit := func(e Event) {
+		if e.Kind == "notice" {
+			notices = append(notices, e.Text)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		s.replies = []llm.Message{{Role: "assistant", Content: long}}
+		if _, err := a.Ask(context.Background(), AskParams{Question: long}, emit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 前提自檢:情境必須真的越過壓縮門檻,否則本測試驗不到任何東西
+	if a.historyTokens() <= a.ContextTokens*2/5 {
+		t.Fatalf("情境應已達壓縮門檻(history=%d threshold=%d)", a.historyTokens(), a.ContextTokens*2/5)
+	}
+	if len(notices) != 0 {
+		t.Fatalf("自動壓縮關閉時不應有濃縮通知: %v", notices)
+	}
+	if len(s.reqs) != 3 {
+		t.Fatalf("每次提問只應有一個請求,回合後不得再發壓縮請求: %d", len(s.reqs))
+	}
+	if n := len(a.History); n != 6 {
+		t.Fatalf("歷史應保留 6 則原文(未被濃縮): %d", n)
+	}
+	if strings.HasPrefix(a.History[0].Content, "【較早對話的摘要】") {
+		t.Fatal("自動壓縮關閉時歷史不得被濃縮")
+	}
+}
+
+// #32 意圖:/compact 手動壓縮不論開關都能壓縮一次,且沿用 B7 的通知;自動壓縮關閉時也一樣。
+func TestManualCompactWorksWhenAutoCompactDisabled(t *testing.T) {
+	a, s, _ := setup(t)
+	a.DisableAutoCompact = true // 開關只擋自動壓縮,不影響手動 /compact
+	long := strings.Repeat("討論內容。", 20)
+	for i := 0; i < 3; i++ {
+		a.History = append(a.History, llm.Message{Role: "user", Content: long}, llm.Message{Role: "assistant", Content: long})
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "摘要:討論了森林。"}}
+	var notices []string
+	if err := a.Compact(context.Background(), func(e Event) {
+		if e.Kind == "notice" {
+			notices = append(notices, e.Text)
+		}
+	}); err != nil {
+		t.Fatalf("手動壓縮應成功: %v", err)
+	}
+	if len(notices) == 0 || !strings.Contains(notices[0], "濃縮") {
+		t.Fatalf("B7:壓縮成功一定要發通知: %v", notices)
+	}
+	if !strings.HasPrefix(a.History[0].Content, "【較早對話的摘要】") {
+		t.Fatalf("歷史應以摘要開頭: %q", a.History[0].Content)
+	}
+}
+
+// #32 意圖:對話太短沒有東西可壓時要明確告知,不是靜默不做。
+func TestManualCompactTellsWhenNothingToCompact(t *testing.T) {
+	a, _, _ := setup(t)
+	err := a.Compact(context.Background(), func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "沒有可濃縮") {
+		t.Fatalf("應明確告知沒有可壓縮的對話: %v", err)
+	}
+}
+
 // 意圖:前端浮窗顯示的可用上下文(Preview.Limit)必須與 Ask 的超預算判斷同一個值;否則會出現
 // 「浮窗顯示未超量、送出卻被拒(或反過來)」。以 Preview 的 tokens/limit 重算 Over,應與 Preview.Over 一致,
 // 且超過 limit 的內容 Ask 會拒絕、未超過的會送出。

@@ -182,6 +182,47 @@ func TestAutosaveDefaultOnUnlessExplicitlyOff(t *testing.T) {
 	}
 }
 
+// 意圖(#32):自動上下文壓縮預設開啟;舊設定檔的端點沒有 disableAutoCompact 欄位時
+// 不需遷移,載入後必須是「開啟」;作者在設定頁關閉後存回要保留。
+func TestAutoCompactDefaultsOnForLegacyProfile(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st.Dir, 0o755)
+	// 舊設定檔:profile 沒有 disableAutoCompact 欄位(開啟 = 這個欄位為 false)
+	legacy := `{"profiles":[{"id":"p1","name":"本機","baseUrl":"http://localhost:1234/v1","model":"m","contextTokens":8192}],"active":"p1"}`
+	if err := os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := st.Load()
+	p := s.ProfileByID("p1")
+	if p == nil {
+		t.Fatal("應載入 p1")
+	}
+	if p.DisableAutoCompact {
+		t.Fatal("舊設定檔沒有欄位時自動壓縮應維持開啟")
+	}
+	// 作者關閉後存回要保留
+	s.ProfileByID("p1").DisableAutoCompact = true
+	if err := st.Save(s); err != nil {
+		t.Fatal(err)
+	}
+	s2 := st.Load()
+	if !s2.ProfileByID("p1").DisableAutoCompact {
+		t.Fatal("作者關閉後應維持關閉")
+	}
+	if !strings.Contains(mustRead(t, st), `"disableAutoCompact": true`) {
+		t.Fatal("關閉要寫進設定檔")
+	}
+}
+
+func mustRead(t *testing.T, st *Store) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(st.Dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 func TestValidProfileID(t *testing.T) {
 	for _, bad := range []string{"", "A", "a:b", "a/b", strings.Repeat("a", 41)} {
 		if ValidProfileID(bad) == nil {

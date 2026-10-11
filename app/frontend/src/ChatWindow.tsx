@@ -4,7 +4,7 @@ import {
     ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
-    AcceptProposal, AskAI, CancelAsk, ListModels, ListProposals, PreviewContext, RejectProposal, ResetChat, SetActiveModel,
+    AcceptProposal, AskAI, CancelAsk, CompactChat, ListModels, ListProposals, PreviewContext, RejectProposal, ResetChat, SetActiveModel,
     SuggestAttachments,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -285,6 +285,17 @@ export default function ChatWindow(props: Props) {
 
     const send = async () => {
         if (!question.trim() || busy) return;
+        // 手動壓縮(#32):/compact 不送給模型、不進對話歷史,直接請後端壓縮一次(通知照舊出現)
+        if (question.trim() === '/compact') {
+            setBusy(true);
+            try {
+                await CompactChat();
+                setQuestion('');
+                setError('');
+            } catch (e) { setError(errText(e)); } // 對話太短沒有可壓縮內容等:明確告知,不靜默不做
+            finally { setBusy(false); setUsageTick(t => t + 1); } // 歷史變了,用量要重算
+            return;
+        }
         if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
         try {
             await beforeAsk();
@@ -455,6 +466,15 @@ export default function ChatWindow(props: Props) {
                             </span>
                         </Tip>
                     )}
+                    {/* 自動壓縮狀態(#32):640 寬也要放得下,細節放在 tooltip */}
+                    <Tip label={profile?.disableAutoCompact
+                        ? '自動壓縮已關閉:超過上限會擋下。輸入 /compact 手動壓縮或開新對話。'
+                        : '上下文不足時會自動濃縮較早的對話。可在設定頁「AI 模型」關閉。'} side="bottom">
+                        <span data-testid="auto-compact"
+                              className={cn('shrink-0 text-xs', profile?.disableAutoCompact ? 'text-warning' : 'text-muted-foreground')}>
+                            自動壓縮{profile?.disableAutoCompact ? '關' : '開'}
+                        </span>
+                    </Tip>
                     <GripHorizontal className="mx-auto h-4 w-4 text-muted-foreground/40"/>
                     <Tip label="新對話" side="bottom">
                         <Button variant="ghost" size="iconSm" onMouseDown={e => e.stopPropagation()} onClick={reset}><SquarePen/></Button>
@@ -655,7 +675,9 @@ export default function ChatWindow(props: Props) {
                     </DialogHeader>
                     {preview?.over && (
                         <p className="rounded-md bg-warning/10 p-2 text-xs text-warning" data-testid="preview-over">
-                            超過模型可用的上下文。送出時會先濃縮較早的對話;如果仍然太長會拒絕送出,請減少附加的檔案。
+                            {profile?.disableAutoCompact
+                                ? '超過模型可用的上下文,而自動壓縮已關閉:送出會被擋下,不會自動濃縮。可輸入 /compact 手動壓縮較早的對話,或開新對話、減少附加的檔案。'
+                                : '超過模型可用的上下文。送出時會先濃縮較早的對話;如果仍然太長會拒絕送出,請減少附加的檔案。'}
                         </p>
                     )}
                     {/* 作者指示(AGENTS.md)超過長度上限等原因:預覽也要看得到,不能靜默略過(Issue #38) */}

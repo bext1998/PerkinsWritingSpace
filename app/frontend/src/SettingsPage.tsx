@@ -6,7 +6,7 @@ import {
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
-import {Badge, Input, Label, Switch} from '@/components/ui/basic';
+import {Badge, Checkbox, Input, Label, Switch} from '@/components/ui/basic';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
@@ -129,9 +129,17 @@ function ModelsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.Sett
                         <Button variant="outline" onClick={load}><RefreshCw/>載入清單</Button>
                     </div>
                 </Field>
-                <Field label="上下文長度(tokens)" hint="用來估算能送多少內容;超過時會先濃縮較早的對話。請依模型實際設定填寫(LM Studio 在載入模型時設定)。">
+                <Field label="上下文長度(tokens)" hint="用來估算能送多少內容;自動壓縮開啟時,超過會先濃縮較早的對話。請依模型實際設定填寫(LM Studio 在載入模型時設定)。">
                     <Input type="number" min={2048} step={1024} value={form.contextTokens}
                            onChange={e => setForm({...form, contextTokens: Number(e.target.value)})}/>
+                </Field>
+                <Field label="自動壓縮上下文" hint="關閉後,對話超過上下文長度時會擋下不送出,不會自動濃縮;請在聊天輸入 /compact 手動壓縮較早的對話,或開新對話。">
+                    <label className="flex items-center gap-2 text-sm">
+                        <Checkbox checked={!form.disableAutoCompact}
+                                  onCheckedChange={v => setForm({...form, disableAutoCompact: v !== true})}
+                                  data-testid="auto-compact-setting"/>
+                        <span>開啟:超過上限時自動把較早的對話濃縮成摘要</span>
+                    </label>
                 </Field>
                 <Field label="API 金鑰" hint={view?.hasKey ? '已儲存金鑰。留空表示不變更。' : '本機模型通常不需要。'}>
                     <div className="flex gap-2">

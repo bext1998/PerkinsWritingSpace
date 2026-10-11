@@ -296,6 +296,7 @@ export namespace main {
 	    baseUrl: string;
 	    model: string;
 	    contextTokens: number;
+	    disableAutoCompact?: boolean;
 	    hasKey: boolean;
 	    remote: boolean;
 	
@@ -310,6 +311,7 @@ export namespace main {
 	        this.baseUrl = source["baseUrl"];
 	        this.model = source["model"];
 	        this.contextTokens = source["contextTokens"];
+	        this.disableAutoCompact = source["disableAutoCompact"];
 	        this.hasKey = source["hasKey"];
 	        this.remote = source["remote"];
 	    }
@@ -748,6 +750,7 @@ export namespace settings {
 	    baseUrl: string;
 	    model: string;
 	    contextTokens: number;
+	    disableAutoCompact?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Profile(source);
@@ -760,6 +763,7 @@ export namespace settings {
 	        this.baseUrl = source["baseUrl"];
 	        this.model = source["model"];
 	        this.contextTokens = source["contextTokens"];
+	        this.disableAutoCompact = source["disableAutoCompact"];
 	    }
 	}
 

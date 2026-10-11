@@ -42,6 +42,10 @@ export function CloseProject() {
   return window['go']['main']['App']['CloseProject']();
 }
 
+export function CompactChat() {
+  return window['go']['main']['App']['CompactChat']();
+}
+
 export function ConfirmQuit() {
   return window['go']['main']['App']['ConfirmQuit']();
 }
