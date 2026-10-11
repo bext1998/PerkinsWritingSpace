@@ -6,6 +6,7 @@ import {bible} from '../models';
 import {main} from '../models';
 import {summary} from '../models';
 import {project} from '../models';
+import {health} from '../models';
 import {snapshot} from '../models';
 import {notion} from '../models';
 import {publish} from '../models';
@@ -58,6 +59,8 @@ export function GetSettings():Promise<main.SettingsView>;
 export function GetSummary(arg1:string):Promise<summary.Summary>;
 
 export function GetTree():Promise<project.Tree>;
+
+export function HealthCheck():Promise<health.Report>;
 
 export function IgnoreVariant(arg1:string):Promise<void>;
 
@@ -122,6 +125,8 @@ export function SaveProfile(arg1:settings.Profile,arg2:any):Promise<main.Setting
 export function SaveSummary(arg1:string,arg2:string):Promise<summary.Summary>;
 
 export function SetActiveModel(arg1:string,arg2:string):Promise<main.SettingsView>;
+
+export function SetAutosave(arg1:boolean):Promise<void>;
 
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 

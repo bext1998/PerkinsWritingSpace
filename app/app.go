@@ -17,6 +17,7 @@ import (
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"
+	"perkins/internal/health"
 	"perkins/internal/publish"
 	"perkins/internal/llm"
 	"perkins/internal/notion"
@@ -764,6 +765,15 @@ func (a *App) FindVariants() ([]bible.Variant, error) {
 	return bible.FindVariants(ents, ch, a.proj.ReadFile, a.loadIgnored()), nil
 }
 
+// HealthCheck 由「檢查」面板的「開始檢查」呼叫(SPEC §0 第 4 條):只讀作品檔案,回報問題清單,
+// 不修改任何內容也不呼叫模型。
+func (a *App) HealthCheck() (health.Report, error) {
+	if a.proj == nil {
+		return health.Report{}, errNoProject
+	}
+	return health.Check(a.proj)
+}
+
 // IgnoreVariant 記錄作者判定「不是錯字」的寫法,之後不再回報。
 func (a *App) IgnoreVariant(w string) error {
 	if a.proj == nil {
@@ -789,15 +799,16 @@ type ProfileView struct {
 }
 
 type SettingsView struct {
-	Profiles  []ProfileView     `json:"profiles"`
-	Active    string            `json:"active"`
+	Profiles  []ProfileView      `json:"profiles"`
+	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string            `json:"theme"`
+	Theme     string             `json:"theme"`
+	Autosave  bool               `json:"autosave"`
 }
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Profiles: []ProfileView{}}
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Autosave: s.AutosaveOn(), Profiles: []ProfileView{}}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL)})
@@ -879,6 +890,13 @@ func (a *App) SetTheme(theme string) error {
 	}
 	s := a.store.Load()
 	s.Theme = theme
+	return a.store.Save(s)
+}
+
+// SetAutosave 由設定頁的「自動存檔」開關呼叫(SPEC §17.3)。
+func (a *App) SetAutosave(on bool) error {
+	s := a.store.Load()
+	s.Autosave = &on
 	return a.store.Save(s)
 }
 
