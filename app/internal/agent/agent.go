@@ -567,13 +567,18 @@ func (a *Agent) Reset() {
 }
 
 // NoteRejection 記下作者拒絕提案的原因,本次會話之後的請求都會帶上(#40)。原因屬 Interpretation,只當參考。
+// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段:它可能來自先前對話的附加,本次未附加就不能送出(G2)。
 func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
-	orig := []rune(p.Original)
-	if len(orig) > 40 {
-		orig = append(orig[:40], '…')
+	note := fmt.Sprintf("%s 的提案:%s", p.Target, reason)
+	if !Protected(p.Target) {
+		orig := []rune(p.Original)
+		if len(orig) > 40 {
+			orig = append(orig[:40], '…')
+		}
+		note = fmt.Sprintf("%s 的提案(原文「%s」):%s", p.Target, string(orig), reason)
 	}
 	a.mu.Lock()
-	a.rejections = append(a.rejections, fmt.Sprintf("%s 的提案(原文「%s」):%s", p.Target, string(orig), reason))
+	a.rejections = append(a.rejections, note)
 	a.mu.Unlock()
 }
 

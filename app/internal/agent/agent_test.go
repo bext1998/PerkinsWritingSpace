@@ -1742,3 +1742,18 @@ func TestRejectionReasonSentUntilReset(t *testing.T) {
 		t.Fatal("Reset 後不應再帶上拒絕原因")
 	}
 }
+
+// 意圖(G2):拒絕的若是設定集等受保護檔案的提案(可能是先前對話附加時產生的),
+// 本次沒附加就不能把其中的原文片段送出;只送檔名與作者寫的原因。
+func TestRejectionReasonOmitsProtectedOriginal(t *testing.T) {
+	a, s, _ := setup(t)
+	a.NoteRejection(&proposal.Proposal{Target: "canon/secret.md", Original: "祕密設定:反派是小明的哥哥。"}, "語氣太硬")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sys := s.reqs[0].Messages[0].Content
+	if strings.Contains(sys, "反派") || !strings.Contains(sys, "語氣太硬") {
+		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", sys)
+	}
+}
