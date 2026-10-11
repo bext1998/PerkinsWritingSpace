@@ -34,6 +34,7 @@ export namespace agent {
 	    budget: number;
 	    limit: number;
 	    over: boolean;
+	    notices?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -46,6 +47,7 @@ export namespace agent {
 	        this.budget = source["budget"];
 	        this.limit = source["limit"];
 	        this.over = source["over"];
+	        this.notices = source["notices"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
