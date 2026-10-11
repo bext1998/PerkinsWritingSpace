@@ -101,7 +101,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 | 工具 | 效果 |
 |---|---|
 | `read_document(path)` | 讀 `manuscript/` 或 `canon/` 檔案(唯讀) |
-| `search_project(query)` | 專案內全文搜尋(唯讀) |
+| `search_project(query)` | 專案內全文搜尋(唯讀);最多回傳前 30 筆符合的行,超過時在最後附一行總筆數與「請改用更精確的關鍵字」(2026-10-11,#34) |
 | `list_files()` | 列出作品檔案清單(唯讀、不需參數):依卷與章節順序的稿件(含章名、路徑、字數)、存在的章節摘要，以及作者本次附加的 `canon/`、`outline/`、`notes/` 檔案 |
 | `propose_patch(...)` | 建立 Proposal(不寫入稿件) |
 

@@ -1,5 +1,12 @@
 # PROGRESS.md
 
+## 2026-10-11 — 搜尋結果被截斷時告知總筆數(Issue #34 第 3 項)
+
+- **`app/internal/agent/agent.go` 的 `search`**:原本找到 30 筆符合就直接回傳,模型會以為只有這些結果。改為仍只回傳前 30 筆片段(上限與片段長度規則不變),但走完全部檔案計數符合的行數;總數超過 30 時在結果最後附一行「共 N 筆,只列出前 30 筆;請改用更精確的關鍵字。」,未超過時輸出完全不變(原本的 30 筆提前結束改為 `len(hits) >= searchMaxHits` 時只計數、不再累積片段字串)。
+- **G2 不變**:計數只在 `g.ok(f)` 允許的檔案上進行,未附加的 `canon/`、`outline/`、`notes/` 檔案不入計數,檔名與內容都不會出現在結果中。
+- **測試**(`app/internal/agent/agent_test.go`):45 筆符合時總數正確且仍只回 30 筆片段;剛好 30 筆、29 筆與 1 筆都沒有截斷說明;未附加的受保護檔案有 5 筆符合時不計入(結果也不含其檔名),附加後總數變 35 筆。
+- **破壞驗證 3 輪**(拿掉對應實作 → 該項 FAIL → 還原,還原後 `cmp` 逐位元組相同):①不附截斷說明(`if false`)→ 總數說明與受保護計數 2 項 FAIL;②無條件附說明(`if true`)→「不多一行雜訊」FAIL;③計數不看 gate(`if false`)→「受保護檔案不計入」FAIL。
+- **驗證**:`gofmt` 對新增段落無意見(檔案既有的 `AskParams` 註解對齊問題不動);`go test ./internal/...` 11 個套件全部 ok。
 ## 2026-10-11 — Perkins Bot 新增唯讀工具 list_files(Issue #34 第 2 項)
 
 - **新工具 `list_files`**(`app/internal/agent/agent.go`):不需參數、唯讀;輸出給模型讀的純文字。稿件依 `perkins.json` 卷章順序(與側欄一致,沿用 `project.Tree()` 的 `ResolveVolumes` 解析,未列入卷的檔案照既有規則排最後)、章名取檔內第一個 `# ` 標題(沒有就用檔名)、字數用與狀態列同一套的 `CountText`;另列 `summaries/` 存在的摘要。受保護資料夾(`canon/`、`outline/`、`notes/`)沿用同一個 `gate`(`gateFor`/`g.ok`)過濾,只列作者本次附加的檔案(G2/B2);報告模式可用(`toolsFor` 只排除 `propose_patch`,唯讀工具自然包含)。審計與研究記錄走既有 `runTool` 路徑,無新程式。
