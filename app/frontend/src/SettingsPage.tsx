@@ -273,7 +273,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
                                 這個端點不在本機。使用時,附加的稿件與設定會傳到該服務;每次啟動 Perkins WritingSpace 後第一次送出前都會再確認一次。
                             </p>
                         )}
-                        <Field label="API 型別" hint="OpenAI 相容走 /chat/completions;Anthropic 原生走 Messages API(#30)。">
+                        <Field label="API 型別" hint="Anthropic 官方端點選「Anthropic 原生」,其他服務與本機模型選「OpenAI 相容」。">
                             <Select value={form.provider || 'openai'} onValueChange={changeProvider}>
                                 <SelectTrigger data-testid="provider-select"><SelectValue/></SelectTrigger>
                                 <SelectContent>
