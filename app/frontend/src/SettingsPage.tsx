@@ -2,7 +2,7 @@ import {useEffect, useMemo, useState} from 'react';
 import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     ClearCover, ConvertOptions, DeleteProfile, GetCover, GetResearch, GetSettings, ListModels, PickCover, PreviewExport, RenameProject, ResetPlatforms,
-    SavePlatforms, SaveProfile, SetAutosave, SetResearch, SetTheme,
+    SavePlatforms, SaveProfile, SetAutosave, SetPaperLayout, SetResearch, SetTheme,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -12,12 +12,16 @@ import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
 import {GeneratedCover} from './Bookshelf';
 import NotionImport from './NotionImport';
+import {PAPER_FONT_SIZES, PAPER_PARA_GAPS, PAPER_WIDTHS, PaperLayout} from './paperLayout';
 
 interface Props {
     tree: project.Tree | null;
     setTree: (t: project.Tree) => void;
     theme: string;
     setTheme: (t: string) => void;
+    // 稿紙版面(版心寬度、字級、段距):與主題同一種保存方式(全域偏好,不是作品設定)
+    paper: PaperLayout;
+    setPaper: (p: PaperLayout) => void;
     onClose: () => void;
 }
 
@@ -338,7 +342,7 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
     );
 }
 
-export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: Props) {
+export default function SettingsPage({tree, setTree, theme, setTheme, paper, setPaper, onClose}: Props) {
     const [cfg, setCfg] = useState<main.SettingsView | null>(null);
     const [page, setPage] = useState<'project' | 'models' | 'platforms'>('models'); // 預設頁維持 AI 模型(SPEC §17.2)
     useEffect(() => { GetSettings().then(setCfg); }, []);
@@ -354,6 +358,25 @@ export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: 
         await SetAutosave(on);
         setCfg(c => c ? main.SettingsView.createFrom({...c, autosave: on}) : c);
     };
+    // 稿紙版面:變更立即套用到開著的編輯器(App 以 CSS 變數套用),並照主題的方式存回設定
+    const changePaper = (key: keyof PaperLayout, v: string) => {
+        const next = {...paper, [key]: v};
+        setPaper(next);
+        SetPaperLayout(next.width, next.fontSize, next.gap);
+    };
+    const paperRow = (key: keyof PaperLayout, testid: string, label: string, opts: {value: string; label: string}[]) => (
+        <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">{label}</span>
+            <Select value={paper[key]} onValueChange={v => changePaper(key, v)}>
+                <SelectTrigger data-testid={testid} className="h-7 w-[6.5rem] px-2 text-xs">
+                    <SelectValue/>
+                </SelectTrigger>
+                <SelectContent>
+                    {opts.map(o => <SelectItem key={o.value} value={o.value} data-testid={`${testid}-opt-${o.value}`}>{o.label}</SelectItem>)}
+                </SelectContent>
+            </Select>
+        </div>
+    );
 
     const navBtn = (id: 'project' | 'models' | 'platforms', label: string, Icon: typeof Cpu) => (
         <button data-testid={`tab-${id}`} onClick={() => setPage(id)}
@@ -379,6 +402,13 @@ export default function SettingsPage({tree, setTree, theme, setTheme, onClose}: 
                     {navBtn('models', 'AI 模型', Cpu)}
                     {navBtn('platforms', '平台輸出', Share2)}
                     <div className="flex-1"/>
+                    {/* 稿紙版面(Issue #44 第二階段(二)):版心寬度、字級、段距,與主題同一處(導覽欄底部,所有頁面都看得到) */}
+                    <div className="grid gap-1.5 border-t pt-3" data-testid="paper-layout">
+                        <div className="text-xs font-medium text-muted-foreground">稿紙版面</div>
+                        {paperRow('width', 'paper-width', '版心寬度', PAPER_WIDTHS)}
+                        {paperRow('fontSize', 'paper-font-size', '字級', PAPER_FONT_SIZES)}
+                        {paperRow('gap', 'paper-gap', '段距', PAPER_PARA_GAPS)}
+                    </div>
                     <div className="grid grid-cols-2 gap-1 border-t pt-3">
                         <button onClick={() => changeTheme('dark')}
                                 aria-pressed={theme === 'dark'}

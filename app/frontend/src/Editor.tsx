@@ -715,6 +715,9 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             });
         });
         ro.observe(host.current!);
+        // 稿紙版面(字級、段距、版心)改變時內容高度會變,host 尺寸不變:一併觀察 contentDOM,
+        // 游標穩定的保護才會在字級調大時同樣成立
+        ro.observe(v.contentDOM);
 
         // (DEV)E2E 檢視位置與游標可見性用
         if (import.meta.env.DEV) {

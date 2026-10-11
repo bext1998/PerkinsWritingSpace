@@ -130,6 +130,8 @@ export function SetAutosave(arg1:boolean):Promise<void>;
 
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 
+export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function SetResearch(arg1:boolean):Promise<void>;
 
 export function SetTheme(arg1:string):Promise<void>;

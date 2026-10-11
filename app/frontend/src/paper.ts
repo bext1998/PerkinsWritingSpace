@@ -396,7 +396,9 @@ class PaperView {
 const paperPlugin = ViewPlugin.fromClass(PaperView, {decorations: v => v.deco});
 
 const paperTheme = EditorView.theme({
-    '.cm-paper-para': {paddingTop: '0.7em', textIndent: '2em'},
+    // 段距取自作者的稿紙版面設定(--paper-gap,預設 0.7em = 第一階段的畫面);
+    // text-indent 用 em,隨字級等比維持兩個全形字寬
+    '.cm-paper-para': {paddingTop: 'var(--paper-gap, 0.7em)', textIndent: '2em'},
     // 字級與顏色由既有的 markdown HighlightStyle 提供,這裡只補段落間距(避免字級被放大兩次)
     '.cm-paper-h1': {paddingTop: '0.35em'},
     '.cm-paper-h2': {paddingTop: '0.3em'},

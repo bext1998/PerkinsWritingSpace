@@ -81,11 +81,12 @@
     ::-webkit-scrollbar-track { background: transparent; }
 }
 
-/* CodeMirror:稿紙 */
+/* CodeMirror:稿紙。版心寬度(--paper-width)、字級(--paper-font-size)、段距(--paper-gap)由作者的
+   全域設定提供(paperLayout.ts,預設值即第一階段的畫面);標題等其他尺寸用 em,隨字級等比縮放。 */
 .cm-host { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
-.cm-host .cm-scroller { font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif; font-size: 1.08rem; line-height: 2; }
-.cm-host .cm-content { max-width: 44rem; margin: 0 auto; padding: 3rem 2.5rem 40vh; caret-color: hsl(var(--primary)); }
+.cm-host .cm-scroller { font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif; font-size: var(--paper-font-size, 1.08rem); line-height: 2; }
+.cm-host .cm-content { max-width: var(--paper-width, 44rem); margin: 0 auto; padding: 3rem 2.5rem 40vh; caret-color: hsl(var(--primary)); }
 .cm-host .cm-cursor { border-left: 2px solid hsl(var(--primary)); }
 .cm-host .cm-activeLine { background: transparent; }
 .cm-host .cm-header-1 { font-size: 1.5em; font-weight: 700; }

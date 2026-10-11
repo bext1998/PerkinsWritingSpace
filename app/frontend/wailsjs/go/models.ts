@@ -340,6 +340,9 @@ export namespace main {
 	    platforms: publish.Platform[];
 	    theme: string;
 	    autosave: boolean;
+	    paperWidth: string;
+	    paperFontSize: string;
+	    paperParaGap: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsView(source);
@@ -352,6 +355,9 @@ export namespace main {
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
 	        this.theme = source["theme"];
 	        this.autosave = source["autosave"];
+	        this.paperWidth = source["paperWidth"];
+	        this.paperFontSize = source["paperFontSize"];
+	        this.paperParaGap = source["paperParaGap"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
