@@ -479,6 +479,288 @@ module.exports = {
         await pickPaper('paper-font-size', '1.08rem');
         await pickPaper('paper-gap', '0.7em');
 
+        // ---- 第二階段(一):打字機捲動與專注模式(Issue #44,SPEC §17.3) ----
+        // 只改呈現、狀態只存記憶體。游標的螢幕位置用 DEV hook __perkinsEditor.cursorScreen() 量
+        // (游標頂端相對編輯區頂端的高度 ÷ 編輯區高度 = 比值,目標約 0.4);淡化看 .cm-line 的計算後 opacity。
+        const TDOC = '# 打字機測試\n\n' + Array.from({length: 40}, (_, i) => `打字第${i + 1}段,內容用來把文件撐長。`).join('\n\n') + '\n\n***\n\n末段。\n';
+        await setDoc(TDOC);
+        const scr = () => page.evaluate(() => {
+            const s = window.__perkinsEditor.cursorScreen();
+            return s ? {y: Math.round(s.y), h: Math.round(s.h), ratio: s.y / s.h} : null;
+        });
+        const stTop = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
+        const ops = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')]
+            .map(l => ({t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)})));
+        const openAppMenu = async () => {
+            await page.click('[data-testid=app-menu]');
+            await page.waitForSelector('[data-testid=app-menu-content]', {timeout: 5000});
+        };
+        // 開關選單(標題欄應用程式選單):讀完文字後要把選單確實關掉——選單浮層開著時
+        // 鍵盤與滑鼠都會被它吃掉(第一次實測:Escape 沒關掉,後面的方向鍵/滾輪全部失效)
+        const menuText = async id => {
+            await openAppMenu();
+            const t = ((await page.textContent(`[data-testid=${id}]`)) || '').trim();
+            await page.keyboard.press('Escape');
+            await page.waitForFunction(() => !document.querySelector('[data-testid=app-menu-content]'), null, {timeout: 1500}).catch(() => {});
+            if (await page.locator('[data-testid=app-menu-content]').count()) {
+                await page.click('[data-testid=titlebar-title]'); // 點中性處關閉(不動到編輯器游標)
+                await page.waitForFunction(() => !document.querySelector('[data-testid=app-menu-content]'), null, {timeout: 3000}).catch(() => {});
+            }
+            await settle(60, 300);
+            return {t, closed: (await page.locator('[data-testid=app-menu-content]').count()) === 0};
+        };
+
+        // 打字機捲動:選單開啟。游標在文件開頭時不硬拉(開頭照常顯示,scrollTop 夾在 0)
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await settle(80, 500);
+        const t0 = await scr();
+        await openAppMenu();
+        const twLabelOff = (await page.textContent('[data-testid=menu-typewriter]')) || '';
+        if (await page.locator('[data-testid=menu-typewriter]').count()) await page.click('[data-testid=menu-typewriter]');
+        else await page.click('[data-testid=titlebar-title]'); // 開關不存在(破壞驗證時):只關選單,讓檢查自己 FAIL
+        await settle(150, 1000);
+        const t1 = await scr();
+        check('#44 打字機捲動(選單開啟):文件開頭不足以捲動時不硬拉,開頭照常顯示',
+            twLabelOff.includes('打字機捲動') && t0 && t1 && (await stTop()) < 2 && t1.ratio < 0.25,
+            JSON.stringify({label: twLabelOff, t0, t1, st: await stTop()}));
+        const twMenu = await menuText('menu-typewriter');
+        check('#44 打字機捲動:選單顯示目前狀態(開啟後標示關閉),選完能回到編輯器',
+            twMenu.t.includes('關閉打字機捲動') && twMenu.closed, JSON.stringify(twMenu));
+
+        // 連續輸入與方向鍵移動:游標行維持在固定範圍(約上方 40%),內容捲動而不是游標往下跑。
+        // 先把游標放到中段(上方有足夠內容可捲動)再量,避免開頭夾住的暫態混進量測;
+        // 同時驗證游標真的有動(避免輸入沒到編輯器時檢查空轉)
+        await page.evaluate(() => window.__perkinsEditor.setCursor(21, 0)); // 打字第10段
+        await settle(150, 1000);
+        const lineBefore = (await page.evaluate(() => window.__perkinsEditor.cursor())).line;
+        const stBefore = await stTop();
+        const ratios = [(await scr()).ratio];
+        for (let i = 0; i < 12; i++) {
+            await page.keyboard.press('ArrowDown');
+            await settle(40, 250);
+            ratios.push((await scr()).ratio);
+        }
+        await page.keyboard.type('輸入文字。');
+        await settle(80, 500);
+        ratios.push((await scr()).ratio);
+        const lineAfter = (await page.evaluate(() => window.__perkinsEditor.cursor())).line;
+        const stTyped = await stTop();
+        check('#44 打字機捲動:輸入與方向鍵移動時游標行維持在固定範圍,內容捲動而不是游標往下跑',
+            lineAfter > lineBefore + 10 && stTyped > stBefore + 100 &&
+            ratios.every(r => r > 0.3 && r < 0.5) && Math.max(...ratios) - Math.min(...ratios) < 0.08,
+            JSON.stringify({lineBefore, lineAfter, stBefore, stTyped, ratios: ratios.map(r => Math.round(r * 100) / 100)}));
+
+        // 快捷鍵 Ctrl+Shift+T 關閉:恢復一般行為(游標往下跑、內容不捲動);再按開啟:游標行回到固定位置
+        await page.keyboard.press('Control+Shift+T');
+        await settle(100, 600);
+        const twOff0 = await scr();
+        const twOffS0 = await stTop();
+        const lineOff0 = (await page.evaluate(() => window.__perkinsEditor.cursor())).line;
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        await settle(80, 500);
+        const twOff1 = await scr();
+        const twOffS1 = await stTop();
+        const lineOff1 = (await page.evaluate(() => window.__perkinsEditor.cursor())).line;
+        check('#44 打字機捲動關閉(快捷鍵)後恢復一般行為:游標往下跑、內容不捲動',
+            lineOff1 > lineOff0 && twOff1.ratio > twOff0.ratio + 0.02 && Math.abs(twOffS1 - twOffS0) < 2,
+            JSON.stringify({lineOff0, lineOff1, twOff0, twOff1, twOffS0, twOffS1}));
+        await page.keyboard.press('Control+Shift+T');
+        await settle(150, 1000);
+        const twOn2 = await scr();
+        check('#44 打字機捲動(快捷鍵開啟)後游標行回到固定位置(約上方 40%)',
+            twOn2 && twOn2.ratio > 0.3 && twOn2.ratio < 0.5, JSON.stringify(twOn2));
+
+        // 作者用滾輪主動捲動閱讀:不被拉回,直到下一次移動游標(先確認編輯器有焦點)
+        await page.click('.cm-content');
+        await settle(80, 400);
+        const preWheel = await stTop();
+        const box = await page.locator('.cm-scroller').boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.wheel(0, -400);
+        await settle(150, 1000);
+        const w0 = await stTop();
+        await page.waitForTimeout(600);
+        const w1 = await stTop();
+        check('#44 打字機捲動:作者滾動閱讀時不被拉回(捲動位置維持)',
+            w0 < preWheel - 100 && Math.abs(w1 - w0) < 2, JSON.stringify({preWheel, w0, w1}));
+        await page.keyboard.press('ArrowDown');
+        await settle(150, 1000);
+        const back = await scr();
+        check('#44 打字機捲動:作者移動游標後才拉回固定位置',
+            back && back.ratio > 0.3 && back.ratio < 0.5, JSON.stringify(back));
+
+        // IME:組字中不捲動(不打斷組字),組字結束才定位(CDP 發真實組字事件;無頭環境無真實 IME,實機見 #47)
+        await page.click('.cm-content'); // 確認焦點在編輯器(組字事件需要)
+        await settle(80, 400);
+        await page.mouse.wheel(0, 150); // 把畫面捲離固定位置(游標仍在畫面內):組字中不得被拉回
+        await settle(150, 1000);
+        const disturbed = await stTop();
+        const cdp2 = await page.context().newCDPSession(page);
+        await cdp2.send('Input.imeSetComposition', {text: 'ㄙㄣ', selectionStart: 1, selectionEnd: 1});
+        await settle(150, 1000);
+        const during = await stTop();
+        check('#44 打字機捲動:IME 組字中不捲動(不打斷組字)',
+            Math.abs(during - disturbed) < 2, JSON.stringify({disturbed, during}));
+        await cdp2.send('Input.insertText', {text: '森林'});
+        await settle(250, 1500);
+        const afterIme = await scr();
+        check('#44 打字機捲動:組字結束後才定位(游標行回到固定位置)',
+            afterIme && afterIme.ratio > 0.3 && afterIme.ratio < 0.5, JSON.stringify(afterIme));
+        await page.keyboard.press('Control+Shift+T'); // 關掉打字機捲動(受控狀態給專注模式段落)
+        await settle(100, 600);
+
+        // 專注模式:游標所在段落不淡化,其他(含標題、場景分隔)淡化;換段跟著換。
+        // 畫面只渲染可見的行,一律用行文字找目標行(不靠行序),量測前先捲到該區
+        const rowOf = t => page.evaluate(s => {
+            const l = [...document.querySelectorAll('.cm-content .cm-line')].find(x => x.innerText.trim().startsWith(s));
+            return l ? {t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)} : null;
+        }, t);
+        await setDoc(TDOC);
+        await openAppMenu();
+        const foLabelOff = (await page.textContent('[data-testid=menu-focus]')) || '';
+        if (await page.locator('[data-testid=menu-focus]').count()) await page.click('[data-testid=menu-focus]');
+        else await page.click('[data-testid=titlebar-title]');
+        await settle(150, 1000);
+        const foMenu = await menuText('menu-focus');
+        check('#44 專注模式:選單顯示目前狀態(開啟後標示離開專注模式)且選完能回到編輯器',
+            foMenu.t.includes('離開專注模式') && foLabelOff.includes('專注模式') && foMenu.closed, JSON.stringify(foMenu));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await settle(150, 1000);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(3, 0)); // 打字第1段
+        await settle(150, 1000);
+        const f1 = await ops();
+        const f1all = f1.filter(r => r.t !== '');
+        const dimmed1 = f1all.filter(r => r.op < 1);
+        const headRow = f1.find(r => r.t === '打字機測試');
+        check('#44 專注模式:游標所在段落不淡化,其他段落(含標題)淡化',
+            headRow && headRow.op < 1 && f1all.length > 3 && dimmed1.length === f1all.length - 1 &&
+            (await rowOf('打字第1段')).op === 1,
+            JSON.stringify({heading: headRow, dimmed: dimmed1.length, all: f1all.length, para: await rowOf('打字第1段')}));
+        await page.evaluate(() => window.__perkinsEditor.setCursor(7, 0)); // 打字第3段
+        await settle(150, 1000);
+        check('#44 專注模式:游標移到別段,淡化跟著換',
+            (await rowOf('打字第3段')).op === 1 && (await rowOf('打字第1段')).op < 1,
+            JSON.stringify({now: await rowOf('打字第3段'), old: await rowOf('打字第1段')}));
+
+        // 選取跨多段:選取涵蓋的段落都不淡化
+        await page.evaluate(() => window.__perkinsEditor.setCursor(5, 0)); // 打字第2段
+        await settle(100, 600);
+        await page.keyboard.press('Shift+ArrowDown');
+        await page.keyboard.press('Shift+ArrowDown');
+        await settle(150, 1000);
+        const sel = [await rowOf('打字第2段'), await rowOf('打字第3段'), await rowOf('打字第4段')];
+        const out = [await rowOf('打字第1段'), await rowOf('打字第5段')];
+        check('#44 專注模式:選取跨多段時,選取涵蓋的段落都不淡化',
+            sel.every(r => r && r.op === 1) && out.every(r => r && r.op < 1), JSON.stringify({sel, out}));
+
+        // 場景分隔:游標不在它上面時淡化,游標移上去就不淡化
+        await page.keyboard.press('Control+End');
+        await settle(150, 1000);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(85, 0)); // 末段
+        await settle(150, 1000);
+        const brk = await rowOf('◇◇◇');
+        const last = await rowOf('末段');
+        check('#44 專注模式:場景分隔行一樣依是否在游標所在段落淡化',
+            brk && brk.op < 1 && last && last.op === 1, JSON.stringify({brk, last}));
+
+        // 快捷鍵 Ctrl+Shift+D 關閉:回到一般行為(全部不淡化)
+        await page.keyboard.press('Control+Shift+D');
+        await settle(150, 1000);
+        const f4 = await ops();
+        check('#44 專注模式關閉(快捷鍵)後恢復一般行為:所有段落都不淡化',
+            f4.filter(r => r.t !== '' && r.op < 1).length === 0, JSON.stringify(f4.filter(r => r.op < 1).slice(0, 3)));
+
+        // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(250, 1500);
+        await page.keyboard.press('Control+Shift+T');
+        await page.keyboard.press('Control+Shift+D');
+        await settle(150, 1000);
+        const g0 = await scr();
+        await page.keyboard.press('ArrowDown');
+        await page.keyboard.press('ArrowDown');
+        await settle(120, 800);
+        const g1 = await scr();
+        const gDim = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
+        check('#44 640 寬:打字機捲動與專注模式可用(游標行維持固定位置、有淡化、無水平捲軸)',
+            g0 && g1 && g0.ratio > 0.3 && g0.ratio < 0.5 && g1.ratio > 0.3 && g1.ratio < 0.5 && gDim > 0 &&
+            await page.evaluate(() => document.querySelector('.cm-scroller').scrollWidth <= document.querySelector('.cm-scroller').clientWidth + 1),
+            JSON.stringify({g0, g1, gDim}));
+        await shot('44-typewriter-focus-640');
+
+        // 禪模式下可用:選單仍有兩個開關且切換有效
+        await page.keyboard.press('Control+Shift+F');
+        await settle(250, 1500);
+        await openAppMenu();
+        const zenMenu = await page.evaluate(() => ({
+            tw: !!document.querySelector('[data-testid=menu-typewriter]'),
+            fo: !!document.querySelector('[data-testid=menu-focus]'),
+        }));
+        const zDimOn = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
+        if (zenMenu.fo) await page.click('[data-testid=menu-focus]'); // 選單關閉專注模式
+        else await page.click('[data-testid=titlebar-title]'); // 開關不存在(破壞驗證時):只關選單,讓檢查自己 FAIL
+        await settle(150, 1000);
+        const zDim = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
+        check('#44 禪模式下可用:選單仍有打字機捲動/專注模式開關且切換有效',
+            zenMenu.tw && zenMenu.fo && zDimOn > 0 && zDim === 0, JSON.stringify({zenMenu, zDimOn, zDim}));
+        await page.keyboard.press('Control+Shift+D'); // 再開啟(截圖用)
+        await settle(150, 1000);
+        await page.keyboard.press('Control+Shift+F'); // 離開禪模式
+        await settle(250, 1500);
+
+        // 截圖:深/淺各一(打字機捲動+專注模式,游標在中段)
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(250, 1200);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(21, 0)); // 打字第10段
+        await settle(150, 1000);
+        await shot('44-typewriter-focus-dark');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=close-settings]');
+        await settle(150, 1000);
+        await shot('44-typewriter-focus-light');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('button:has-text("夜間書房")');
+        await page.click('[data-testid=close-settings]');
+        await settle(150, 1000);
+        await page.keyboard.press('Control+Shift+T'); // 關掉兩個模式
+        await page.keyboard.press('Control+Shift+D');
+        await settle(100, 600);
+
+        // 效能(SPEC §17.3 基準):約 7.7 萬字章節、打字機捲動+專注模式開啟,輸入到畫面更新(40 次)
+        const BIG = Array.from({length: 2200}, (_, i) => `第${i + 1}段長度測試內容,用來把版面撐長,模擬真實章節的段落長度。`).join('\n\n') + '\n';
+        await setDoc(BIG);
+        await page.keyboard.press('Control+Shift+T');
+        await page.keyboard.press('Control+Shift+D');
+        await settle(250, 1500);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(1100, 0));
+        await settle(150, 1000);
+        await page.evaluate(() => {
+            const ts = [];
+            (window).__perf = ts;
+            document.querySelector('.cm-content').addEventListener('keydown', () => {
+                const t0 = performance.now();
+                requestAnimationFrame(() => ts.push(performance.now() - t0));
+            }, true);
+        });
+        for (let i = 0; i < 40; i++) { await page.keyboard.press('x'); await page.waitForTimeout(25); }
+        const perf = await page.evaluate(() => window.__perf);
+        const sorted = [...perf].sort((a, b) => a - b);
+        const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+        const maxT = sorted.length ? sorted[sorted.length - 1] : null;
+        check('#44 效能:約 7.7 萬字章節輸入到畫面更新(打字機捲動+專注模式)不失速(中位數 < 40ms、最大 < 150ms)',
+            perf.length >= 38 && median < 40 && maxT < 150,
+            JSON.stringify({chars: BIG.length, n: perf.length, median: median && Math.round(median * 10) / 10, max: maxT && Math.round(maxT * 10) / 10}));
+        await page.keyboard.press('Control+Shift+T');
+        await page.keyboard.press('Control+Shift+D');
+        await settle(100, 600);
+
         // 清理:刪掉專用檔並把章節列還原(後面的組會數章節數量)
         await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
         await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});

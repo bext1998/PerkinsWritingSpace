@@ -87,6 +87,9 @@
 .cm-host .cm-editor { height: 100%; }
 .cm-host .cm-scroller { font-family: "Noto Serif TC", "Source Han Serif TC", "PMingLiU", serif; font-size: var(--paper-font-size, 1.08rem); line-height: 2; }
 .cm-host .cm-content { max-width: var(--paper-width, 44rem); margin: 0 auto; padding: 3rem 2.5rem 40vh; caret-color: hsl(var(--primary)); }
+/* 打字機捲動(#44 第二階段(一)):游標行固定在編輯區上方約 40%,文件結尾要多留下方空間
+   (預設 40vh 不到 60vh,游標在結尾只能停在約 60% 處);關閉後回到預設樣式 */
+.cm-host.cm-typewriter .cm-content { padding-bottom: 62vh; }
 .cm-host .cm-cursor { border-left: 2px solid hsl(var(--primary)); }
 .cm-host .cm-activeLine { background: transparent; }
 .cm-host .cm-header-1 { font-size: 1.5em; font-weight: 700; }
