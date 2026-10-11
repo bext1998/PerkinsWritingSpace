@@ -38,11 +38,28 @@ const devSaveDelay = {ms: 0};
 const devReadDelay = {ms: 0};
 const devSaveFailOnce = {once: false};
 
+// 定時自動存檔(SPEC §17.3):停止輸入 AUTOSAVE_IDLE_MS 後存檔;持續打字不停時,
+// 距第一個未存變更最多 AUTOSAVE_MAX_MS 也存一次。組字中的重試間隔夠短,作者不會察覺延遲。
+const AUTOSAVE_IDLE_MS = 2000;
+const AUTOSAVE_MAX_MS = 30000;
+const AUTOSAVE_COMPOSE_RECHECK_MS = 200;
+// 開發模式專用:E2E 用 __perkinsAutosaveTiming(idle, max) 縮短間隔(驗 30 秒上限不必真的等),
+// __perkinsAutosaveOff() 關掉;lib.launch 的 init script 會先設 __perkinsE2eAutosaveOff,
+// 讓既有測試維持「打字後仍是未存狀態」的假設(自動存檔的測試自己再打開)
+const devAutosave = {idle: AUTOSAVE_IDLE_MS, max: AUTOSAVE_MAX_MS, off: false};
+
 if (import.meta.env.DEV) {
     (window as any).__perkinsSaveDelay = (ms: number) => { devSaveDelay.ms = ms; };
     (window as any).__perkinsReadDelay = (ms: number) => { devReadDelay.ms = ms; };
     (window as any).__perkinsSaveFailOnce = () => { devSaveFailOnce.once = true; };
     (window as any).__perkinsSaveStats = {inFlight: 0, maxInFlight: 0}; // E2E 驗證 SaveFile 不並行
+    (window as any).__perkinsAutosaveTiming = (idle?: number, max?: number) => {
+        devAutosave.off = false;
+        devAutosave.idle = idle ?? AUTOSAVE_IDLE_MS;
+        devAutosave.max = max ?? AUTOSAVE_MAX_MS;
+    };
+    (window as any).__perkinsAutosaveOff = () => { devAutosave.off = true; };
+    if ((window as any).__perkinsE2eAutosaveOff) devAutosave.off = true;
 }
 
 
@@ -225,16 +242,24 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 迴圈每輪記下當輪的 current+text 配對,切檔後以新的 latest 判斷,不會寫錯檔。
     const saveInFlight = useRef<Promise<void> | null>(null);
     const [saving, setSaving] = useState(false);
-    const save = useCallback((): Promise<void> => {
-        if (saveInFlight.current) return saveInFlight.current; // 已在存:回傳同一個 Promise
+    // 只由自動存檔發起的這一輪,遇到 IME 組字就停下(組字內容不落盤,組字結束後自動存檔會再接手);
+    // 手動存檔、切章、關閉等呼叫者一加入就改回「全部落盤才結束」(PR #65 審查)
+    const saveAll = useRef(false);
+    const save = useCallback((opts?: {auto?: boolean}): Promise<void> => {
+        if (saveInFlight.current) { // 已在存:回傳同一個 Promise;非自動的呼叫者加入就要全部落盤
+            if (!opts?.auto) saveAll.current = true;
+            return saveInFlight.current;
+        }
         // 無事可存時不建立 Promise:若此時建立,IIFE 會同步跑完,finally 先清 null、外層又把已結束的
         // Promise 指回 ref,之後每次 save() 都回傳這個過期 Promise,永遠不再寫入(實測踩過)
         if (!(latest.current.current && latest.current.dirty)) return Promise.resolve();
+        saveAll.current = !opts?.auto; // 只在真的開始一輪時設定;無事可存就返回時不得留下旗標(PR #65 複審)
         let run!: Promise<void>; // 閉包 finally 要比對自身;前置檢查保證 IIFE 先在 await 掛起,賦值必在 finally 前
         run = (async () => {
             setSaving(true);
             try {
                 while (latest.current.current && latest.current.dirty) {
+                    if (!saveAll.current && editor.current?.composing()) break;
                     const {current, text} = latest.current;
                     const ver = editVersion.current;
                     if (import.meta.env.DEV && devSaveDelay.ms > 0) await new Promise(r => setTimeout(r, devSaveDelay.ms));
@@ -249,6 +274,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
                 }
             } finally {
+                saveAll.current = false;
                 if (saveInFlight.current === run) saveInFlight.current = null;
                 setSaving(false);
             }
@@ -261,6 +287,30 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // refreshCounts/refreshIndex/refreshTree 換掉後 save 會重建,用 ref 才不會存到過期的那份。
     const saveRef = useRef(save);
     saveRef.current = save;
+
+    // 定時自動存檔(SPEC §17.3)。走既有的序列化存檔迴圈:與手動存檔共用同一個 Promise、
+    // 不新增寫檔路徑、不建快照;成功只更新工具列/狀態列的已儲存狀態(不跳提示),失敗照既有錯誤顯示。
+    // 計時器綁在當下的檔案與 dirty 狀態上:切檔、回書櫃(卸載)、唯讀鎖、設定關閉都會清掉或不再排程,
+    // 不會把舊檔的內容寫進新檔。設定載入前(cfg 為 null)照預設值(開啟)。
+    const autosaveOn = cfg?.autosave !== false;
+    const autoTimer = useRef<number | null>(null);
+    const autoSince = useRef<number | null>(null); // 目前這輪未存變更的起算時間(上限用)
+    useEffect(() => {
+        if (autoTimer.current !== null) { clearTimeout(autoTimer.current); autoTimer.current = null; }
+        if (devAutosave.off || !autosaveOn || !dirty || !current || editLocked) { autoSince.current = null; return; }
+        autoSince.current ??= Date.now();
+        const delay = Math.max(0, Math.min(devAutosave.idle, autoSince.current + devAutosave.max - Date.now()));
+        const fire = async () => {
+            autoTimer.current = null;
+            // IME 組字中不存,延到組字結束後再存。組字中可能不再有輸入事件(組字暫停),這裡自己重試;
+            // 重新排程而不清 autoSince:組字結束後仍受同一輪的上限約束
+            if (editor.current?.composing()) { autoTimer.current = window.setTimeout(fire, AUTOSAVE_COMPOSE_RECHECK_MS); return; }
+            autoSince.current = null; // 存完仍 dirty(期間又打字)時,下一輪從新的變更起算
+            try { await saveRef.current({auto: true}); } catch (e) { fail(e); }
+        };
+        autoTimer.current = window.setTimeout(fire, delay);
+        return () => { if (autoTimer.current !== null) { clearTimeout(autoTimer.current); autoTimer.current = null; } };
+    }, [autosaveOn, dirty, text, current, editLocked, fail]);
 
     // 刪除分類(SPEC §12.2 返工#1):由 Workspace 協調——先走序列化存檔迴圈保存未存內容
     // (存檔失敗就中止,不動任何檔案,快照才含作者最新內容),後端完成快照+改歸「其他」後,

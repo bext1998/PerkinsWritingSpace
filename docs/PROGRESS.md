@@ -1,5 +1,20 @@
 # PROGRESS.md
 
+## 2026-10-10 — 定時自動存檔(Issue #36)
+
+- **何時存**(SPEC §17.3):編輯器有未存變更時,停止輸入 **2 秒**後存;持續打字不停時,距第一個未存變更**最多 30 秒**也存一次(`Workspace.tsx` 的 `AUTOSAVE_IDLE_MS`/`AUTOSAVE_MAX_MS`)。單一 effect 依 `[autosaveOn, dirty, text, current, editLocked]` 重排計時器:每次輸入重設 2 秒;`autoSince` 記住這輪起點以守住上限,存檔後仍 dirty 就從下一次變更重新起算。
+- **走既有的 `save()`**:不新增寫檔路徑、不建快照、Provenance 不變;與 Ctrl+S/按鈕共用同一個序列化 Promise(存檔途中重複觸發不會並行寫入)。成功只更新工具列/狀態列,**不跳「已儲存」提示框**(手動存檔照舊);失敗走既有 `fail` 的錯誤提示,不吞錯。
+- **避開組字**:`EditorHandle` 新增 `composing()`(讀 `view.composing`/`compositionStarted`);計時器到點時仍在組字就每 200ms 重試,`compositionend` 後才存(組字中不再有輸入事件時也不會卡住不存)。
+- **切檔/回書櫃/關閉**:計時器綁在當下的 `current`/`dirty` 上,切檔或卸載(回書櫃、關閉前存檔流程)時清掉;`save()` 一律讀 `latest.current`(path+text 成對),不會把舊檔內容寫進新檔。錯誤防護的緊急存檔不變。
+- **設定**:`settings.json` 加 `autosave`(用 `*bool` 區分「舊設定檔沒這個欄位」(視為開啟)與「作者明確關閉」);設定頁「作品」新增「自動存檔」開關(`data-testid=autosave-switch`,說明「停止輸入 2 秒後自動存檔,不建立版本快照」),不提供間隔設定。
+- **驗證**:`go test ./internal/settings/`(新增舊設定檔相容與預設值)、`tsc --noEmit`、`npm run build` 通過(工作樹 `npm ci`)。
+- **E2E(save-flow 新增 15 項)**:停止輸入約 2 秒才存(實測 2153ms)、2 秒內不寫入、狀態列已儲存且不跳提示框;持續打字時由上限觸發(掛鉤縮成 idle 20s / 上限 0.8s,實測 2.9s 落盤,不必真的等 30 秒);組字中不存、`compositionend` 後存;設定關閉後打字不存而 Ctrl+S 照舊(含提示框)並還原設定;打字後 2 秒內切章→舊章的字在舊章、新章不被寫入。開發模式另加 `__perkinsAutosaveTiming(idle, max)`/`__perkinsAutosaveOff()` 掛鉤。
+- **破壞驗證 11 輪**(每輪重建 fixture、只跑 `save-flow`):①不排程→(a)(b)(c) 5 項 FAIL;②不管 IME→(c) 2 項 FAIL;③自動存檔也跳提示→(a) 提示框 FAIL;④不等停止輸入→(a) 2 項 FAIL;⑤計時器不清+用最新路徑配舊文字→(d) 新章 FAIL;⑥忽略設定開關→(e) 2 項 FAIL;⑦手動存檔不跳提示→(e) 提示框 FAIL;⑧切檔前不存→(d) 舊章 FAIL(另帶 E5);⑨移除 Ctrl+S→(e) 手動存檔 2 項 FAIL;⑩只移 `openFile` 的 `setDirty(false)`→不受影響;⑪⑩再併①(不排程自動存檔)→該斷言仍未 FAIL,因為切檔前 `await save()` 已把 dirty 清掉。因此「切章後新章為已儲存」沒有可辨識的失敗情境,**已刪掉該檢查**,不拿永遠會過的斷言充數。
+- **基準**:全新 fixture + 重啟 wails dev 的 `--all`(E2E_SKIP_AI=1)**471/473 passed**,略過 8 項,231s。2 項 FAIL 是既有 #63 書櫃 `ListRecent` race(`bible`、`layout-visual` 的「回書櫃重開作品」等不到卡片)並讓這兩組提早中斷(少 10 項檢查);同一環境上一輪 PR 的 `all-35-final3.log` 是同樣這 2 項,基準 `run.log` 為 468/468 全過 → 無 race 時的預期是 468 + 15 = **483/483**。其餘 13 組檢查數與基準逐一相同,只有 `save-flow` 22 → 37。`app/e2e/shots/71-settings-project-1280.png` 與另行拍攝的 640×672 截圖都確認新區塊正常(內容區無水平捲軸、開關不超出內容區)。
+- **E2E 預設關閉自動存檔**:`lib.launch` 以 `addInitScript` 設 `__perkinsE2eAutosaveOff`,開發模式載入 `Workspace` 時讀它——既有多數測試假設「打字後仍是未存狀態」(未儲存標記、關閉保護、緊急存檔時序),自動存檔會隨機器快慢不定時打斷它們。自動存檔自己的檢查在 `save-flow` 段落內明確打開,段落開始先把設定頁開關設成開啟(不假設起始狀態)、結束還原。
+- **返工(codex 審查 1 Major,Orchestrator 直接修)**:自動存檔已在寫的途中才開始 IME 組字,序列化存檔迴圈的下一輪會把組字中的字寫進磁碟。改為記錄這一輪是否只由自動存檔發起:是的話每輪開始前遇到組字就停下(組字結束後自動存檔再接手);手動存檔、切章、關閉、接受提案等呼叫者一加入就改回「全部落盤才結束」。新增 2 項 E2E(c2):存檔延遲 1.2 秒期間開始組字 → 組字中的字不落盤、第一輪的字已存;組字結束後落盤。破壞驗證:拿掉停下判斷 → (c2) 第一項 FAIL(重現審查描述的情形),還原全綠。全新 fixture `--all` 485/485 passed;另一輪 `--all` 曾出現 visual-1b 審查視窗接受未生效而連鎖中斷(E2E 預設關閉自動存檔,不經過本次修改的分支;單跑 visual-1b 與再跑 `--all` 皆通過),記入 #63。
+- **複審返工(codex 複審 1 項,Orchestrator 直接修)**:無事可存時的手動存檔(乾淨狀態按 Ctrl+S)會先設「全部落盤」旗標再直接返回,旗標留到下一次自動存檔,使它略過組字檢查。改為只在加入在途存檔或真的開始一輪時設定。(c2) 前置加入「乾淨狀態按 Ctrl+S」。破壞驗證:換回舊寫法 → (c2) 第一項 FAIL(組字中的字落盤),還原後 `save-flow` 40/40;全新 fixture `--all` 485/485 passed,略過 8 項,203s。
+
 ## 2026-10-10 — 稿紙化第一階段:一個 Enter 一段、隱藏段落空行與 Markdown 標記(Issue #44)
 
 - **新模組 `app/frontend/src/paper.ts`**(`Editor.tsx` 只接線:擴充掛在 `defaultKeymap` 之前,才會取代 Enter/Backspace/Delete 的預設行為)。規則本身寫在 `docs/SPEC.md` §17.3 稿紙化,這裡只記實作與驗證。
