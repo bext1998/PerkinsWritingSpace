@@ -23,6 +23,7 @@ import (
 	"perkins/internal/proposal"
 	"perkins/internal/publish"
 	"perkins/internal/research"
+	"perkins/internal/sessions"
 	"perkins/internal/settings"
 	"perkins/internal/snapshot"
 	"perkins/internal/summary"
@@ -45,6 +46,9 @@ type App struct {
 	mu     sync.Mutex
 	agent  *agent.Agent
 	cancel context.CancelFunc
+	// curSess 是目前對話的會話 id(#33):空 = 尚未建立(第一次保存時產生新 id),
+	// 「新對話」或刪除/永久刪除目前會話時清空。
+	curSess string
 
 	// 關閉保護(SPEC §17.1):所有關閉途徑先過 beforeClose,前端確認後 ConfirmQuit 放行
 	quitConfirmed atomic.Bool
@@ -109,6 +113,7 @@ func (a *App) setProject(p *project.Project) {
 	}
 	a.proj = p
 	a.research = research.New(p, a.session)
+	a.curSess = "" // 換作品就不是同一個對話(#33)
 	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}, Research: a.research}
 	if a.store != nil { // 全域作者指示(%APPDATA%\Perkins\AGENTS.md,與 settings.json 同目錄)
 		a.agent.GlobalAgentsPath = filepath.Join(a.store.Dir, "AGENTS.md")
@@ -949,6 +954,9 @@ func (a *App) PreviewContext(p agent.AskParams) (*agent.Preview, error) {
 }
 
 func (a *App) ResetChat() {
+	a.mu.Lock()
+	a.curSess = "" // 「新對話」開始新的會話 id(#33)
+	a.mu.Unlock()
 	if a.agent != nil {
 		a.agent.Reset()
 	}
@@ -971,6 +979,176 @@ func (a *App) CancelAsk() {
 	if a.cancel != nil {
 		a.cancel()
 	}
+}
+
+// ---- 對話記錄(#33,SPEC §12.3「對話記錄」)----
+// 存在使用者設定目錄(sessions/<作品鍵>/),與 audit.jsonl、研究記錄分開、互不取代。
+
+// sessionCtx 取得對話記錄需要的 agent、儲存層與作品根目錄。儲存層目錄取自設定目錄
+// (與 settings.json 同層,沿用 settings.NewStore 的 os.UserConfigDir());測試以 a.store 注入目錄。
+func (a *App) sessionCtx() (*agent.Agent, *sessions.Store, string, error) {
+	if a.proj == nil || a.agent == nil {
+		return nil, nil, "", errNoProject
+	}
+	if a.store == nil {
+		return nil, nil, "", errors.New("尚未初始化設定目錄")
+	}
+	return a.agent, sessions.NewStore(a.store.Dir), a.proj.Root, nil
+}
+
+// ListSessions 列出目前作品的對話記錄摘要(含狀態、目前會話標示)。
+func (a *App) ListSessions() ([]sessions.Meta, error) {
+	_, st, root, err := a.sessionCtx()
+	if err != nil {
+		return nil, err
+	}
+	list, err := st.List(root)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	cur := a.curSess
+	a.mu.Unlock()
+	for i := range list {
+		list[i].Current = cur != "" && list[i].ID == cur
+	}
+	return list, nil
+}
+
+// SaveSession 保存目前會話(回合結束 chat:done 成功後、手動壓縮後呼叫;前端提供顯示用的對話列)。
+// 空會話(沒有任何回合)不存檔;寫檔失敗回傳錯誤,由前端顯示給作者,不靜默。
+func (a *App) SaveSession(turns []sessions.Turn) (sessions.Meta, error) {
+	ag, st, root, err := a.sessionCtx()
+	if err != nil {
+		return sessions.Meta{}, err
+	}
+	if len(turns) == 0 {
+		return sessions.Meta{}, nil // 空會話不存檔
+	}
+	a.mu.Lock()
+	id := a.curSess
+	a.mu.Unlock()
+	sess := &sessions.Session{ID: id, Title: sessions.TitleFor(turns), Status: sessions.StatusActive, Turns: turns}
+	if id != "" {
+		old, err := st.Get(root, id)
+		switch {
+		case err == nil:
+			sess.CreatedAt, sess.Status = old.CreatedAt, old.Status // 接續中的封存會話維持原狀態
+		case errors.Is(err, sessions.ErrNotFound):
+			sess.ID = "" // 舊記錄不在了(被永久刪除):開新會話
+		default:
+			return sessions.Meta{}, err
+		}
+	}
+	sess.History, sess.Rejections = ag.Snapshot()
+	if err := st.Save(root, sess); err != nil {
+		return sessions.Meta{}, err
+	}
+	a.mu.Lock()
+	a.curSess = sess.ID
+	a.mu.Unlock()
+	m := sessions.MetaOf(sess)
+	m.Current = true
+	return m, nil
+}
+
+// ResumeSession 接續一份對話記錄:目前會話先存好(currentTurns 是前端目前顯示的對話列)再切換,
+// 該會話的 History 與拒絕原因載回 Agent(前端載回 turns);請求進行中時拒絕切換。
+func (a *App) ResumeSession(id string, currentTurns []sessions.Turn) (sessions.Session, error) {
+	// 整個切換期間佔住執行權(與 begin 同一個 a.cancel):檢查後到載回之間不能開始新請求,
+	// 否則載回會覆寫執行中請求的 History(PR #89 審查)
+	a.mu.Lock()
+	if a.cancel != nil {
+		a.mu.Unlock()
+		return sessions.Session{}, errors.New("有請求進行中,請先停止再切換對話記錄")
+	}
+	a.cancel = func() {}
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.cancel = nil
+		a.mu.Unlock()
+	}()
+	if resumeHook != nil {
+		resumeHook()
+	}
+	if len(currentTurns) > 0 { // 目前會話先存好再切換
+		if _, err := a.SaveSession(currentTurns); err != nil {
+			return sessions.Session{}, err
+		}
+	}
+	ag, st, root, err := a.sessionCtx()
+	if err != nil {
+		return sessions.Session{}, err
+	}
+	sess, err := st.Get(root, id)
+	if err != nil {
+		return sessions.Session{}, err
+	}
+	if sess.Status == sessions.StatusDeleted {
+		return sessions.Session{}, errors.New("已刪除的對話記錄要先還原才能接續")
+	}
+	ag.RestoreSession(sess.History, sess.Rejections)
+	a.mu.Lock()
+	a.curSess = id
+	a.mu.Unlock()
+	return *sess, nil
+}
+
+// resumeHook 只供測試在接續途中插入時序(PR #89 審查:接續期間不能開始新請求)。
+var resumeHook func()
+
+// ArchiveSession 封存(on=true)/取消封存(on=false)。
+func (a *App) ArchiveSession(id string, on bool) error {
+	_, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	return st.Archive(root, id, on)
+}
+
+// DeleteSession 刪除對話記錄:移到回收區,可 RestoreSession 還原。
+func (a *App) DeleteSession(id string) error {
+	_, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	if err := st.Delete(root, id); err != nil {
+		return err
+	}
+	a.dropCurrent(id) // 刪的是目前會話:下一次保存開新會話,不再寫進回收區的這份
+	return nil
+}
+
+// RestoreSession 從回收區還原成一般狀態。
+func (a *App) RestoreSession(id string) error {
+	_, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	return st.Restore(root, id)
+}
+
+// PurgeSession 永久刪除回收區中的對話記錄(前端須先讓作者確認)。
+func (a *App) PurgeSession(id string) error {
+	_, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	if err := st.Purge(root, id); err != nil {
+		return err
+	}
+	a.dropCurrent(id)
+	return nil
+}
+
+// dropCurrent:目前會話被刪除/永久刪除時清空,讓下一次保存開新的會話。
+func (a *App) dropCurrent(id string) {
+	a.mu.Lock()
+	if a.curSess == id {
+		a.curSess = ""
+	}
+	a.mu.Unlock()
 }
 
 // begin 取得執行權;同時只允許一個模型請求。
@@ -1105,9 +1283,33 @@ func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 		proposal.LogReject(a.research, p, reason)
 		if reason != "" {
 			a.agent.NoteRejection(p, reason)
+			if err := a.saveRejections(); err != nil {
+				return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
+			}
 		}
 	}
 	return p, err
+}
+
+// saveRejections 把目前的拒絕原因寫進已保存的目前會話(#33):拒絕常發生在回合存檔之後,
+// 不寫回的話作者接著開新對話或關閉程式,接續時就會遺失(PR #89 審查)。尚未存過的會話不處理。
+func (a *App) saveRejections() error {
+	ag, st, root, err := a.sessionCtx()
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	id := a.curSess
+	a.mu.Unlock()
+	if id == "" {
+		return nil
+	}
+	sess, err := st.Get(root, id)
+	if err != nil {
+		return err
+	}
+	_, sess.Rejections = ag.Snapshot()
+	return st.Save(root, sess)
 }
 
 // ---- 版本(G3) ----

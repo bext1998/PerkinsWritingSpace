@@ -14,6 +14,10 @@ export function ApplyEntityHeader(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['ApplyEntityHeader'](arg1, arg2, arg3, arg4);
 }
 
+export function ArchiveSession(arg1, arg2) {
+  return window['go']['main']['App']['ArchiveSession'](arg1, arg2);
+}
+
 export function AskAI(arg1) {
   return window['go']['main']['App']['AskAI'](arg1);
 }
@@ -64,6 +68,10 @@ export function DeleteCategory(arg1) {
 
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
+}
+
+export function DeleteSession(arg1) {
+  return window['go']['main']['App']['DeleteSession'](arg1);
 }
 
 export function DraftSummary(arg1) {
@@ -120,6 +128,10 @@ export function ListProposals() {
 
 export function ListRecent() {
   return window['go']['main']['App']['ListRecent']();
+}
+
+export function ListSessions() {
+  return window['go']['main']['App']['ListSessions']();
 }
 
 export function ListSnapshots() {
@@ -182,6 +194,10 @@ export function ProjectPath() {
   return window['go']['main']['App']['ProjectPath']();
 }
 
+export function PurgeSession(arg1) {
+  return window['go']['main']['App']['PurgeSession'](arg1);
+}
+
 export function ReadFile(arg1) {
   return window['go']['main']['App']['ReadFile'](arg1);
 }
@@ -210,8 +226,16 @@ export function ResetPlatforms() {
   return window['go']['main']['App']['ResetPlatforms']();
 }
 
+export function RestoreSession(arg1) {
+  return window['go']['main']['App']['RestoreSession'](arg1);
+}
+
 export function RestoreSnapshot(arg1, arg2) {
   return window['go']['main']['App']['RestoreSnapshot'](arg1, arg2);
+}
+
+export function ResumeSession(arg1, arg2) {
+  return window['go']['main']['App']['ResumeSession'](arg1, arg2);
 }
 
 export function SaveFile(arg1, arg2) {
@@ -224,6 +248,10 @@ export function SavePlatforms(arg1) {
 
 export function SaveProfile(arg1, arg2) {
   return window['go']['main']['App']['SaveProfile'](arg1, arg2);
+}
+
+export function SaveSession(arg1) {
+  return window['go']['main']['App']['SaveSession'](arg1);
 }
 
 export function SaveSummary(arg1, arg2) {

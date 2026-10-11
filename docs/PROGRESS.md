@@ -1,5 +1,19 @@
 # PROGRESS.md
 
+## 2026-10-12 — Perkins Bot 對話記錄:保存、接續、封存、刪除(Issue #33)
+
+- **新套件 `app/internal/sessions`**:對話記錄存 `<設定目錄>/sessions/<作品鍵>/`(設定目錄沿用 `settings.NewStore` 的 `os.UserConfigDir()`,與 `settings.json` 同層、依作品分開),與作品內 `audit.jsonl`、研究記錄完全分開、互不取代,不寫入作品資料夾。作品鍵 = 作品根目錄絕對路徑(正斜線、小寫)的 SHA-256 前 32 位 hex;作品搬家後舊記錄不跟著走(已知限制,已寫入 SPEC)。一份會話一個 JSON(`Session`):id、建立/更新時間、標題(第一個問題截短 40 字)、`History`(`llm.Message`,含濃縮摘要)、`rejections`(#40 拒絕原因)、`turns`(前端顯示列:user/assistant/工具列/通知,含 `args`/`result`/`bad`)。狀態一般/封存/已刪除,已刪除放 `<作品鍵>/trash/`;`Save` 以暫存檔+rename 寫入並清掉狀態變更前的舊位置檔案;`List` 回傳摘要(`Meta`:標題、更新時間、回合數=使用者提問數、狀態),損毀的記錄檔回錯不當成空清單(沿 §12.2 原則);寫入失敗一律回傳錯誤。
+- **App 綁定**(`app/app.go`,新欄位 `curSess`):`ListSessions`(含目前會話標示)、`SaveSession(turns)`、`ResumeSession(id, currentTurns)`、`ArchiveSession(id,on)`、`DeleteSession`、`RestoreSession`、`PurgeSession`。`SaveSession`:空會話(沒有任何回合)不存檔;同 id 再存時保留 CreatedAt 與狀態(接續中的封存會話維持封存);舊記錄不在(被永久刪除)就開新 id。`ResumeSession`:請求進行中(`a.cancel != nil`)拒絕切換;目前會話先存好再切換;History 與拒絕原因載回 Agent(`RestoreSession`);已刪除的要先還原才能接續。刪除/永久刪除目前會話時清空 `curSess`,下一次保存開新會話(不清空畫面上的對話)。`ResetChat`(新對話)與 `setProject`(換作品)也清空 `curSess`。
+- **Agent**(`app/internal/agent/agent.go`):新增 `Snapshot()`(回傳 History 與拒絕原因的副本)與 `RestoreSession(history, rejections)`(載回兩者);接續後下一次組裝訊息自然含舊 History 與拒絕原因(Interpretation:只當對話上下文參考,不會成為 Canon)。
+- **前端**(`ChatWindow.tsx`):標題列加「對話記錄」按鈕(`sessions-btn`),開啟清單對話框(`sessions-dialog`):分「最近/封存/已刪除」(`session-tab-*`),每列標題、更新時間、回合數、目前會話標示(`session-current`),按鈕接續/封存/刪除(`session-resume/archive/delete`);已刪除列為還原/永久刪除(`session-restore/purge`),**永久刪除先顯示「永久刪除後無法還原」+ 確定/取消**(`session-purge-confirm/cancel`),取消則不刪。開啟清單固定回到「最近」分頁(避免停留在剛清空的分頁)。回合結束(`chat:done` 成功後)與手動壓縮後(`setSaveTick` 觸發的 effect)以 `SaveSession` 存一次目前會話,寫檔失敗顯示在對話框錯誤列不靜默;`ResumeSession` 由前端帶入目前 turns(後端先存再切換),接續後載回 turns、重算用量。
+- **測試(Go,15 個新測試)**:`internal/sessions` 7 個(存讀往返含 History/rejections/turns、狀態移動含 trash 位置與永久刪除、刪除守衛、不同作品互不相見+鍵正規化、清單含回收區且損毀回錯、寫檔失敗回錯、標題截短);`internal/agent` 2 個(接續後下一次送給模型的訊息含舊 History 與拒絕原因、Snapshot/Restore 對稱且回副本);根套件 6 個(App 層保存/接續往返、Resume 先存目前會話、空會話不存檔、寫檔失敗回錯、請求進行中拒絕切換、刪/封/還原/永久刪除與刪後開新會話)。
+- **破壞驗證 5 輪**(拿掉對應實作 → 該測試 FAIL → 還原,還原後 `go test ./...` 全綠):①`Session.Rejections` 不序列化 → 往返 FAIL;②`RestoreSession` 不載入拒絕原因 → 「系統訊息應含拒絕原因」FAIL;③`Delete` 直接刪檔不搬 trash → 狀態移動 FAIL;④空會話也存檔 → 空會話 FAIL;⑤`ResumeSession` 不先存目前會話 → 先存再切換 FAIL。
+- **E2E(新組 `sessions`,18 項檢查,不呼叫模型)**:以 `__perkinsChatInject` 注入一個回合 + 綁定 `SaveSession` 保存 → 磁碟有記錄檔;清單顯示標題/回合數/目前標示;新對話後從清單接續看到舊 turns 且不另存一份;封存→封存分頁→取消封存→回最近;刪除→已刪除分頁(回收區)→還原→回最近;永久刪除先確認(取消不刪)→確定後清單與磁碟皆無殘留;640 寬清單在視窗內、無水平捲軸(對話框 32..608/640)。**基準 `--reuse --all`(全新 fixture,E2E_SKIP_AI=1)593/593 passed,略過 8 項,263s**(= 既有 575 + 本次 18);另單獨驗證 `sessions bible` 58/58、`sessions` 18/18。
+- **E2E 抓到並修正的兩個問題**:①重開清單停在上次的分頁(剛刪完就是空的「已刪除」)→ 開啟固定回「最近」;②640 段結束後資訊欄已被 §17.1 互斥收合(視窗變寬不自動重開),下一組看不到 `appearances` → 測試組結束前記錄並補回資訊欄狀態。另:量測/截圖要在 Radix 開啟動畫結束後(動畫期間 transform 蓋掉置中位移,量到的框會超出視窗,非版面問題)。
+- **截圖(實際 render)**:`C:\Users\tiger\AppData\Local\Temp\perkins-sessions-33\shots\sessions-list-1280.png`、`sessions-list-640.png`(同名檔案也在工作樹 `app/e2e/shots/`,已 .gitignore);已實際檢視:640 寬清單完整、按鈕不被裁、無水平捲軸。
+- **E2E 環境**:`settings.json` 備份後逐位元組還原(md5 一致)、無殘留程序(perkins-dev/wails/vite 已結束)、書櫃無垃圾(`clean-recent.js` dry-run 0 項)、`%APPDATA%\Perkins\sessions\` 無殘留(測試組只清 fixture 作品的鍵,開跑與結束各一次)、鎖檔已釋放。**`--all` 含 `shelf` 組:系統剪貼簿被「複製到平台」覆寫(既有行為,無法還原)**。
+- **SPEC 同步**:§12.3 新增「對話記錄」(位置、格式、狀態、何時存、接續語意、介面),§15「刪除 = 移到回收區」補對話記錄的回收區位置。
+- **未做/邊界**:接續後送出的內容照常計入上下文預算與預覽(A6),但 E2E 未驗失敗寫入時的錯誤列前端行為(由 Go 測試覆蓋:寫檔失敗回錯);封存中的會話接續後維持封存(未自動取消);E2E_SKIP_AI=1 未跑模型相關段(bot-chat 提案 8 項照舊略過);研究記錄與 `audit.jsonl` 格式與寫入時機不變。
 ## 2026-10-11 — 提案一次提供多個改寫版本,最多 3 個(Issue #39)
 
 - **資料模型**(`app/internal/proposal/proposal.go`):保留 `Replacement`(主版本)+ 加 `Label`(主版本方向)與 `Alternatives []Version{Label, Replacement}`(最多 2 筆,由系統邊界驗證),另有 `AcceptedVersion`(接受時選的序號,0 = 主版本)。`Versions()` 回全部版本。舊提案 JSON 沒有這些欄位 → 照常可讀、視為單一版本、照常接受。原文比對、BaseHash、Start/End、衝突判斷不變(所有版本替換同一段原文,G3 不變)。

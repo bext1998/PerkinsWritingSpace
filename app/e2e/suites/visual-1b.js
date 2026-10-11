@@ -822,6 +822,8 @@ module.exports = {
                 JSON.stringify({v0Back, v1After}));
             // 640 寬:版本切換與接受/拒絕都在視窗內可點(截圖)
             await page.click('[data-testid=review-version-1]');
+            // 640 寬會自動收資訊欄(§17.1 互斥),視窗變寬後不自動重開;回 1280 後要補回,否則後續組(save-flow 場景列)找不到
+            const mvInspOpen = !!(await page.$('[data-testid=inspector]'));
             await page.setViewportSize({width: 640, height: 672});
             await settle(80, 900);
             await shot('84-multi-version-review-640');
@@ -844,6 +846,7 @@ module.exports = {
             // 回 1280 接受所選的第 2 個版本(不編輯):磁碟寫入第 2 個版本
             await page.setViewportSize({width: 1280, height: 800});
             await settle(80, 900);
+            if (mvInspOpen && !(await page.$('[data-testid=inspector]'))) await page.evaluate(() => document.querySelector('[data-testid=toggle-inspector]')?.click());
             await shot('83-multi-version-review');
             await page.click('[data-testid=review-accept]');
             const mvDisk = await mvWaitDisk('夜色張牙舞爪地撲了下來。');

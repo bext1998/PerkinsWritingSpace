@@ -58,7 +58,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 | 改動類型 | 跑 |
 |---|---|
 | 標題欄、應用程式選單、禪模式、品牌 | `titlebar-zen` |
-| Perkins Bot 對話、提案、預覽 | `bot-chat` `polish` `visual-1b` |
+| Perkins Bot 對話、提案、預覽、對話記錄 | `bot-chat` `polish` `visual-1b` `sessions` |
 | 設定集、自訂分類、寫法檢查 | `bible` |
 | Notion 匯入 | `notion` |
 | 章節、書櫃、平台輸出、摘要 | `shelf` `layout-visual` |
