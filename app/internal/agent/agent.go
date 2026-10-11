@@ -45,6 +45,7 @@ const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品�
 - 意圖明確時直接做,不要為了保險而提問。
 - 作者的意圖不明、且不同理解會改變故事方向時,先問最多 1–3 個具體問題,再提案。
 - 有多個合理方向時,列出條件式選項(例如「若你重視 A,可以…;若重視 B,…」),不要標示哪個是「最佳」。
+- 有多個合理的改寫方向時,可以在同一個提案附最多 3 個版本(replacement 加 alternatives,各自用 label 標一句很短的方向);只有一種合理改法時只給一個版本。不要標示哪個版本是「最佳」。
 - 「前情摘要」是作者確認過的章節摘要,可能省略細節;需要細節時用工具查原文。
 - 需要查看其他檔案時,使用提供的工具。`
 
@@ -166,8 +167,8 @@ var toolDefs = []llm.ToolDef{
 	},
 	{
 		Name:        "propose_patch",
-		Description: "對某檔案提出一項修改提案(不會直接修改檔案,需作者審核接受)。original 須逐字複製原文且在檔案中唯一。",
-		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"original":{"type":"string","description":"要被替換的原文,逐字且唯一"},"replacement":{"type":"string"},"rationale":{"type":"string","description":"為什麼這樣改"},"assumptions":{"type":"array","items":{"type":"string"},"description":"你做了哪些假設或推測"}},"required":["path","original","replacement","rationale"]}`),
+		Description: "對某檔案提出一項修改提案(不會直接修改檔案,需作者審核接受)。original 須逐字複製原文且在檔案中唯一。有多個合理的改寫方向時可附 alternatives(最多 2 個,連 replacement 共最多 3 個版本),各自標一句很短的方向 label。",
+		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"original":{"type":"string","description":"要被替換的原文,逐字且唯一"},"replacement":{"type":"string","description":"第 1 個版本的內容"},"label":{"type":"string","description":"第 1 個版本的方向說明,一句很短的話(選填)"},"alternatives":{"type":"array","description":"其他改寫版本(選填,最多 2 個)","items":{"type":"object","properties":{"label":{"type":"string"},"replacement":{"type":"string"}},"required":["replacement"]}},"rationale":{"type":"string","description":"為什麼這樣改"},"assumptions":{"type":"array","items":{"type":"string"},"description":"你做了哪些假設或推測"}},"required":["path","original","replacement","rationale"]}`),
 	},
 }
 
@@ -249,11 +250,13 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		return r, "", err
 	case "propose_patch":
 		var p struct {
-			Path        string   `json:"path"`
-			Original    string   `json:"original"`
-			Replacement string   `json:"replacement"`
-			Rationale   string   `json:"rationale"`
-			Assumptions []string `json:"assumptions"`
+			Path         string          `json:"path"`
+			Original     string          `json:"original"`
+			Replacement  string          `json:"replacement"`
+			Label        string          `json:"label"`
+			Alternatives json.RawMessage `json:"alternatives"` // 格式驗證交給 parseAlternatives(#39 系統邊界)
+			Rationale    string          `json:"rationale"`
+			Assumptions  []string        `json:"assumptions"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
 			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
@@ -267,13 +270,55 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		if a.Proposals == nil {
 			return "", "", fmt.Errorf("提案功能未啟用")
 		}
-		pr, err := a.Proposals.Create(a.Model, p.Path, p.Original, p.Replacement, p.Rationale, p.Assumptions)
+		alts, notes := parseAlternatives(p.Alternatives, p.Original, p.Replacement)
+		pr, err := a.Proposals.CreateVersions(a.Model, p.Path, p.Original,
+			proposal.Version{Label: strings.TrimSpace(p.Label), Replacement: p.Replacement}, p.Rationale, p.Assumptions, alts)
 		if err != nil {
 			return "", "", err
 		}
-		return "提案 " + pr.ID + " 已建立,等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", pr.ID, nil
+		msg := fmt.Sprintf("提案 %s 已建立(%d 個版本),等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", pr.ID, len(pr.Versions()))
+		for _, n := range notes {
+			msg += " " + n
+		}
+		return msg, pr.ID, nil
 	}
 	return "", "", fmt.Errorf("未實作的工具 %s", name)
+}
+
+// parseAlternatives 把模型給的 alternatives 參數整形成替代版本(#39;系統邊界驗證):
+// 格式不對整個忽略(退回單一版本),超過 2 筆只取前 2 筆,空白或與原文/其他版本相同的丟掉;
+// 不讓整個提案失敗(本機小模型不穩時退回單一版本)。notes 是附在工具結果裡說明給模型聽的句子。
+func parseAlternatives(raw json.RawMessage, original, replacement string) ([]proposal.Version, []string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var arr []struct {
+		Label       string `json:"label"`
+		Replacement string `json:"replacement"`
+	}
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return nil, []string{"alternatives 格式不對,已忽略,只建立單一版本。"}
+	}
+	var out []proposal.Version
+	var notes []string
+	seen := map[string]bool{original: true, replacement: true}
+	for i, a := range arr {
+		if len(out) >= 2 {
+			notes = append(notes, fmt.Sprintf("替代版本最多 2 個,第 %d 個之後已略過。", i+1))
+			break
+		}
+		r := strings.TrimSpace(a.Replacement)
+		switch {
+		case r == "":
+			notes = append(notes, fmt.Sprintf("第 %d 個替代版本沒有內容,已略過。", i+1))
+		case seen[r]:
+			notes = append(notes, fmt.Sprintf("第 %d 個替代版本與原文或其他版本相同,已略過。", i+1))
+		default:
+			seen[r] = true
+			out = append(out, proposal.Version{Label: strings.TrimSpace(a.Label), Replacement: r})
+		}
+	}
+	return out, notes
 }
 
 // searchMaxHits 是 search_project 一次回傳的片段上限(不變;超過只多附一行總筆數)。

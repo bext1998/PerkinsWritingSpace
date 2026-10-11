@@ -336,12 +336,11 @@ export default function ChatWindow(props: Props) {
         } catch (e) { setError(errText(e)); }
     };
 
-    const accept = async (p: proposal.Proposal) => {
+    const accept = async (p: proposal.Proposal, version: number, mine: string | null) => {
         const unlock = lockEdits();
         try {
             await beforeAsk(); // 先存檔:後端以磁碟內容比對,未存的文字也不能在重新載入時遺失
-            const mine = edited[p.id];
-            const r = await AcceptProposal(p.id, mine !== undefined && mine !== p.replacement ? mine : null as any);
+            const r = await AcceptProposal(p.id, version, mine as any); // version:作者選的版本(#39);mine 非 null = 作者編輯過(部分採用)
             await onAccepted(r);
             notify({text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
             setError('');
@@ -567,12 +566,16 @@ export default function ChatWindow(props: Props) {
                             <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
                             {openProposals.map(p => {
                                 // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
-                                const changed = edited[p.id] !== undefined && edited[p.id] !== p.replacement;
+                                // edited 以「提案#版本」為鍵(#39):任一版本被編輯過就顯示已修改
+                                const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
+                                const changed = versions.some((v, i) =>
+                                    edited[`${p.id}#${i}`] !== undefined && edited[`${p.id}#${i}`] !== v.replacement);
                                 return (
                                     <div key={p.id} data-testid="proposal"
                                          className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
                                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                             <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                            {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
                                             <span className="ml-auto shrink-0">{p.model}</span>
                                         </div>
                                         <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>

@@ -636,6 +636,20 @@ export namespace project {
 
 export namespace proposal {
 	
+	export class Version {
+	    label?: string;
+	    replacement: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Version(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.replacement = source["replacement"];
+	    }
+	}
 	export class Proposal {
 	    id: string;
 	    createdAt: string;
@@ -643,6 +657,8 @@ export namespace proposal {
 	    target: string;
 	    original: string;
 	    replacement: string;
+	    label?: string;
+	    alternatives?: Version[];
 	    rationale: string;
 	    assumptions: string[];
 	    baseHash: string;
@@ -651,6 +667,7 @@ export namespace proposal {
 	    status: string;
 	    snapshotId?: string;
 	    relocated?: boolean;
+	    acceptedVersion?: number;
 	    authorEdited?: boolean;
 	    final?: string;
 	
@@ -666,6 +683,8 @@ export namespace proposal {
 	        this.target = source["target"];
 	        this.original = source["original"];
 	        this.replacement = source["replacement"];
+	        this.label = source["label"];
+	        this.alternatives = this.convertValues(source["alternatives"], Version);
 	        this.rationale = source["rationale"];
 	        this.assumptions = source["assumptions"];
 	        this.baseHash = source["baseHash"];
@@ -674,9 +693,28 @@ export namespace proposal {
 	        this.status = source["status"];
 	        this.snapshotId = source["snapshotId"];
 	        this.relocated = source["relocated"];
+	        this.acceptedVersion = source["acceptedVersion"];
 	        this.authorEdited = source["authorEdited"];
 	        this.final = source["final"];
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 
 }

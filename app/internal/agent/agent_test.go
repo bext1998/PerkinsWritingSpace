@@ -1916,3 +1916,65 @@ func TestRejectionReasonOmitsProtectedOriginal(t *testing.T) {
 		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", sys)
 	}
 }
+
+// #39 意圖(系統邊界,模型回應):alternatives 格式不對就退回單一版本(提案不失敗),
+// 超過 2 筆只取前 2 筆,空白或與原文/其他版本相同的丟掉;都要在工具結果告知模型。
+func TestProposePatchAlternativesSanitizedAtBoundary(t *testing.T) {
+	// 格式不對:退回單一版本,主版本 label 保留
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","label":"收斂","rationale":"r","alternatives":"格式不對"}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	res := s.reqs[1].Messages[len(s.reqs[1].Messages)-1].Content
+	if !strings.Contains(res, "1 個版本") || !strings.Contains(res, "alternatives 格式不對") {
+		t.Fatalf("格式不對應退回單一版本並說明: %q", res)
+	}
+	list, _ := a.Proposals.List()
+	if len(list) != 1 || len(list[0].Alternatives) != 0 || list[0].Label != "收斂" {
+		t.Fatalf("應只建立單一版本(主版本 label 保留): %+v", list)
+	}
+
+	// 3 個替代版本只取前 2 筆並說明略過
+	a2, s2, _ := setup(t)
+	s2.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"A","rationale":"r","alternatives":[{"replacement":"B"},{"replacement":"C"},{"replacement":"D"}]}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	if _, err := a2.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	res2 := s2.reqs[1].Messages[len(s2.reqs[1].Messages)-1].Content
+	if !strings.Contains(res2, "3 個版本") || !strings.Contains(res2, "最多 2 個") {
+		t.Fatalf("超過 2 筆應只取前 2 筆並說明: %q", res2)
+	}
+	list2, _ := a2.Proposals.List()
+	if len(list2[0].Alternatives) != 2 || list2[0].Alternatives[0].Replacement != "B" ||
+		list2[0].Alternatives[1].Replacement != "C" {
+		t.Fatalf("應只留前 2 個替代版本: %+v", list2[0].Alternatives)
+	}
+
+	// 空白與重複(與主版本或原文相同)的替代版本丟掉並說明
+	a3, s3, _ := setup(t)
+	s3.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"A","rationale":"r","alternatives":[{"replacement":"  "},{"replacement":"A"},{"replacement":"小明走進森林。"},{"replacement":"C"}]}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	if _, err := a3.Ask(context.Background(), AskParams{Question: "q"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	res3 := s3.reqs[1].Messages[len(s3.reqs[1].Messages)-1].Content
+	if !strings.Contains(res3, "沒有內容") || !strings.Contains(res3, "相同") {
+		t.Fatalf("空白與重複版本應說明略過: %q", res3)
+	}
+	list3, _ := a3.Proposals.List()
+	if len(list3[0].Alternatives) != 1 || list3[0].Alternatives[0].Replacement != "C" {
+		t.Fatalf("只應留下未重複的 C: %+v", list3[0].Alternatives)
+	}
+}

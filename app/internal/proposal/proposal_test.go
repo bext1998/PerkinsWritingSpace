@@ -2,12 +2,14 @@ package proposal
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"perkins/internal/project"
+	"perkins/internal/research"
 	"perkins/internal/snapshot"
 )
 
@@ -76,7 +78,7 @@ func TestAcceptAppliesOnlyTargetAndSnapshotsFirst(t *testing.T) {
 	s, rel, dir := setup(t)
 	before := read(t, s, rel)
 	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
-	got, err := s.Accept(p.ID, nil)
+	got, err := s.Accept(p.ID, 0, nil)
 	if err != nil || got.Status != Accepted {
 		t.Fatalf("err=%v status=%v", err, got)
 	}
@@ -91,7 +93,7 @@ func TestAcceptAppliesOnlyTargetAndSnapshotsFirst(t *testing.T) {
 	if !strings.Contains(string(prov), p.ID) {
 		t.Error("provenance 應記錄此次接受")
 	}
-	if _, err := s.Accept(p.ID, nil); err != ErrNotPending {
+	if _, err := s.Accept(p.ID, 0, nil); err != ErrNotPending {
 		t.Errorf("重複接受應回 ErrNotPending, got %v", err)
 	}
 }
@@ -103,7 +105,7 @@ func TestAcceptConflictWhenAuthorEditedTheSameText(t *testing.T) {
 	edited := "小明走進森林。天色暗得像墨。他很害怕。\n"
 	s.Proj.WriteFile(rel, edited)
 
-	got, err := s.Accept(p.ID, nil)
+	got, err := s.Accept(p.ID, 0, nil)
 	if err != ErrConflict || got.Status != Conflict {
 		t.Fatalf("應為 conflict, err=%v status=%v", err, got.Status)
 	}
@@ -123,7 +125,7 @@ func TestAcceptRelocatesWhenAuthorEditedElsewhere(t *testing.T) {
 	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
 	s.Proj.WriteFile(rel, "【作者在前面補了一段】\n小明走進森林。天很黑。他很害怕。\n【又在後面補一段】\n")
 
-	got, err := s.Accept(p.ID, nil)
+	got, err := s.Accept(p.ID, 0, nil)
 	if err != nil || !got.Relocated {
 		t.Fatalf("應重新定位並套用, err=%v got=%+v", err, got)
 	}
@@ -141,7 +143,7 @@ func TestAcceptRelocatedReportsAppliedStart(t *testing.T) {
 	content := "夜濃得化不開。【作者在前面補寫】\n小明走進森林。天很黑。他很害怕。\n"
 	s.Proj.WriteFile(rel, content)
 
-	got, err := s.Accept(p.ID, nil)
+	got, err := s.Accept(p.ID, 0, nil)
 	if err != nil || !got.Relocated {
 		t.Fatalf("應重新定位並套用, err=%v got=%+v", err, got)
 	}
@@ -159,7 +161,7 @@ func TestAcceptConflictWhenOriginalBecomesAmbiguous(t *testing.T) {
 	p, _ := s.Create("m", rel, "天很黑。", "X", "", nil)
 	edited := "天很黑。小明走進森林。天很黑。\n"
 	s.Proj.WriteFile(rel, edited)
-	if _, err := s.Accept(p.ID, nil); err != ErrConflict || read(t, s, rel) != edited {
+	if _, err := s.Accept(p.ID, 0, nil); err != ErrConflict || read(t, s, rel) != edited {
 		t.Fatalf("應衝突且不改檔, err=%v", err)
 	}
 }
@@ -174,7 +176,7 @@ func TestRejectNeverTouchesFile(t *testing.T) {
 	if read(t, s, rel) != before {
 		t.Fatal("拒絕不得改動稿件")
 	}
-	if _, err := s.Accept(p.ID, nil); err != ErrNotPending {
+	if _, err := s.Accept(p.ID, 0, nil); err != ErrNotPending {
 		t.Fatalf("已拒絕的提案不可再接受, got %v", err)
 	}
 	list, _ := s.List()
@@ -193,7 +195,7 @@ func TestAcceptRefusedWhenSnapshotFails(t *testing.T) {
 	}
 	defer func() { takeSnapshot = (*snapshot.Store).Take }()
 	_ = dir
-	if _, err := s.Accept(p.ID, nil); err == nil {
+	if _, err := s.Accept(p.ID, 0, nil); err == nil {
 		t.Fatal("快照失敗時應拒絕套用")
 	}
 	if read(t, s, rel) != before {
@@ -207,7 +209,7 @@ func TestAcceptWithAuthorEdit(t *testing.T) {
 	s, rel, dir := setup(t)
 	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開,像墨一樣。", "why", nil)
 	mine := "夜濃得化不開。"
-	got, err := s.Accept(p.ID, &mine)
+	got, err := s.Accept(p.ID, 0, &mine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +226,114 @@ func TestAcceptWithAuthorEdit(t *testing.T) {
 	// 沒有改動的「編輯」不算作者修改
 	p2, _ := s.Create("m", rel, "他很害怕。", "他怕得發抖。", "why", nil)
 	same := "他怕得發抖。"
-	got2, _ := s.Accept(p2.ID, &same)
+	got2, _ := s.Accept(p2.ID, 0, &same)
 	if got2.AuthorEdited {
 		t.Error("文字未變不應標記為作者修改")
+	}
+}
+
+// #39 意圖:多版本提案(主版本 + 最多 2 個替代版本)要完整保存;舊提案 JSON 沒有版本欄位,
+// 照常可讀、可接受(單一版本)。
+func TestCreateVersionsSavesAllAndLegacyJSONStaysReadable(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.CreateVersions("m", rel, "天很黑。",
+		Version{Label: "收斂", Replacement: "夜色沉了下來。"}, "why", nil,
+		[]Version{{Label: "更誇張", Replacement: "夜色像墨一樣漫開。"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := got.Versions()
+	if len(vs) != 2 || vs[0] != (Version{Label: "收斂", Replacement: "夜色沉了下來。"}) ||
+		vs[1] != (Version{Label: "更誇張", Replacement: "夜色像墨一樣漫開。"}) {
+		t.Fatalf("Versions() = %+v", vs)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, ".perkins", "proposals", p.ID+".json"))
+	if !strings.Contains(string(raw), `"alternatives"`) || !strings.Contains(string(raw), "更誇張") {
+		t.Fatalf("保存的 JSON 應含替代版本: %s", raw)
+	}
+
+	// 舊提案 JSON(沒有 label/alternatives 欄位):照常可讀、可接受
+	content := read(t, s, rel)
+	start := strings.Index(content, "天很黑。")
+	legacy := fmt.Sprintf(`{"id":"20260101-000000-legacy","createdAt":"2026-01-01T00:00:00+08:00","model":"m","target":%q,"original":"天很黑。","replacement":"夜很黑。","rationale":"","assumptions":[],"baseHash":%q,"start":%d,"end":%d,"status":"pending"}`,
+		rel, Hash(content), start, start+len("天很黑。"))
+	if err := os.WriteFile(filepath.Join(dir, ".perkins", "proposals", "20260101-000000-legacy.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old, err := s.Get("20260101-000000-legacy")
+	if err != nil {
+		t.Fatalf("舊提案 JSON 應可讀: %v", err)
+	}
+	if len(old.Versions()) != 1 || old.Versions()[0].Replacement != "夜很黑。" {
+		t.Fatalf("舊提案應視為單一版本: %+v", old.Versions())
+	}
+	if _, err := s.Accept("20260101-000000-legacy", 1, nil); err == nil {
+		t.Fatal("舊提案沒有第 2 個版本,選第 2 個應回錯")
+	}
+	if _, err := s.Accept("20260101-000000-legacy", 0, nil); err != nil || !strings.Contains(read(t, s, rel), "夜很黑。") {
+		t.Fatalf("舊提案接受第 1 個版本應照常寫入: %v", err)
+	}
+}
+
+// #39 意圖:作者選第 2 個版本,寫入的就是第 2 個版本;Provenance 與研究記錄都記下選了
+// 第幾個版本與版本總數;序號超出範圍回錯且不寫檔。編輯以所選版本為底(部分採用)。
+func TestAcceptSelectedVersionWritesThatVersion(t *testing.T) {
+	s, rel, dir := setup(t)
+	mk := func() *Proposal {
+		p, err := s.CreateVersions("m", rel, "天很黑。",
+			Version{Label: "收斂", Replacement: "夜色沉了下來。"}, "why", nil,
+			[]Version{{Label: "更誇張", Replacement: "夜色像墨一樣漫開。"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := mk()
+	if _, err := s.Accept(p.ID, 5, nil); err == nil {
+		t.Fatal("版本序號超出範圍應回錯")
+	}
+	if got, _ := s.Get(p.ID); got.Status != Pending {
+		t.Fatalf("回錯時不得改變狀態: %v", got.Status)
+	}
+	got, err := s.Accept(p.ID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read(t, s, rel) != "小明走進森林。夜色像墨一樣漫開。他很害怕。\n" {
+		t.Fatalf("應寫入第 2 個版本: %q", read(t, s, rel))
+	}
+	if got.AcceptedVersion != 1 {
+		t.Fatalf("AcceptedVersion = %d, want 1", got.AcceptedVersion)
+	}
+	prov, _ := os.ReadFile(filepath.Join(dir, ".perkins", "provenance.jsonl"))
+	if !strings.Contains(string(prov), `"version":1`) || !strings.Contains(string(prov), `"versions":2`) {
+		t.Errorf("provenance 應記錄選了第幾個版本與版本總數: %s", prov)
+	}
+	if err := s.Proj.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	LogAccept(research.New(s.Proj, "sess"), got)
+	res, _ := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if !strings.Contains(string(res), `"version":1`) || !strings.Contains(string(res), `"versions":2`) {
+		t.Errorf("研究記錄 proposal_accept 應記錄版本: %s", res)
+	}
+
+	// 作者編輯第 2 個版本:以所選版本為底(部分採用)
+	if err := s.Proj.WriteFile(rel, "小明走進森林。天很黑。他很害怕。\n"); err != nil {
+		t.Fatal(err)
+	}
+	p2 := mk()
+	mine := "夜色張牙舞爪。"
+	got2, err := s.Accept(p2.ID, 1, &mine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read(t, s, rel) != "小明走進森林。夜色張牙舞爪。他很害怕。\n" || !got2.AuthorEdited ||
+		got2.Final != mine || got2.AcceptedVersion != 1 {
+		t.Fatalf("編輯第 2 個版本應寫入作者版本並記錄版本: %+v %q", got2, read(t, s, rel))
 	}
 }

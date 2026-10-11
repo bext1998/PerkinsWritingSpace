@@ -32,24 +32,43 @@ var (
 	ErrNotPending = errors.New("此提案已處理過")
 )
 
+// Version 是提案的一個改寫版本(#39):Label 是一句很短的方向說明(選填,例如「收斂」「更誇張」)。
+type Version struct {
+	Label       string `json:"label,omitempty"`
+	Replacement string `json:"replacement"`
+}
+
 type Proposal struct {
-	ID          string   `json:"id"`
-	CreatedAt   string   `json:"createdAt"`
-	Model       string   `json:"model"`
-	Target      string   `json:"target"`
-	Original    string   `json:"original"`
-	Replacement string   `json:"replacement"`
-	Rationale   string   `json:"rationale"`
-	Assumptions []string `json:"assumptions"`
-	BaseHash    string   `json:"baseHash"`
-	Start       int      `json:"start"` // Original 在檔案中的位元組偏移;重新定位套用後改為實際套用處(編輯器據此標示改動)
-	End         int      `json:"end"`
-	Status      Status   `json:"status"`
-	SnapshotID  string   `json:"snapshotId,omitempty"` // 接受時產生
-	Relocated   bool     `json:"relocated,omitempty"`  // 檔案在別處有變動,依原文重新定位後套用
+	ID          string `json:"id"`
+	CreatedAt   string `json:"createdAt"`
+	Model       string `json:"model"`
+	Target      string `json:"target"`
+	Original    string `json:"original"`
+	Replacement string `json:"replacement"` // 第 1 個版本(主版本)的內容
+	Label       string `json:"label,omitempty"`
+	// Alternatives 是其他改寫版本(最多 2 筆;連主版本最多 3 個)。沒有就是單一版本,
+	// 舊提案 JSON 沒有這些欄位,照常可讀可接受。
+	Alternatives []Version `json:"alternatives,omitempty"`
+	Rationale    string    `json:"rationale"`
+	Assumptions  []string  `json:"assumptions"`
+	BaseHash     string    `json:"baseHash"`
+	Start        int       `json:"start"` // Original 在檔案中的位元組偏移;重新定位套用後改為實際套用處(編輯器據此標示改動)
+	End          int       `json:"end"`
+	Status       Status    `json:"status"`
+	SnapshotID   string    `json:"snapshotId,omitempty"` // 接受時產生
+	Relocated    bool      `json:"relocated,omitempty"`  // 檔案在別處有變動,依原文重新定位後套用
+	// AcceptedVersion 是作者接受時選的版本序號(0 = 主版本;舊提案無此欄 = 0)。
+	AcceptedVersion int `json:"acceptedVersion,omitempty"`
 	// 部分採用(SPEC §12.3):作者在接受前編輯過建議文字時,實際寫入的是 Final。
 	AuthorEdited bool   `json:"authorEdited,omitempty"`
 	Final        string `json:"final,omitempty"`
+}
+
+// Versions 回傳所有改寫版本(主版本 + Alternatives,#39);舊提案只有一個版本。
+func (p *Proposal) Versions() []Version {
+	out := make([]Version, 0, 1+len(p.Alternatives))
+	out = append(out, Version{Label: p.Label, Replacement: p.Replacement})
+	return append(out, p.Alternatives...)
 }
 
 type Store struct{ Proj *project.Project }
@@ -81,9 +100,16 @@ func (s *Store) Get(id string) (*Proposal, error) {
 	return &p, json.Unmarshal(b, &p)
 }
 
-// Create 由 AI 工具呼叫。它只寫入 .perkins/proposals/,不碰稿件與設定。
-// original 必須在目標檔中恰好出現一次,以精確定位(模型給的行號/偏移不可靠)。
+// Create 由 AI 工具呼叫(單一版本);多版本用 CreateVersions(#39)。
 func (s *Store) Create(model, target, original, replacement, rationale string, assumptions []string) (*Proposal, error) {
+	return s.CreateVersions(model, target, original, Version{Replacement: replacement}, rationale, assumptions, nil)
+}
+
+// CreateVersions 建立提案(#39):main 是主版本(連同 alternatives 最多 3 個版本,
+// 由工具呼叫的系統邊界驗證),所有版本替換的是同一段原文。它只寫入 .perkins/proposals/,
+// 不碰稿件與設定;original 必須在目標檔中恰好出現一次,以精確定位(模型給的行號/偏移不可靠)。
+func (s *Store) CreateVersions(model, target, original string, main Version, rationale string, assumptions []string, alternatives []Version) (*Proposal, error) {
+	replacement := main.Replacement
 	if original == "" {
 		return nil, errors.New("original 不可為空:請提供要被替換的原文片段")
 	}
@@ -103,18 +129,20 @@ func (s *Store) Create(model, target, original, replacement, rationale string, a
 	start := strings.Index(content, original)
 	now := time.Now()
 	p := &Proposal{
-		ID:          fmt.Sprintf("%s-%s", now.Format("20060102-150405"), Hash(content + replacement + now.String())[:6]),
-		CreatedAt:   now.Format(time.RFC3339),
-		Model:       model,
-		Target:      target,
-		Original:    original,
-		Replacement: replacement,
-		Rationale:   rationale,
-		Assumptions: append([]string{}, assumptions...),
-		BaseHash:    Hash(content),
-		Start:       start,
-		End:         start + len(original),
-		Status:      Pending,
+		ID:           fmt.Sprintf("%s-%s", now.Format("20060102-150405"), Hash(content + replacement + now.String())[:6]),
+		CreatedAt:    now.Format(time.RFC3339),
+		Model:        model,
+		Target:       target,
+		Original:     original,
+		Replacement:  replacement,
+		Label:        main.Label,
+		Alternatives: append([]Version{}, alternatives...),
+		Rationale:    rationale,
+		Assumptions:  append([]string{}, assumptions...),
+		BaseHash:     Hash(content),
+		Start:        start,
+		End:          start + len(original),
+		Status:       Pending,
 	}
 	return p, s.save(p)
 }
@@ -154,8 +182,9 @@ func (s *Store) Reject(id string) (*Proposal, error) {
 }
 
 // Accept 是全系統唯一會因 AI 提案而寫入稿件的路徑,只由作者的介面動作觸發。
-// edited 非 nil 時表示作者編輯過建議文字(部分採用),寫入的是作者的版本(B4)。
-func (s *Store) Accept(id string, edited *string) (*Proposal, error) {
+// version 是作者選的版本序號(0 = 主版本,#39);edited 非 nil 時表示作者編輯過該版本文字
+// (部分採用),寫入的是作者的版本(B4)。
+func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error) {
 	p, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -163,6 +192,11 @@ func (s *Store) Accept(id string, edited *string) (*Proposal, error) {
 	if p.Status != Pending {
 		return nil, ErrNotPending
 	}
+	versions := p.Versions()
+	if version < 0 || version >= len(versions) {
+		return nil, fmt.Errorf("沒有第 %d 個版本(共 %d 個)", version+1, len(versions))
+	}
+	chosen := versions[version]
 	content, err := s.Proj.ReadFile(p.Target)
 	if err != nil {
 		return nil, err
@@ -184,11 +218,12 @@ func (s *Store) Accept(id string, edited *string) (*Proposal, error) {
 		p.Relocated = true
 		p.Start, p.End = start, end
 	}
-	final := p.Replacement
-	if edited != nil && *edited != p.Replacement {
+	final := chosen.Replacement
+	if edited != nil && *edited != chosen.Replacement {
 		final = *edited
 		p.AuthorEdited, p.Final = true, final
 	}
+	p.AcceptedVersion = version
 	// G3:先快照,快照失敗就不套用。
 	snap, err := takeSnapshot(&snapshot.Store{Proj: s.Proj}, "接受提案 "+p.ID+" 之前", "before-accept", []string{p.Target})
 	if err != nil {
@@ -203,6 +238,7 @@ func (s *Store) Accept(id string, edited *string) (*Proposal, error) {
 	}
 	snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
+		"version": version, "versions": len(versions),
 		"authorEdited": p.AuthorEdited, "final": final})
 	return p, nil
 }
