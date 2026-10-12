@@ -533,101 +533,216 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
     );
 }
 
-function PlatformsTab({cfg, setCfg}: {cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void}) {
-    const [list, setList] = useState<publish.Platform[]>(cfg.platforms);
-    const [sel, setSel] = useState(0);
+// ---- 平台輸出頁(#95:清單 → 子頁,同 Perkins Bot 頁版型)----
+
+// 繁簡轉換的短標示:清單列的規則摘要用,選單內仍用 ConvertOptions 的完整標示
+const CONV_SHORT: Record<string, string> = {tw2s: '轉簡', tw2sp: '轉簡(含用詞)', s2tw: '轉繁', s2twp: '轉繁(含用詞)'};
+
+// 規則摘要:清單列上一行看完這個平台的輸出規則
+function rulesSummary(r: publish.Rules) {
+    return [r.indent ? '段首縮排' : '不縮排', r.blankLine ? '段間空行' : '不留空行',
+        r.heading === 'strip' ? '保留標題' : '不輸出標題', `分隔:${r.sceneBreak || '空行'}`,
+        `繁簡:${r.convert ? (CONV_SHORT[r.convert] ?? r.convert) : '不轉'}`].join(' · ');
+}
+
+// 平台規則欄位:判斷子頁是否有未儲存變更,與儲存回應後同步沒再改過的欄位
+const PLATFORM_KEYS = ['name', 'verified'] as const;
+const RULE_KEYS = ['indent', 'blankLine', 'heading', 'sceneBreak', 'convert'] as const;
+const samePlatform = (a: publish.Platform, b: publish.Platform) =>
+    PLATFORM_KEYS.every(k => normField(a[k]) === normField(b[k])) && RULE_KEYS.every(k => normField(a.rules[k]) === normField(b.rules[k]));
+
+// 平台子頁(#95):一個平台的規則與預覽,按「儲存」才寫入;刪除在標題列,兩步確認(UI_GUIDE §7)
+// 平台清單的寫入(儲存、刪除、恢復預設):後端 SavePlatforms 整份覆寫清單(PR #110 審查)。
+// 前一次寫入還沒回應就離開子頁、切換導覽頁或關閉設定頁,再刪別的平台時,若以畫面上的舊清單為基礎,
+// 會把剛儲存的內容蓋回去,遲到的回應也會讓刪掉的平台在畫面上復活。
+// 所以佇列放在模組層級(跨元件重建與設定頁重開都是同一條),每次寫入在輪到自己時才向後端讀最新清單。
+type PlatformWrite = (edit: ((list: publish.Platform[]) => publish.Platform[]) | 'reset') => Promise<main.SettingsView>;
+let platformQueue: Promise<unknown> = Promise.resolve();
+const queuePlatformWrite: PlatformWrite = edit => {
+    const run = platformQueue.then(async () =>
+        edit === 'reset' ? ResetPlatforms() : SavePlatforms(edit((await GetSettings()).platforms)));
+    platformQueue = run.catch(() => {}); // 失敗由呼叫者顯示;不讓佇列卡住
+    return run;
+};
+
+function PlatformPage({cfg, write, initial, opts, onBack, onDeleted, setDirty}: {
+    cfg: main.SettingsView; write: PlatformWrite; initial: publish.Platform; opts: main.Option[];
+    onBack: () => void; onDeleted: () => void; setDirty: (d: boolean) => void;
+}) {
+    const [form, setForm] = useState<publish.Platform>(initial);
     const [out, setOut] = useState('');
-    const [opts, setOpts] = useState<main.Option[]>([]);
     const [msg, setMsg] = useState('');
     const [error, setError] = useState('');
-    const p = list[sel];
-
-    useEffect(() => { ConvertOptions().then(setOpts); }, []);
+    const [confirmDel, setConfirmDel] = useState(false);
+    // 已儲存的版本;沒有就是「新增後還沒儲存」的平台,一律視為未儲存
+    const saved = cfg.platforms.find(x => x.id === initial.id);
+    const dirty = !saved || !samePlatform(form, saved);
+    useEffect(() => { setDirty(dirty); }); // 每次 render 都回報:父層清掉後子頁若仍在,立即恢復
+    useEffect(() => () => setDirty(false), [setDirty]);
+    // 預覽依子頁目前草稿的規則即時重算
     useEffect(() => {
-        if (!p) return;
-        PreviewExport(SAMPLE, p.rules).then(setOut).catch(e => setOut('錯誤:' + errText(e)));
-    }, [p]);
+        PreviewExport(SAMPLE, form.rules).then(setOut).catch(e => setOut('錯誤:' + errText(e)));
+    }, [form.rules]);
 
     const update = (patch: Partial<publish.Platform> | {rules: Partial<publish.Rules>}) => {
-        setList(l => l.map((x, i) => i !== sel ? x : {...x, ...patch, rules: {...x.rules, ...('rules' in patch ? patch.rules : {})}} as publish.Platform));
+        setForm(f => ({...f, ...patch, rules: {...f.rules, ...('rules' in patch ? patch.rules : {})}} as publish.Platform));
         setMsg('');
     };
 
     const save = async () => {
-        try { setCfg(await SavePlatforms(list)); setMsg('已儲存。'); setError(''); } catch (e) { setError(errText(e)); }
+        const sent = form;
+        try {
+            // 以「上一次寫入完成後」的最新清單為基礎取代或加入這個平台,不用畫面上可能過期的 cfg
+            const c = await write(list => list.some(x => x.id === sent.id) ? list.map(x => (x.id === sent.id ? sent : x)) : [...list, sent]);
+            // 後端可能正規化欄位:只同步送出後沒再改過的欄位,儲存期間的新輸入保留
+            const got = c.platforms.find(x => x.id === sent.id);
+            if (got) setForm(f => ({
+                ...f,
+                ...Object.fromEntries(PLATFORM_KEYS.filter(k => normField(f[k]) === normField(sent[k])).map(k => [k, got[k]])),
+                rules: {...f.rules, ...Object.fromEntries(RULE_KEYS.filter(k => normField(f.rules[k]) === normField(sent.rules[k])).map(k => [k, got.rules[k]]))},
+            } as publish.Platform));
+            setMsg('已儲存。');
+            setError('');
+        } catch (e) { setMsg(''); setError(errText(e)); }
     };
-    const reset = async () => {
-        try { const c = await ResetPlatforms(); setCfg(c); setList(c.platforms); setSel(0); setMsg('已恢復內建預設。'); } catch (e) { setError(errText(e)); }
-    };
-    const add = () => {
-        setList(l => [...l, {id: 'custom-' + Date.now().toString(36), name: '新平台', verified: false,
-            rules: {indent: true, blankLine: true, heading: 'drop', sceneBreak: '◇◇◇', convert: ''}} as publish.Platform]);
-        setSel(list.length);
+
+    // 刪除:以 SavePlatforms(刪掉該項的清單)立即保存並回到清單(尚未儲存的新平台等於直接捨棄)
+    const remove = async () => {
+        try {
+            await write(list => list.filter(x => x.id !== form.id));
+            onDeleted();
+        } catch (e) { setError(errText(e)); setConfirmDel(false); }
     };
 
     return (
-        // 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬(同 ModelsTab)
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-            <div className="space-y-1">
-                {list.map((x, i) => (
-                    <button key={x.id} onClick={() => setSel(i)}
-                            className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm', i === sel ? 'bg-accent' : 'hover:bg-accent/60')}>
-                        <span className="flex-1 truncate">{x.name}</span>
-                        {x.verified ? <Badge variant="success" className="text-xs">已驗證</Badge> : <Badge variant="outline" className="text-xs text-muted-foreground">未驗證</Badge>}
-                    </button>
-                ))}
-                <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add}><Plus/>新增平台</Button>
+        <div className="grid gap-8" data-testid="platform-page">
+            <div className="grid gap-3">
+                <SubpageHeader title={form.name} onBack={onBack}>
+                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDel(true)}
+                            data-testid="delete-platform"><Trash2/>刪除平台</Button>
+                </SubpageHeader>
+                {confirmDel && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 p-3 text-xs" data-testid="delete-platform-confirm">
+                        <span className="min-w-0 flex-1 text-destructive">刪除「{form.name}」後無法復原。</span>
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmDel(false)}>取消</Button>
+                        <Button size="sm" variant="destructive" onClick={remove} data-testid="delete-platform-yes"><Trash2/>刪除平台</Button>
+                    </div>
+                )}
             </div>
-            {p && (
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                    <div className="grid content-start gap-4">
-                        <p className="rounded-md bg-muted p-2 text-xs leading-relaxed text-muted-foreground">
-                            內建的平台規則是推測值,沒有實際貼上驗證過。實際發文後如果版面不對,請在這裡調整,確認無誤後打開「已驗證」。
-                        </p>
-                        <Field label="名稱"><Input value={p.name} onChange={e => update({name: e.target.value})}/></Field>
-                        <div className="flex items-center justify-between"><Label>段首縮排兩個全形空格</Label>
-                            <Switch checked={p.rules.indent} onCheckedChange={v => update({rules: {indent: v}})}/></div>
-                        <div className="flex items-center justify-between"><Label>段落之間空一行</Label>
-                            <Switch checked={p.rules.blankLine} onCheckedChange={v => update({rules: {blankLine: v}})}/></div>
-                        <Field label="章節標題">
-                            <Select value={p.rules.heading || 'strip'} onValueChange={v => update({rules: {heading: v}})}>
-                                <SelectTrigger><SelectValue/></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="strip">保留標題文字(去掉 #)</SelectItem>
-                                    <SelectItem value="drop">不輸出標題(平台另外填)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        <Field label="場景分隔符號" hint="稿件中的 ***、---、◇◇◇ 會換成這個;留空則只空一行。">
-                            <Input value={p.rules.sceneBreak} onChange={e => update({rules: {sceneBreak: e.target.value}})}/>
-                        </Field>
-                        <Field label="繁簡轉換" hint="「含用詞」會把「軟體」換成「软件」等,會改變你的用詞,請確認後再用。">
-                            <Select value={p.rules.convert || 'none'} onValueChange={v => update({rules: {convert: v === 'none' ? '' : v}})}>
-                                <SelectTrigger><SelectValue/></SelectTrigger>
-                                <SelectContent>
-                                    {opts.map(o => <SelectItem key={o.id || 'none'} value={o.id || 'none'}>{o.label}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        <div className="flex items-center justify-between"><Label>已實際貼上驗證</Label>
-                            <Switch checked={p.verified} onCheckedChange={v => update({verified: v})}/></div>
-                        {msg && <p className="text-xs text-success">{msg}</p>}
-                        {error && <p className="text-xs text-destructive">{error}</p>}
-                        <div className="flex flex-wrap gap-2">
-                            <Button onClick={save}><Save/>儲存</Button>
-                            <Button variant="ghost" onClick={reset}><RotateCcw/>恢復內建預設</Button>
-                            <Button variant="ghost" className="text-destructive" onClick={() => { setList(l => l.filter((_, i) => i !== sel)); setSel(0); }}>
-                                <Trash2/>
-                            </Button>
-                        </div>
-                    </div>
-                    <div className="grid content-start gap-2">
-                        <Label>預覽(範例文字)</Label>
-                        <pre className="min-h-[20rem] whitespace-pre-wrap rounded-md border bg-paper p-3 font-serif text-sm leading-relaxed" data-testid="platform-preview">{out}</pre>
-                        <p className="text-xs text-muted-foreground">作者筆記(&lt;!-- --&gt;)永遠不會被輸出。</p>
-                    </div>
+            <Section title="規則" desc="複製或匯出到這個平台時套用的格式規則。">
+                <RowCard>
+                    <FieldRow title="名稱"><Input value={form.name} onChange={e => update({name: e.target.value})} data-testid="platform-name"/></FieldRow>
+                    <SettingRow title="段首縮排兩個全形空格">
+                        <Switch checked={form.rules.indent} onCheckedChange={v => update({rules: {indent: v}})} data-testid="platform-indent"/>
+                    </SettingRow>
+                    <SettingRow title="段落之間空一行">
+                        <Switch checked={form.rules.blankLine} onCheckedChange={v => update({rules: {blankLine: v}})} data-testid="platform-blankline"/>
+                    </SettingRow>
+                    <SettingRow title="章節標題">
+                        <Select value={form.rules.heading || 'strip'} onValueChange={v => update({rules: {heading: v}})}>
+                            <SelectTrigger className="w-72" data-testid="platform-heading"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="strip" data-testid="platform-heading-opt-strip">保留標題文字(去掉 #)</SelectItem>
+                                <SelectItem value="drop" data-testid="platform-heading-opt-drop">不輸出標題(平台另外填)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <SettingRow title="場景分隔符號" desc="稿件中的 ***、---、◇◇◇ 會換成這個;留空則只空一行。">
+                        <Input className="w-56" value={form.rules.sceneBreak} onChange={e => update({rules: {sceneBreak: e.target.value}})} data-testid="platform-scene-break"/>
+                    </SettingRow>
+                    <SettingRow title="繁簡轉換" desc="「含用詞」會把「軟體」換成「软件」等,會改變你的用詞,請確認後再用。">
+                        <Select value={form.rules.convert || 'none'} onValueChange={v => update({rules: {convert: v === 'none' ? '' : v}})}>
+                            <SelectTrigger className="w-72" data-testid="platform-convert"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                {opts.map(o => <SelectItem key={o.id || 'none'} value={o.id || 'none'}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <SettingRow title="已實際貼上驗證">
+                        <Switch checked={form.verified} onCheckedChange={v => update({verified: v})} data-testid="platform-verified"/>
+                    </SettingRow>
+                </RowCard>
+            </Section>
+            <Section title="預覽" desc="以範例文字示範這個平台的輸出格式,隨上方規則即時重算。">
+                <pre className="min-h-[20rem] whitespace-pre-wrap rounded-md border bg-paper p-3 font-serif text-sm leading-relaxed" data-testid="platform-preview">{out}</pre>
+                <p className="text-xs text-muted-foreground">作者筆記(&lt;!-- --&gt;)永遠不會被輸出。</p>
+            </Section>
+            <div className="grid gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                    <Button onClick={save} data-testid="save-platform"><Save/>儲存</Button>
+                    {dirty && <span className="text-xs text-warning" data-testid="platform-dirty">有未儲存的變更</span>}
+                    {msg && !dirty && <span className="text-xs text-success">{msg}</span>}
                 </div>
-            )}
+                {error && <p className="text-xs text-destructive">{error}</p>}
+            </div>
+        </div>
+    );
+}
+
+// 平台輸出頁(#95):平台是「›」進入子頁的列(UI_GUIDE §12.3),規則表單與預覽在子頁、按「儲存」才寫入
+function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void} & LeaveGuard) {
+    const [sub, setSub] = useState<string | null>(null); // 進入中的平台 id
+    const [fresh, setFresh] = useState<publish.Platform | null>(null); // 新增後尚未儲存的平台(不在設定裡)
+    const [confirmReset, setConfirmReset] = useState(false);
+    const [opts, setOpts] = useState<main.Option[]>([]);
+    const [msg, setMsg] = useState('');
+    const [error, setError] = useState('');
+    useEffect(() => { ConvertOptions().then(setOpts); }, []);
+
+    // 寫入走模組層級佇列;回應依序套用到畫面(已卸載的舊實例收到的回應不影響目前畫面)
+    const write: PlatformWrite = async edit => {
+        const c = await queuePlatformWrite(edit);
+        setCfg(c);
+        return c;
+    };
+
+    const view = sub ? (cfg.platforms.find(p => p.id === sub) ?? (fresh?.id === sub ? fresh : undefined)) : undefined;
+    const back = () => guard(() => { setSub(null); setFresh(null); });
+
+    // 新增平台:先放在草稿裡、直接進子頁;按「儲存」才寫入,沒儲存就離開不會留下任何東西
+    const add = () => {
+        const p = {id: 'custom-' + Date.now().toString(36), name: '新平台', verified: false,
+            rules: {indent: true, blankLine: true, heading: 'drop', sceneBreak: '◇◇◇', convert: ''}} as publish.Platform;
+        setFresh(p);
+        setSub(p.id);
+    };
+
+    // 恢復內建預設:破壞性操作,兩步確認(UI_GUIDE §7)後才丟掉作者自訂的平台與修改
+    const reset = async () => {
+        try { await write('reset'); setConfirmReset(false); setMsg('已恢復內建預設。'); setError(''); } catch (e) { setError(errText(e)); }
+    };
+
+    if (sub && view) {
+        return <PlatformPage key={sub} cfg={cfg} write={write} initial={view} opts={opts} onBack={back}
+                            onDeleted={() => { setDirty(false); setSub(null); setFresh(null); }} setDirty={setDirty}/>;
+    }
+
+    return (
+        <div className="grid gap-8">
+            <Section title="平台" testid="platforms-section"
+                     desc="複製到平台時套用的格式規則。內建規則是推測值,實際貼上確認後打開「已驗證」。">
+                <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={add} data-testid="add-platform"><Plus/>新增平台</Button>
+                    <Button variant="ghost" size="sm" onClick={() => setConfirmReset(true)} data-testid="reset-platforms"><RotateCcw/>恢復內建預設</Button>
+                </div>
+                {confirmReset && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 p-3 text-xs" data-testid="reset-platforms-confirm">
+                        <span className="min-w-0 flex-1 text-destructive">恢復內建預設會丟掉你自訂的平台與所有修改,改回內建規則,無法復原。</span>
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmReset(false)} data-testid="reset-platforms-cancel">取消</Button>
+                        <Button size="sm" variant="destructive" onClick={reset} data-testid="reset-platforms-yes"><RotateCcw/>恢復內建預設</Button>
+                    </div>
+                )}
+                <RowCard testid="platform-list">
+                    {cfg.platforms.map(p => (
+                        <NavRow key={p.id} testid={`platform-card-${p.id}`} title={p.name} desc={rulesSummary(p.rules)}
+                                badge={p.verified ? <Badge variant="success" className="shrink-0 text-xs">已驗證</Badge>
+                                    : <Badge variant="outline" className="shrink-0 text-xs text-muted-foreground">未驗證</Badge>}
+                                onClick={() => { setFresh(null); setSub(p.id); }}/>
+                    ))}
+                </RowCard>
+                {msg && <p className="text-xs text-success" data-testid="platforms-msg">{msg}</p>}
+                {error && <p className="text-xs text-destructive">{error}</p>}
+            </Section>
         </div>
     );
 }
@@ -858,7 +973,7 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
                             <h2 className="mb-6 text-xl font-semibold" data-testid="settings-page-title">{PAGE_LABEL[page]}</h2>
                             {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}/>}
                             {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree} guard={guard} setDirty={setDirty}/>}
-                            {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg}/>}
+                            {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg} guard={guard} setDirty={setDirty}/>}
                             {page === 'appearance' && <AppearanceTab theme={theme} setTheme={setTheme} paper={paper} setPaper={setPaper}/>}
                         </div>
                     )}

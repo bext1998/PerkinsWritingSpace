@@ -60,7 +60,7 @@ module.exports = {
         check('設定頁 900×600 AI 模型頁 內容無水平捲軸', !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
 
         await page.click('[data-testid=tab-platforms]');
-        const plat900 = await waitSel('[data-testid=platform-preview]');
+        const plat900 = await waitSel('[data-testid=platform-list]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         g = await geoSettings();
         check('設定頁 900×600 平台輸出頁 捲軸在內容區(根節點不滾動)', plat900 && !!g && !g.rootScrollable,
@@ -88,7 +88,7 @@ module.exports = {
             await page.click('[data-testid=tab-models]');
             const n1 = await waitSel('[data-testid=profile-list]');
             await page.click('[data-testid=tab-platforms]');
-            const n2 = await waitSel('[data-testid=platform-preview]');
+            const n2 = await waitSel('[data-testid=platform-list]');
             await page.click('[data-testid=tab-project]');
             const n3 = await waitSel('[data-testid=research-row]');
             await page.click('[data-testid=tab-appearance]');
@@ -128,7 +128,7 @@ module.exports = {
             await waitSel('[data-testid=profile-list]');
             await shot('72-settings-models-900');
             await page.click('[data-testid=tab-platforms]');
-            await waitSel('[data-testid=platform-preview]');
+            await waitSel('[data-testid=platform-list]');
             await shot('74-settings-platforms-900');
             await page.click('[data-testid=tab-appearance]');
             await waitSel('[data-testid=appearance-theme]');
@@ -334,6 +334,45 @@ module.exports = {
         check('設定頁 640×672 外觀頁無水平捲軸', app640.sw <= app640.cw + 1, JSON.stringify(app640));
         await shot('78-settings-appearance-640');
         await page.click('[data-testid=tab-platforms]');
+        const platList640 = await waitSel('[data-testid=platform-list]');
+        await settle(80, 700); // 等 UI 更新(原固定等 300ms)
+        // 清單+子頁(#95 延續):清單頁不攤開規則表單與預覽(沒有 platform-preview)
+        const platListOnly = await page.evaluate(() => ({
+            list: !!document.querySelector('[data-testid=platform-list]'),
+            preview: !!document.querySelector('[data-testid=platform-preview]'),
+        }));
+        check('平台輸出清單頁只列平台(規則表單與預覽在子頁)', platList640 && platListOnly.list && !platListOnly.preview,
+            JSON.stringify(platListOnly));
+        await shot('77-settings-platforms-640');
+        // 恢復內建預設是破壞性操作,兩步確認(UI_GUIDE §7):第一次按不變更設定;
+        // 第二步不真的執行(以免影響後續測試),按「取消」離開確認
+        const platBefore = await page.evaluate(() => window.go.main.App.GetSettings().then(s => JSON.stringify(s.platforms)));
+        await page.click('[data-testid=reset-platforms]');
+        const resetConfirm = await page.waitForSelector('[data-testid=reset-platforms-confirm]', {timeout: 3000}).then(() => true).catch(() => false);
+        const platDuring = await page.evaluate(() => window.go.main.App.GetSettings().then(s => JSON.stringify(s.platforms)));
+        await page.click('[data-testid=reset-platforms-cancel]');
+        const platAfterCancel = await page.evaluate(() => window.go.main.App.GetSettings().then(s => JSON.stringify(s.platforms)));
+        check('恢復內建預設要兩步確認(第一次按不變更設定)', resetConfirm && platDuring === platBefore && platAfterCancel === platBefore,
+            JSON.stringify({resetConfirm, changedFirst: platDuring !== platBefore, changedCancel: platAfterCancel !== platBefore}));
+        // 新增平台:直接進子頁;不儲存、捨棄離開後,清單與設定檔都沒有新平台
+        const idsBeforeAdd = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.platforms.map(p => p.id).sort().join(',')));
+        await page.click('[data-testid=add-platform]');
+        const addInSub = await page.waitForSelector('[data-testid=platform-name]', {timeout: 5000}).then(() => true).catch(() => false);
+        const addDirty = !!(await page.$('[data-testid=platform-dirty]'));
+        await page.click('[data-testid=subpage-back]');
+        const addWarned = await page.waitForSelector('[data-testid=unsaved-leave]', {timeout: 3000}).then(() => true).catch(() => false);
+        await page.click('[data-testid=unsaved-discard]');
+        const addBackToList = await waitSel('[data-testid=platform-list]');
+        const idsAfterAdd = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.platforms.map(p => p.id).sort().join(',')));
+        // 清單上的平台 id 與新增前相同(沒有留下未儲存的新平台)
+        const listIdsAfter = await page.evaluate(() =>
+            [...document.querySelectorAll('[data-testid^=platform-card-]')].map(el => (el.getAttribute('data-testid') || '').slice('platform-card-'.length)).sort().join(','));
+        check('新增平台直接進子頁,未儲存捨棄離開後不出現在清單與設定檔',
+            addInSub && addDirty && addWarned && addBackToList && idsAfterAdd === idsBeforeAdd && listIdsAfter === idsBeforeAdd,
+            JSON.stringify({addInSub, addDirty, addWarned, addBackToList, sameIds: idsAfterAdd === idsBeforeAdd, sameList: listIdsAfter === idsBeforeAdd}));
+        // 640×672 平台頁量測改在進入第一個平台的子頁後:控制項寬度、下拉值不截斷、無水平捲軸
+        const firstPlat = await page.evaluate(() => window.go.main.App.GetSettings().then(s => ({id: (s.platforms[0] || {}).id, name: (s.platforms[0] || {}).name})));
+        await page.click(`[data-testid=platform-card-${firstPlat.id}]`);
         await waitSel('[data-testid=platform-preview]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         const stacked640p = await page.evaluate(() => {
@@ -343,7 +382,7 @@ module.exports = {
                 .map(el => Math.round(el.getBoundingClientRect().width));
             // 下拉選單的值不被截斷到看不見:比較值文字自身 scrollWidth 與 clientWidth。
             // (返工:Hemingway — 此檢查原本停在 AI 模型頁,那頁沒有 button[role=combobox],
-            //  truncSel 恆 0、永遠通過;下拉在平台輸出頁。值 span 是 inline,clientWidth 恆 0,
+            //  truncSel 恆 0、永遠通過;下拉在平台子頁。值 span 是 inline,clientWidth 恆 0,
             //  暫時轉 inline-block 才量得到,量完還原)
             const sels = [...c.querySelectorAll('button[role=combobox]')].filter(el => el.getBoundingClientRect().width > 0);
             const truncSel = sels.filter(el => {
@@ -358,14 +397,72 @@ module.exports = {
             return {sw: c.scrollWidth, cw: c.clientWidth, minControl: controls.length ? Math.min(...controls) : null,
                     selCount: sels.length, truncSel};
         });
-        check('設定頁 640×672 平台輸出頁表單控制項可用寬度 ≥ 200', stacked640p.minControl >= 200, JSON.stringify(stacked640p));
-        check('設定頁 640×672 平台輸出頁找得到下拉控制項(檢查不是空轉)', stacked640p.selCount >= 1, `selCount=${stacked640p.selCount}`);
-        check('設定頁 640×672 平台輸出頁下拉選單值不被截斷', stacked640p.selCount >= 1 && stacked640p.truncSel === 0,
+        check('設定頁 640×672 平台子頁表單控制項可用寬度 ≥ 200', stacked640p.minControl >= 200, JSON.stringify(stacked640p));
+        check('設定頁 640×672 平台子頁找得到下拉控制項(檢查不是空轉)', stacked640p.selCount >= 1, `selCount=${stacked640p.selCount}`);
+        check('設定頁 640×672 平台子頁下拉選單值不被截斷', stacked640p.selCount >= 1 && stacked640p.truncSel === 0,
             `sel=${stacked640p.selCount} truncated=${stacked640p.truncSel}`);
-        check('設定頁 640×672 平台輸出頁無水平捲軸', stacked640p.sw <= stacked640p.cw + 1, JSON.stringify(stacked640p));
-        await shot('77-settings-platforms-640');
+        check('設定頁 640×672 平台子頁無水平捲軸', stacked640p.sw <= stacked640p.cw + 1, JSON.stringify(stacked640p));
+        await shot('77b-settings-platform-sub-640');
+        // 離開保護(#95 延續):子頁改名沒儲存按返回 → 提醒且留在子頁;捨棄後回清單,設定檔名稱沒變
+        await page.fill('[data-testid=platform-name]', 'E2E 未儲存改名');
+        await page.click('[data-testid=subpage-back]');
+        const platWarned = await page.waitForSelector('[data-testid=unsaved-leave]', {timeout: 3000}).then(() => true).catch(() => false);
+        const platStayed = !!(await page.$('[data-testid=platform-preview]'));
+        await page.click('[data-testid=unsaved-discard]');
+        const platLeftToList = await waitSel('[data-testid=platform-list]');
+        const platNameAfter = await page.evaluate(() => window.go.main.App.GetSettings().then(s => (s.platforms[0] || {}).name));
+        check('平台子頁改名未儲存按返回會先提醒,捨棄後設定檔名稱不變',
+            platWarned && platStayed && platLeftToList && platNameAfter === firstPlat.name,
+            JSON.stringify({platWarned, platStayed, platLeftToList, before: firstPlat.name, after: platNameAfter}));
 
-        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁;1280(lg 以上)清單與表單回到並排
+        // PR #110 審查(Hemingway):平台清單由後端整份覆寫。儲存 A 的回應還沒回來就離開(返回子頁,或切到別的導覽頁再切回)、
+        // 刪除 B,不得以舊清單把 A 剛儲存的內容蓋回去,A 的遲到回應也不得讓 B 在畫面上復活(以延遲回應的 SavePlatforms 控制時序)
+        const pendingSaveThenDelete = async (leave) => {
+            const fullPlats = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.platforms));
+            const [pa, pb] = fullPlats;
+            await page.evaluate(() => {
+                const app = window.go.main.App;
+                window.__origSP = app.SavePlatforms;
+                window.__spDone = 0;
+                app.SavePlatforms = (...a) => window.__origSP(...a).then(v => new Promise(res => setTimeout(() => res(v), 1500)))
+                    .finally(() => { window.__spDone++; });
+            });
+            await page.click(`[data-testid=platform-card-${pa.id}]`);
+            await waitSel('[data-testid=platform-name]');
+            await page.fill('[data-testid=platform-name]', pa.name + 'E2E');
+            await page.click('[data-testid=save-platform]');
+            await page.click(leave === 'back' ? '[data-testid=subpage-back]' : '[data-testid=tab-appearance]');
+            if (await page.waitForSelector('[data-testid=unsaved-leave]', {timeout: 1000}).then(() => true).catch(() => false)) {
+                await page.click('[data-testid=unsaved-discard]');
+            }
+            if (leave === 'nav') {
+                await waitSel('[data-testid=appearance-theme]');
+                await page.click('[data-testid=tab-platforms]');
+            }
+            await waitSel(`[data-testid=platform-card-${pb.id}]`);
+            await page.click(`[data-testid=platform-card-${pb.id}]`);
+            await page.click('[data-testid=delete-platform]');
+            await page.click('[data-testid=delete-platform-yes]');
+            const spSettled = await page.waitForFunction(() => window.__spDone >= 2, null, {timeout: 10000}).then(() => true).catch(() => false);
+            await settle(80, 900);
+            const plAfter = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.platforms.map(p => ({id: p.id, name: p.name}))));
+            const plCards = await page.evaluate(() => [...document.querySelectorAll('[data-testid^=platform-card-]')].map(e => e.getAttribute('data-testid')));
+            await page.evaluate(() => { window.go.main.App.SavePlatforms = window.__origSP; });
+            const aKept = plAfter.some(p => p.id === pa.id && p.name === pa.name + 'E2E');
+            const bGone = !plAfter.some(p => p.id === pb.id) && !plCards.includes(`platform-card-${pb.id}`);
+            // 還原平台清單(後面的檢查與組沿用原本的平台),切頁讓畫面重讀
+            await page.evaluate(ps => window.go.main.App.SavePlatforms(ps), fullPlats);
+            await page.click('[data-testid=tab-appearance]');
+            await page.click('[data-testid=tab-platforms]');
+            await waitSel('[data-testid=platform-list]');
+            return {spSettled, aKept, bGone, plAfter: plAfter.map(p => p.name), plCards};
+        };
+        const pdBack = await pendingSaveThenDelete('back');
+        check('#110 儲存回應未到就返回並刪除另一平台:剛儲存的內容保留,刪掉的不會復活', pdBack.spSettled && pdBack.aKept && pdBack.bGone, JSON.stringify(pdBack));
+        const pdNav = await pendingSaveThenDelete('nav');
+        check('#110 儲存回應未到就切換導覽頁再回來刪除另一平台:剛儲存的內容保留,刪掉的不會復活', pdNav.spSettled && pdNav.aKept && pdNav.bGone, JSON.stringify(pdNav));
+
+        // 1280×800:先回作品頁量測(兩種版面都用得上),再量模型/平台頁;平台頁與 640 同一套清單+子頁版型
         await page.setViewportSize({width: 1280, height: 800});
         await settle(80, 900); // 等 UI 更新(原固定等 500ms)
         await page.click('[data-testid=tab-project]');
@@ -389,7 +486,7 @@ module.exports = {
         if (hasNav) await shot('73-settings-models-1280');
 
         await page.click('[data-testid=tab-platforms]');
-        const plt1280 = await waitSel('[data-testid=platform-preview]');
+        const plt1280 = await waitSel('[data-testid=platform-list]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         g = await geoSettings();
         check('設定頁 1280×800 平台輸出頁 捲軸在內容區(根節點不滾動)', plt1280 && !!g && !g.rootScrollable,
