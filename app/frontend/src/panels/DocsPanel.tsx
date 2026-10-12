@@ -38,7 +38,7 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
         <div className="mb-5">
             <div className="group mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
                 <Icon className="h-3.5 w-3.5"/>{title}
-                <Tip label="Bot 預設看不到;附加後,或在「設定 › Perkins Bot › Bot 可讀範圍」開放這個資料夾後才看得到" side="top"><Lock className="h-3 w-3 opacity-60"/></Tip>
+                <Tip label="Bot 預設可自行讀取;不想讓 Bot 看,可在「設定 › Perkins Bot › Bot 可讀範圍」關閉這個資料夾" side="top"><Lock className="h-3 w-3 opacity-60"/></Tip>
                 <div className="flex-1"/>
                 <Button variant="ghost" size="iconSm" onClick={() => { setAdding(dir); setInput(''); }}><Plus/></Button>
             </div>
@@ -70,8 +70,8 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
 
     return (
         <div className="p-3">
-            {section('outline', '大綱', Waypoints, tree.outline, '全書概要、各卷大綱都可以放這裡。大綱可能包含還沒寫到的劇情,所以預設不給 AI 看。')}
-            {section('notes', '筆記', NotebookPen, tree.notes, '靈感、資料、待辦。筆記是私人的,只有你附加時 AI 才看得到。')}
+            {section('outline', '大綱', Waypoints, tree.outline, '全書概要、各卷大綱都可以放這裡。不想讓 AI 看到還沒寫到的劇情,可在設定頁關閉這個資料夾。')}
+            {section('notes', '筆記', NotebookPen, tree.notes, '靈感、資料、待辦。想讓筆記保持私人,可在設定頁關閉這個資料夾。')}
         </div>
     );
 }

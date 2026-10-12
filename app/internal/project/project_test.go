@@ -249,20 +249,20 @@ func TestNewDocOnlyInDocDirs(t *testing.T) {
 	}
 }
 
-// 意圖(#98):舊作品沒有 botRead 欄位時套預設(只有設定集可讀);作者的設定存進 perkins.json、重開後保留。
+// 意圖(#98、§0 第 10 條):舊作品沒有 botRead 欄位時預設全部可讀;作者排除的資料夾存進 perkins.json、重開後保留。
 func TestBotReadDefaultsAndPersists(t *testing.T) {
 	dir := t.TempDir()
 	p, err := Create(dir, "n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(p.Config.BotReadable(), ","); got != "canon" {
-		t.Fatalf("預設可讀 = %q, want canon", got)
+	if got := strings.Join(p.Config.BotReadable(), ","); got != "canon,outline,notes" {
+		t.Fatalf("預設可讀 = %q, want canon,outline,notes", got)
 	}
 	if err := p.SetBotRead(CanonDir, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.SetBotRead(NotesDir, true); err != nil {
+	if err := p.SetBotRead(OutlineDir, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.SetBotRead(ManuscriptDir, false); err == nil {
