@@ -34,8 +34,9 @@
   |---|---|---|
   | 說明 | `text-xs`(12px) | 說明文字、中繼資料、標籤、狀態列、工具列提示 |
   | 內文 | `text-sm`(14px) | 介面主要文字、表單、清單項目、對話內容 |
-  | 區塊標題 | `text-lg`(18px)+ `font-serif font-semibold` | 設定頁區塊、對話框標題 |
-  | 頁標題 | `text-xl` 以上 | 書櫃、設定頁頁首,一個畫面最多一個 |
+  | 區塊標題 | `text-sm` + `font-semibold` | 設定頁區塊、面板內分組(§12.1) |
+  | 對話框標題 | `text-lg`(18px)+ `font-serif font-semibold` | 對話框、浮窗標題 |
+  | 頁標題 | `text-xl` 以上 | 書櫃標題、設定頁頁首與內容區頁名 |
 
   作者文字的大小由稿紙版面設定決定,不在此表。
 - 【定案】字重:標題 `font-semibold`、強調 `font-medium`;`font-bold` 只用於封面。
