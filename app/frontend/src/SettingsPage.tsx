@@ -552,8 +552,18 @@ const samePlatform = (a: publish.Platform, b: publish.Platform) =>
     PLATFORM_KEYS.every(k => normField(a[k]) === normField(b[k])) && RULE_KEYS.every(k => normField(a.rules[k]) === normField(b.rules[k]));
 
 // 平台子頁(#95):一個平台的規則與預覽,按「儲存」才寫入;刪除在標題列,兩步確認(UI_GUIDE §7)
-// 平台清單的寫入(儲存、刪除、恢復預設):後端整份覆寫清單,所以一律經 PlatformsTab 排隊依序執行(PR #110 審查)
+// 平台清單的寫入(儲存、刪除、恢復預設):後端 SavePlatforms 整份覆寫清單(PR #110 審查)。
+// 前一次寫入還沒回應就離開子頁、切換導覽頁或關閉設定頁,再刪別的平台時,若以畫面上的舊清單為基礎,
+// 會把剛儲存的內容蓋回去,遲到的回應也會讓刪掉的平台在畫面上復活。
+// 所以佇列放在模組層級(跨元件重建與設定頁重開都是同一條),每次寫入在輪到自己時才向後端讀最新清單。
 type PlatformWrite = (edit: ((list: publish.Platform[]) => publish.Platform[]) | 'reset') => Promise<main.SettingsView>;
+let platformQueue: Promise<unknown> = Promise.resolve();
+const queuePlatformWrite: PlatformWrite = edit => {
+    const run = platformQueue.then(async () =>
+        edit === 'reset' ? ResetPlatforms() : SavePlatforms(edit((await GetSettings()).platforms)));
+    platformQueue = run.catch(() => {}); // 失敗由呼叫者顯示;不讓佇列卡住
+    return run;
+};
 
 function PlatformPage({cfg, write, initial, opts, onBack, onDeleted, setDirty}: {
     cfg: main.SettingsView; write: PlatformWrite; initial: publish.Platform; opts: main.Option[];
@@ -679,21 +689,11 @@ function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; s
     const [error, setError] = useState('');
     useEffect(() => { ConvertOptions().then(setOpts); }, []);
 
-    // 平台清單寫入排隊(PR #110 審查):後端 SavePlatforms 整份覆寫清單。前一次寫入還沒回應就離開子頁再刪別的平台,
-    // 若用畫面上的舊清單會把剛儲存的內容蓋回去,遲到的回應也會讓刪掉的平台在畫面上復活。
-    // 所以每次寫入都排在前一次之後,並以前一次回應的最新清單為基礎;回應依序套用,不會有過期的覆蓋較新的。
-    const chain = useRef<Promise<unknown>>(Promise.resolve());
-    const latest = useRef(cfg.platforms);
-    useEffect(() => { latest.current = cfg.platforms; }, [cfg.platforms]);
-    const write: PlatformWrite = edit => {
-        const run = chain.current.then(async () => {
-            const c = edit === 'reset' ? await ResetPlatforms() : await SavePlatforms(edit(latest.current));
-            latest.current = c.platforms;
-            setCfg(c);
-            return c;
-        });
-        chain.current = run.catch(() => {}); // 失敗由呼叫者顯示;不讓佇列卡住
-        return run;
+    // 寫入走模組層級佇列;回應依序套用到畫面(已卸載的舊實例收到的回應不影響目前畫面)
+    const write: PlatformWrite = async edit => {
+        const c = await queuePlatformWrite(edit);
+        setCfg(c);
+        return c;
     };
 
     const view = sub ? (cfg.platforms.find(p => p.id === sub) ?? (fresh?.id === sub ? fresh : undefined)) : undefined;
