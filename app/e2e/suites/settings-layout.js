@@ -222,11 +222,12 @@ module.exports = {
         const nameSynced = await page.inputValue('[data-testid=profile-name]');
         const dirtyAfter = !!(await page.$('[data-testid=profile-dirty]'));
         check('#95 空白名稱儲存後表單與後端同步,不殘留未儲存', nameSynced === 'https://api.anthropic.com/v1' && !dirtyAfter, JSON.stringify({nameSynced, dirtyAfter}));
-        // (d) 儲存請求進行中繼續改名稱:回應回來後保留新輸入、仍標示未儲存(以延遲 500ms 的 SaveProfile 控制時序)
+        // (d) 儲存請求進行中繼續改名稱:回應回來後保留新輸入、仍標示未儲存(以延遲回應的 SaveProfile 控制時序)
         await page.evaluate(() => {
             const app = window.go.main.App;
             window.__origSaveProfile = app.SaveProfile;
-            app.SaveProfile = (...a) => new Promise(res => setTimeout(res, 500)).then(() => window.__origSaveProfile(...a));
+            // 後端照常寫入,回應延後 500ms 才交回前端(模擬回應比作者的新輸入晚到)
+            app.SaveProfile = (...a) => window.__origSaveProfile(...a).then(v => new Promise(res => setTimeout(() => res(v), 500)));
         });
         await page.fill('[data-testid=profile-name]', 'E2E 第一次儲存');
         await page.click('[data-testid=save-profile]');
