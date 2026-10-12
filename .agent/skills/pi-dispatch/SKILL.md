@@ -20,6 +20,7 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
    pi 遇到不支援的值會**往上**找最近的檔位,所以「簡單工作 medium」在 GLM、DeepSeek 上實際是 high;這兩家簡單工作改用 `low`。
 2. **啟動**:`start.sh <模型 ID> <分支短雜湊> [思考強度]` → 印出 pane ID。思考強度省略時用 `medium`。已有任何 Pi pane 時會拒絕(同時最多一個)。分支短雜湊由 Orchestrator 先決定並寫進任務說明,讓標籤與分支對得上。
 3. **送任務**:任務說明寫成檔案,`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
+   **啟動前先 `cd` 到任務工作樹**(`start.sh` 以執行時目錄為新 pane 的工作目錄)。任務說明的「交付」寫明:**完成回報直接送給 Orchestrator,不必等它空閒**——Orchestrator 作業期間幾乎一直是 working,照一般排隊規則等待會卡住(2026-10-13 實際發生,Pi 以 `herdr agent wait --until idle` 反覆等了數分鐘)。
 4. **監看**:立刻在背景執行 `watch.sh <pane ID>`。它會印出供應商,並在 Pi 停下、30 分鐘沒有任何修改、或花費超過停損門檻時結束。
    - 迷路或超過門檻:Esc 中斷 Pi,判斷改由自己接手、換模型重派,或回報作者;不讓它繼續燒錢。
    - 同一問題返工兩輪仍未通過審查:停止返工,由 Orchestrator 接手。

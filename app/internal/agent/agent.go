@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"perkins/internal/bible"
 	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/proposal"
@@ -509,6 +510,8 @@ type buildInfo struct {
 	Instructions []string
 	// Notices 列出因超過長度上限而未送出的作者指示等原因。
 	Notices []string
+	// Mentioned 是「本段提到的設定」(只送名稱與路徑,#104 第 3 項),送出預覽列出。
+	Mentioned []string
 }
 
 // buildMessages 組裝訊息並回報本次送出的作者指示層與未送出原因(Preview 與 Ask 用)。
@@ -542,6 +545,7 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 			}
 		}
 	}
+	var docText string
 	if p.Doc != "" {
 		var text string
 		if p.DocDraft != nil {
@@ -554,9 +558,21 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 			}
 		}
 		fmt.Fprintf(&ctx, "【目前文件】%s\n%s\n\n", p.Doc, text)
+		docText = text
 	}
 	if p.Selection != "" {
 		fmt.Fprintf(&ctx, "【作者選取的段落】\n%s\n\n", p.Selection)
+	}
+	mentioned, err := a.mentioned(p, docText)
+	if err != nil {
+		return nil, buildInfo{}, err
+	}
+	if len(mentioned) > 0 {
+		ctx.WriteString("【本段提到的設定】(只列名稱;需要內容時用 read_document 讀取)\n")
+		for _, m := range mentioned {
+			fmt.Fprintf(&ctx, "- %s\n", m)
+		}
+		ctx.WriteString("\n")
 	}
 	sys := systemPrompt
 	if p.Mode == ModeReport {
@@ -577,7 +593,47 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices}, nil
+	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
+}
+
+// mentionLimit 是「本段提到的設定」最多列出的數量。
+const mentionLimit = 10
+
+// mentioned 由程式比對選取段落(沒有選取時為目前文件)中出現的設定名稱(#104 第 3 項,取代作者手動點選的「建議附加」),
+// 回傳「名稱(路徑)」。只送名稱與路徑,不送內容,由 Bot 自行決定要不要讀;
+// Bot 讀不到的(作者排除且未附加,B2)不列,已附加或就是目前文件的不重列。
+func (a *Agent) mentioned(p AskParams, docText string) ([]string, error) {
+	text := p.Selection
+	if text == "" {
+		text = docText
+	}
+	if text == "" {
+		return nil, nil
+	}
+	ents, err := bible.Load(a.Proj)
+	if err != nil {
+		return nil, err
+	}
+	names := map[string]string{}
+	for _, e := range ents {
+		names[e.Path] = e.Name
+	}
+	g := gateFor(p, a.Readable)
+	skip := map[string]bool{p.Doc: true}
+	for _, c := range p.Attachments {
+		skip[c] = true
+	}
+	var out []string
+	for _, path := range bible.Mentions(ents, text) {
+		if skip[path] || !g.ok(path) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s(%s)", names[path], path))
+		if len(out) == mentionLimit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // BuildMessages 回傳將送往模型的完整訊息。Preview 與 Ask 都呼叫它。
@@ -641,6 +697,8 @@ type Preview struct {
 	Instructions []string `json:"instructions,omitempty"`
 	// Readable 是本次工具可讀的受保護資料夾(Bot 可讀範圍,#98);送出預覽依此顯示,前端不自己猜。
 	Readable []string `json:"readable"`
+	// Mentioned 是本次附上的「本段提到的設定」(只有名稱與路徑,#104 第 3 項);送出預覽依此列出。
+	Mentioned []string `json:"mentioned,omitempty"`
 }
 
 func (a *Agent) Preview(p AskParams) (*Preview, error) {
@@ -649,7 +707,7 @@ func (a *Agent) Preview(p AskParams) (*Preview, error) {
 		return nil, err
 	}
 	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: info.Notices, Instructions: info.Instructions,
-		Readable: append([]string{}, a.Readable...)}
+		Readable: append([]string{}, a.Readable...), Mentioned: info.Mentioned}
 	if b := a.ContextTokens; b > 0 {
 		pv.Limit = b - replyReserve(b)
 		pv.Over = pv.Tokens > pv.Limit
