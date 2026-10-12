@@ -786,7 +786,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                         </>
                     ) : null}
                 </div>
-                {current && current.startsWith('canon/') && entity && (
+                {current && current.startsWith('canon/') && entity?.path === current && (
                     <div className={zen ? 'hidden' : 'contents'}>
                         <EntityHeader key={current} entity={entity} onApply={applyHeader}/>
                     </div>
