@@ -164,6 +164,22 @@ module.exports = {
         }));
         check('#95 Perkins Bot 頁清單頁只列端點與作者指示入口(表單在子頁)', listOnly.list && !listOnly.form && !listOnly.agentsInline, JSON.stringify(listOnly));
         // 從預設新增(#43):帶入名稱、網址、Provider;金鑰欄空白讓作者填
+        // #94:長的分組下拉(從預設新增)捲到底不得閃爍——捲動箭頭出現/消失不得改變可視區高度,造成捲動位置來回跳
+        await page.click('[data-testid=preset-select]');
+        await page.waitForSelector('[data-radix-select-viewport]');
+        const flicker = await page.evaluate(async () => {
+            const vp = document.querySelector('[data-radix-select-viewport]');
+            vp.scrollTop = vp.scrollHeight;
+            const samples = [];
+            for (let i = 0; i < 40; i++) {
+                await new Promise(r => requestAnimationFrame(r));
+                samples.push(`${vp.clientHeight}/${Math.round(vp.scrollTop)}`);
+            }
+            return {canScroll: vp.scrollHeight > vp.clientHeight, changes: samples.filter((s, i) => i > 0 && s !== samples[i - 1]).length, last: samples.slice(-4)};
+        });
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-radix-select-viewport]', {state: 'detached', timeout: 3000}).catch(() => {});
+        check('#94 長的分組下拉捲到底不閃爍(可視區高度與捲動位置穩定)', flicker.canScroll && flicker.changes <= 2, JSON.stringify(flicker));
         const ids0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.profiles.map(p => p.id)));
         await page.click('[data-testid=preset-select]');
         await page.waitForSelector('[data-testid=preset-opt-anthropic]');

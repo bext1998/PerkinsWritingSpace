@@ -111,11 +111,12 @@ export const SelectContent = React.forwardRef<React.ElementRef<typeof SelectPrim
                                      className={cn('relative z-[60] max-h-80 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
                                          position === 'popper' && 'data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1', className)}
                                      {...props}>
-                <SelectPrimitive.ScrollUpButton className="flex cursor-default items-center justify-center py-1"><ChevronUp className="h-4 w-4"/></SelectPrimitive.ScrollUpButton>
+                {/* 捲動箭頭疊在清單上方、不佔版面(#94):原本佔高度,捲到底時箭頭消失 → 可視區變高 → 捲動位置變動 → 箭頭再出現,來回閃爍 */}
+                <SelectPrimitive.ScrollUpButton className="absolute inset-x-0 top-0 z-10 flex cursor-default items-center justify-center bg-popover py-1"><ChevronUp className="h-4 w-4"/></SelectPrimitive.ScrollUpButton>
                 <SelectPrimitive.Viewport className={cn('p-1', position === 'popper' && 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]')}>
                     {children}
                 </SelectPrimitive.Viewport>
-                <SelectPrimitive.ScrollDownButton className="flex cursor-default items-center justify-center py-1"><ChevronDown className="h-4 w-4"/></SelectPrimitive.ScrollDownButton>
+                <SelectPrimitive.ScrollDownButton className="absolute inset-x-0 bottom-0 z-10 flex cursor-default items-center justify-center bg-popover py-1"><ChevronDown className="h-4 w-4"/></SelectPrimitive.ScrollDownButton>
             </SelectPrimitive.Content>
         </SelectPrimitive.Portal>
     ))
