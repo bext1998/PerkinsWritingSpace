@@ -177,5 +177,5 @@
 - 任意字級:`text-[13px]` 8 處(Bookshelf、ChatWindow、ProposalReview、VersionDialog、ManuscriptPanel)、`text-[15px]`(Workspace 側欄標題)、`text-[11px]`、`text-[10px]`(ChatWindow 對話記錄徽章)。
 - 圓角:裸 `rounded` 13 處、`rounded-xl` 3 處。
 - 原生 `<button>` 30 處,部分不是整列可點的清單項目。
-- 設定頁各頁區塊標題與設定列寫法不一(見 #97 表格):作品頁自寫 `<section>`、平台輸出頁無區塊標題。
+- 設定頁各頁區塊標題與設定列寫法不一(見 #97 表格):作品頁自寫 `<section>`(平台輸出頁已改為清單+子頁、用共用元件,2026-10-13)。
 - 作品面板大綱、筆記標題旁的鎖頭圖示與現行讀取預設不符(#104 第 5 項)。
