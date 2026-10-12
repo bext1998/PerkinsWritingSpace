@@ -227,17 +227,20 @@ module.exports = {
             const app = window.go.main.App;
             window.__origSaveProfile = app.SaveProfile;
             // 後端照常寫入,回應延後 500ms 才交回前端(模擬回應比作者的新輸入晚到)
-            app.SaveProfile = (...a) => window.__origSaveProfile(...a).then(v => new Promise(res => setTimeout(() => res(v), 500)));
+            window.__saveDone = false;
+            app.SaveProfile = (...a) => window.__origSaveProfile(...a).then(v => new Promise(res => setTimeout(() => res(v), 500)))
+                .finally(() => setTimeout(() => { window.__saveDone = true; }, 50));
         });
         await page.fill('[data-testid=profile-name]', 'E2E 第一次儲存');
         await page.click('[data-testid=save-profile]');
         await page.fill('[data-testid=profile-name]', 'E2E 儲存期間的新輸入');
-        await page.waitForFunction(id => window.go.main.App.GetSettings().then(s => (s.profiles.find(p => p.id === id) || {}).name === 'E2E 第一次儲存'), fresh[0] && fresh[0].id, {timeout: 5000}).catch(() => {});
+        // 等延遲的回應交回前端(waitForFunction 的條件必須同步回傳布林值,回傳 Promise 會被當成已成立)
+        const responded = await page.waitForFunction(() => window.__saveDone === true, null, {timeout: 5000}).then(() => true).catch(() => false);
         await settle(80, 700);
         const keptName = await page.inputValue('[data-testid=profile-name]');
         const stillDirty = !!(await page.$('[data-testid=profile-dirty]'));
         await page.evaluate(() => { window.go.main.App.SaveProfile = window.__origSaveProfile; });
-        check('#95 儲存進行中的新輸入在回應後保留且仍標示未儲存', keptName === 'E2E 儲存期間的新輸入' && stillDirty, JSON.stringify({keptName, stillDirty}));
+        check('#95 儲存進行中的新輸入在回應後保留且仍標示未儲存', responded && keptName === 'E2E 儲存期間的新輸入' && stillDirty, JSON.stringify({responded, keptName, stillDirty}));
         // 換回 OpenAI 相容:不合法的值(xhigh)重設為不指定
         await page.click('[data-testid=provider-select]');
         await page.waitForSelector('[data-testid=provider-opt-openai]');
