@@ -365,3 +365,42 @@ func TestAgentsMdReadWrite(t *testing.T) {
 		t.Fatal("未知範圍應回錯")
 	}
 }
+
+// 意圖(#98):設定頁改的可讀範圍,下一次組裝請求就由後端從 perkins.json 套上(預覽回報的就是實際範圍)。
+func TestBotReadSettingAppliesToNextRequest(t *testing.T) {
+	keyring.MockInit()
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := NewApp()
+	a.proj = p
+	a.agent = &agent.Agent{Proj: p}
+	a.ctx = context.Background()
+	a.store = &settings.Store{Dir: t.TempDir()}
+	pv, err := a.PreviewContext(agent.AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(pv.Readable, ",") != "canon" {
+		t.Fatalf("預設可讀 = %v, want [canon]", pv.Readable)
+	}
+	if err := a.SetBotRead("canon", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.SetBotRead("outline", true); err != nil {
+		t.Fatal(err)
+	}
+	pv, err = a.PreviewContext(agent.AskParams{Question: "q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(pv.Readable, ",") != "outline" {
+		t.Fatalf("改設定後可讀 = %v, want [outline]", pv.Readable)
+	}
+	v, err := a.GetBotRead()
+	if err != nil || len(v) != 3 || v[0].On || !v[1].On || v[2].On {
+		t.Fatalf("GetBotRead = %+v, %v", v, err)
+	}
+}

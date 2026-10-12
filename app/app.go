@@ -337,6 +337,43 @@ func (a *App) SaveFile(rel, content string) error {
 	return err
 }
 
+// ---- Bot 可讀範圍(SPEC §12.3,#98)綁定 ----
+
+// BotReadView 是設定頁顯示的一個受保護資料夾開關。
+type BotReadView struct {
+	Dir string `json:"dir"` // canon | outline | notes
+	On  bool   `json:"on"`
+}
+
+// GetBotRead 回傳三個受保護資料夾目前是否允許 Bot 讀取(未設定的套預設)。
+func (a *App) GetBotRead() ([]BotReadView, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.proj == nil {
+		return nil, errNoProject
+	}
+	on := map[string]bool{}
+	for _, d := range a.proj.Config.BotReadable() {
+		on[d] = true
+	}
+	out := make([]BotReadView, 0, len(project.ProtectedDirs))
+	for _, d := range project.ProtectedDirs {
+		out = append(out, BotReadView{Dir: d, On: on[d]})
+	}
+	return out, nil
+}
+
+// SetBotRead 設定 Bot 是否可讀某個受保護資料夾(存在 perkins.json,下一次提問生效)。
+// 只影響讀取;寫入權限不變(仍只能提案,G1)。
+func (a *App) SetBotRead(dir string, on bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.proj == nil {
+		return errNoProject
+	}
+	return a.proj.SetBotRead(dir, on)
+}
+
 // ---- 研究記錄(§12.8)綁定 ----
 
 // GetResearch 回傳研究記錄開關。
@@ -1016,6 +1053,7 @@ func (a *App) prepare() (*agent.Agent, error) {
 	a.agent.LLM, a.agent.Model, a.agent.ContextTokens = c, p.Model, p.ContextTokens
 	a.agent.DisableAutoCompact = p.DisableAutoCompact // #32:每個端點各自的自動壓縮開關
 	a.agent.Remote = settings.IsRemote(p.BaseURL)     // 研究記錄:ask 筆記下 profile 是否 remote
+	a.agent.Readable = a.proj.Config.BotReadable()    // Bot 可讀範圍(#98):每次組裝前從 perkins.json 重讀
 	return a.agent, nil
 }
 

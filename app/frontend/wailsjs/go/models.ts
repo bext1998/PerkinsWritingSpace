@@ -36,6 +36,7 @@ export namespace agent {
 	    over: boolean;
 	    notices?: string[];
 	    instructions?: string[];
+	    readable: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -50,6 +51,7 @@ export namespace agent {
 	        this.over = source["over"];
 	        this.notices = source["notices"];
 	        this.instructions = source["instructions"];
+	        this.readable = source["readable"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -294,6 +296,20 @@ export namespace main {
 	        this.tokens = source["tokens"];
 	        this.limit = source["limit"];
 	        this.path = source["path"];
+	    }
+	}
+	export class BotReadView {
+	    dir: string;
+	    on: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BotReadView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dir = source["dir"];
+	        this.on = source["on"];
 	    }
 	}
 	export class Option {

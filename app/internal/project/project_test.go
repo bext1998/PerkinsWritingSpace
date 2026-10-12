@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -245,5 +246,33 @@ func TestNewDocOnlyInDocDirs(t *testing.T) {
 		if _, err := p.NewDoc(d, "y", ""); err == nil {
 			t.Errorf("NewDoc 不應允許 %s", d)
 		}
+	}
+}
+
+// 意圖(#98):舊作品沒有 botRead 欄位時套預設(只有設定集可讀);作者的設定存進 perkins.json、重開後保留。
+func TestBotReadDefaultsAndPersists(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(p.Config.BotReadable(), ","); got != "canon" {
+		t.Fatalf("預設可讀 = %q, want canon", got)
+	}
+	if err := p.SetBotRead(CanonDir, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetBotRead(NotesDir, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.SetBotRead(ManuscriptDir, false); err == nil {
+		t.Fatal("只能設定 canon/outline/notes")
+	}
+	q, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(q.Config.BotReadable(), ","); got != "notes" {
+		t.Fatalf("重開後可讀 = %q, want notes", got)
 	}
 }

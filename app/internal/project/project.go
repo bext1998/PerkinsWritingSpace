@@ -47,6 +47,29 @@ type Config struct {
 	Volumes  []Volume          `json:"volumes"`
 	Status   map[string]string `json:"status,omitempty"`  // 章節路徑 → draft | done
 	Research bool              `json:"research,omitempty"` // 研究記錄(§12.8),預設關閉
+	// BotRead 是 Perkins Bot 可讀的受保護資料夾(SPEC §12.3「Bot 可讀範圍」,#98);沒有的鍵套用預設(BotReadDefault)。
+	BotRead map[string]bool `json:"botRead,omitempty"`
+}
+
+// ProtectedDirs 是「Bot 可讀範圍」管理的資料夾(SPEC §12.3)。
+var ProtectedDirs = []string{CanonDir, OutlineDir, NotesDir}
+
+// BotReadDefault 回傳資料夾的預設可讀狀態:設定集允許,大綱、筆記不允許(#98 作者定案)。
+func BotReadDefault(dir string) bool { return dir == CanonDir }
+
+// BotReadable 回傳作者允許 Bot 讀取的受保護資料夾(依 ProtectedDirs 順序,非 nil)。
+func (c Config) BotReadable() []string {
+	out := []string{}
+	for _, d := range ProtectedDirs {
+		on, ok := c.BotRead[d]
+		if !ok {
+			on = BotReadDefault(d)
+		}
+		if on {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 type Project struct {
@@ -269,6 +292,21 @@ func (p *Project) SetResearch(on bool) error {
 		return err
 	}
 	return nil
+}
+
+// SetBotRead 設定 Bot 是否可讀某個受保護資料夾(#98),存在 perkins.json;寫檔失敗完整還原。
+func (p *Project) SetBotRead(dir string, on bool) error {
+	if dir != CanonDir && dir != OutlineDir && dir != NotesDir {
+		return ErrBadPath
+	}
+	return p.saveConfigWith(func(c *Config) {
+		m := make(map[string]bool, len(c.BotRead)+1) // 新 map:快照與失敗還原不共用
+		for k, v := range c.BotRead {
+			m[k] = v
+		}
+		m[dir] = on
+		c.BotRead = m
+	})
 }
 
 // SetVolumes 只更新 perkins.json,不動任何稿件檔案(SPEC §10、B1)。

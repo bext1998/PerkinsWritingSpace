@@ -59,6 +59,8 @@ export function ExportVolume(arg1:number,arg2:string):Promise<string>;
 
 export function FindVariants():Promise<Array<bible.Variant>>;
 
+export function GetBotRead():Promise<Array<main.BotReadView>>;
+
 export function GetCover():Promise<string>;
 
 export function GetResearch():Promise<boolean>;
@@ -154,6 +156,8 @@ export function SetAutosave(arg1:boolean):Promise<void>;
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 
 export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetBotRead(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetResearch(arg1:boolean):Promise<void>;
 

@@ -94,6 +94,10 @@ export function FindVariants() {
   return window['go']['main']['App']['FindVariants']();
 }
 
+export function GetBotRead() {
+  return window['go']['main']['App']['GetBotRead']();
+}
+
 export function GetCover() {
   return window['go']['main']['App']['GetCover']();
 }
@@ -284,6 +288,10 @@ export function SetChapterStatus(arg1, arg2) {
 
 export function SetPaperLayout(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetPaperLayout'](arg1, arg2, arg3);
+}
+
+export function SetBotRead(arg1, arg2) {
+  return window['go']['main']['App']['SetBotRead'](arg1, arg2);
 }
 
 export function SetResearch(arg1) {

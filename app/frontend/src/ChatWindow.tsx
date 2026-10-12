@@ -104,6 +104,8 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
     );
 }
 
+const READABLE_LABEL: Record<string, string> = {canon: '設定集(canon/)', outline: '大綱(outline/)', notes: '筆記(notes/)'};
+
 export default function ChatWindow(props: Props) {
     const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
@@ -568,7 +570,7 @@ export default function ChatWindow(props: Props) {
                         <div className="mt-6 space-y-2 px-2 text-center text-xs leading-relaxed text-muted-foreground">
                             <Bot className="mx-auto h-8 w-8 opacity-40"/>
                             <p>選取文字後按右鍵「詢問 Perkins Bot」或「快速指令」,或直接在下方提問。</p>
-                            <p>AI 只能閱讀你附加的內容並提出建議;任何修改都要你接受才會寫入。</p>
+                            <p>AI 只能閱讀你允許的範圍與附加的內容並提出建議;任何修改都要你接受才會寫入。</p>
                         </div>
                     )}
                     {turns.map((t, i) => (
@@ -801,9 +803,12 @@ export default function ChatWindow(props: Props) {
                         </div>
                         <div className="rounded-md border" data-testid="preview-tools">
                             <div className="border-b bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
-                            <div className="p-2 text-xs text-muted-foreground">
-                                · manuscript/ 全部章節、summaries/ 已確認的章節摘要(唯讀)
-                                · canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案
+                            <div className="space-y-0.5 p-2 text-xs text-muted-foreground" data-testid="preview-readable">
+                                <p>· 稿件全部章節、已確認的章節摘要</p>
+                                {/* 可讀資料夾由後端 Preview.readable 回報(#98),前端不自己猜 */}
+                                {(preview?.readable ?? []).map(d => <p key={d}>· {READABLE_LABEL[d] ?? d}:整個資料夾(設定頁「Bot 可讀範圍」允許)</p>)}
+                                <p>· 其他設定、大綱、筆記:只有本次附加或目前開啟的檔案</p>
+                                <p>Bot 用工具讀到的內容會出現在對話中的工具列。</p>
                             </div>
                         </div>
                         {/* 完整原始訊息放在可展開區 */}

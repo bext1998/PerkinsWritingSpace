@@ -48,7 +48,7 @@ const systemPrompt = `你是這位作者的寫作編輯助手。作者是作品�
 - 有多個合理方向時,列出條件式選項(例如「若你重視 A,可以…;若重視 B,…」),不要標示哪個是「最佳」。
 - 有多個合理的改寫方向時,可以在同一個提案附最多 3 個版本(replacement 加 alternatives,各自用 label 標一句很短的方向);只有一種合理改法時只給一個版本。不要標示哪個版本是「最佳」。
 - 「前情摘要」是作者確認過的章節摘要,可能省略細節;需要細節時用工具查原文。
-- 需要查看其他檔案時,使用提供的工具。`
+- 需要查看其他檔案時,使用提供的工具;設定等資料不必等作者附加,可自行查找。`
 
 const reportPrompt = `
 本次是「檢查報告」模式:只輸出檢查報告,逐項列出問題、出現位置(引用原文)與依據(引用設定或前文)。
@@ -94,6 +94,9 @@ type Agent struct {
 	ContextTokens int                // 端點上下文長度;0 = 不限制(測試用)
 	Research      *research.Recorder // 研究記錄(§12.8);nil 或關閉時不記錄
 	Remote        bool               // 目前端點是否在本機之外(研究記錄用)
+	// Readable 是作者允許 Bot 以工具讀取的受保護資料夾(SPEC §12.3「Bot 可讀範圍」,#98;由 prepare 從 perkins.json 套上)。
+	// nil = 都不可讀,只看得到本次附加的檔案。
+	Readable []string
 	// DisableAutoCompact 關閉自動上下文壓縮(#32;由 prepare 依啟用端點的設定套上):
 	// 送出前超過預算不自動濃縮、直接擋下(請作者 /compact 或開新對話),回合結束後的門檻壓縮也不做。
 	// 手動 Compact 不受這個欄位影響。
@@ -153,17 +156,17 @@ func (a *Agent) audit(r auditRecord) {
 var toolDefs = []llm.ToolDef{
 	{
 		Name:        "read_document",
-		Description: "讀取專案內的 Markdown 檔案(唯讀):manuscript/ 稿件、summaries/ 章節摘要,以及作者本次附加的 canon/、outline/、notes/ 檔案。",
+		Description: "讀取專案內的 Markdown 檔案(唯讀):manuscript/ 稿件、summaries/ 章節摘要,以及作者允許讀取的資料夾內或本次附加的 canon/、outline/、notes/ 檔案。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"相對路徑,如 manuscript/01.md"}},"required":["path"]}`),
 	},
 	{
 		Name:        "search_project",
-		Description: "在專案的稿件、摘要與作者附加的檔案中搜尋文字(唯讀),回傳符合的檔案與片段。",
+		Description: "在專案的稿件、摘要,以及作者允許讀取或本次附加的設定、大綱、筆記中搜尋文字(唯讀),回傳符合的檔案與片段。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
 	},
 	{
 		Name:        "list_files",
-		Description: "列出作品的檔案清單(唯讀、不需參數):依卷與章節順序列出稿件(含章名、路徑、字數)、可用的章節摘要,以及作者本次附加的 canon/、outline/、notes/ 檔案。",
+		Description: "列出作品的檔案清單(唯讀、不需參數):依卷與章節順序列出稿件(含章名、路徑、字數)、可用的章節摘要,以及你可讀的 canon/、outline/、notes/ 檔案(作者允許讀取的資料夾與本次附加的檔案)。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
 	},
 	{
@@ -207,7 +210,7 @@ func allowed(name string, tools []llm.ToolDef) bool {
 	return false
 }
 
-// Protected 回傳路徑是否屬於「只有附加才看得到」的資料夾(SPEC §12.3、B2)。
+// Protected 回傳路徑是否屬於受「Bot 可讀範圍」管制的資料夾(SPEC §12.3、B2)。
 func Protected(path string) bool {
 	switch project.KindOf(path) {
 	case project.CanonDir, project.OutlineDir, project.NotesDir:
@@ -216,12 +219,19 @@ func Protected(path string) bool {
 	return false
 }
 
-// gate 實作「AI 只能看到作者附加的受保護檔案」:稿件與摘要可自由讀取。
+// gate 實作「AI 只能看到作者允許讀取或本次附加的受保護檔案」:稿件與摘要可自由讀取。
+// 鍵是檔案相對路徑(本次附加);以「資料夾/」結尾的鍵代表整個資料夾可讀(Bot 可讀範圍,#98)。
 type gate map[string]bool
 
-var errNotShared = fmt.Errorf("作者沒有在本次對話附加這個檔案;如需要,請請作者在對話框附加它")
+var errNotShared = fmt.Errorf("這個檔案不在作者允許你讀取的範圍內,本次也沒有附加;如需要,請請作者附加它或在設定頁開放該資料夾")
 
-func (g gate) ok(path string) bool { return !Protected(path) || g[path] }
+func (g gate) ok(path string) bool {
+	if !Protected(path) || g[path] {
+		return true
+	}
+	top, _, _ := strings.Cut(path, "/")
+	return g[top+"/"]
+}
 
 func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 回傳 (結果, proposalID, 錯誤)
 	switch name {
@@ -372,7 +382,7 @@ func (a *Agent) search(q string, g gate) (string, error) {
 
 // listFiles 組出給模型讀的檔案清單(唯讀):
 // 稿件依 perkins.json 的卷與章節順序(與側欄一致,沿用 project 的卷章解析),
-// 另列 summaries/ 中存在的摘要;canon/、outline/、notes/ 只列作者本次附加的檔案(G2,沿用同一個 gate)。
+// 另列 summaries/ 中存在的摘要;canon/、outline/、notes/ 只列可讀範圍內或本次附加的檔案(G2,沿用同一個 gate)。
 func (a *Agent) listFiles(g gate) (string, error) {
 	tree, err := a.Proj.Tree()
 	if err != nil {
@@ -406,7 +416,7 @@ func (a *Agent) listFiles(g gate) (string, error) {
 		case project.SummariesDir:
 			sums = append(sums, f)
 		case project.CanonDir, project.OutlineDir, project.NotesDir:
-			if g.ok(f) { // 未附加的受保護檔案不出現(B2/G2)
+			if g.ok(f) { // 範圍外、未附加的受保護檔案不出現(B2/G2)
 				prot = append(prot, f)
 			}
 		}
@@ -419,7 +429,7 @@ func (a *Agent) listFiles(g gate) (string, error) {
 		fmt.Fprintf(&b, "- %s\n", s)
 	}
 	if len(prot) > 0 {
-		b.WriteString("【作者本次附加】\n")
+		b.WriteString("【設定、大綱、筆記】(作者允許讀取或本次附加)\n")
 		for _, f := range prot {
 			fmt.Fprintf(&b, "- %s\n", f)
 		}
@@ -438,8 +448,11 @@ func firstHeading(text string) string {
 	return ""
 }
 
-func gateFor(p AskParams) gate {
+func gateFor(p AskParams, readable []string) gate {
 	g := gate{}
+	for _, d := range readable {
+		g[d+"/"] = true
+	}
 	for _, c := range p.Attachments {
 		g[c] = true
 	}
@@ -626,6 +639,8 @@ type Preview struct {
 	// Instructions 是本次實際放進 system 訊息的作者指示層(Issue #38):
 	// 送出預覽逐項列出,由 buildMessages 回報,前端不自己猜。
 	Instructions []string `json:"instructions,omitempty"`
+	// Readable 是本次工具可讀的受保護資料夾(Bot 可讀範圍,#98);送出預覽依此顯示,前端不自己猜。
+	Readable []string `json:"readable"`
 }
 
 func (a *Agent) Preview(p AskParams) (*Preview, error) {
@@ -633,7 +648,8 @@ func (a *Agent) Preview(p AskParams) (*Preview, error) {
 	if err != nil {
 		return nil, err
 	}
-	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: info.Notices, Instructions: info.Instructions}
+	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: info.Notices, Instructions: info.Instructions,
+		Readable: append([]string{}, a.Readable...)}
 	if b := a.ContextTokens; b > 0 {
 		pv.Limit = b - replyReserve(b)
 		pv.Over = pv.Tokens > pv.Limit
@@ -795,7 +811,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	a.audit(auditRecord{Event: "request", Detail: fmt.Sprintf("doc=%s selection=%d字元 attachments=%v mode=%s summaries=%v tokens≈%d",
 		p.Doc, len([]rune(p.Selection)), p.Attachments, p.Mode, p.PriorSummaries, EstimateTokens(msgs))})
 
-	g := gateFor(p)
+	g := gateFor(p, a.Readable)
 	tools := toolsFor(p.Mode)
 	req := llm.Request{Model: a.Model, Tools: tools}
 	rejectedIDs := map[string]bool{}
