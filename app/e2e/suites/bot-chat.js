@@ -108,16 +108,18 @@ module.exports = {
         check('context-usage 顯示百分比與 PreviewContext(tokens/limit)一致',
             shown === `上下文 ${expectPct}%`, `shown=${shown} expect=${expectPct}% tokens=${pvCtx.tokens} limit=${pvCtx.limit}`);
 
-        // 送出預覽標示來源:雷恩用迴紋針手動附加(手動附加);建議附加已取消(#104),不再有「採用建議附加」
+        // 送出預覽標示來源:艾莉絲、雷恩都用迴紋針手動附加(手動附加);建議附加已取消(#104),不再有「採用建議附加」
+        // (後面的上下文用量檢查以「兩份都已附加」計算)
         await page.click('[data-testid=attach-btn]');
         await page.waitForSelector('label:has-text("雷恩")');
+        await page.click('label:has-text("艾莉絲")');
         await page.click('label:has-text("雷恩")');
         await page.keyboard.press('Escape');
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview]');
         const pvTxt = await page.textContent('[data-testid=preview]');
         check('預覽標示附加來源(手動附加),不再有採用建議附加',
-            pvTxt.includes('雷恩(全文,手動附加)') && !pvTxt.includes('採用建議附加'),
+            pvTxt.includes('雷恩(全文,手動附加)') && pvTxt.includes('艾莉絲(全文,手動附加)') && !pvTxt.includes('採用建議附加'),
             pvTxt.split('\n').filter(l => l.includes('附加')).join(' / ').slice(0, 160));
         check('原始訊息有來源標籤(系統指示/本次提問)',
             pvTxt.includes('系統指示') && pvTxt.includes('本次提問'));

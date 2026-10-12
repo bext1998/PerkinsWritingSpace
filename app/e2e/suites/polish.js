@@ -180,9 +180,10 @@ module.exports = {
         await page.waitForSelector('[data-testid=preview-direct]');
         check('U5 兩區分列(直接送出+工具可讀範圍)', !!(await page.$('[data-testid=preview-direct]')) && !!(await page.$('[data-testid=preview-tools]')));
         const toolsTxt = await page.textContent('[data-testid=preview-tools]');
-        check('U5 工具區標示 manuscript/canon 範圍', toolsTxt.includes('manuscript') && toolsTxt.includes('canon'), toolsTxt);
-        // review-1a 第 3 點:工具區須明確說明 canon/outline/notes 只能讀「本次送出」的內容
-        check('U5 工具區說明 canon/outline/notes 限本次送出', toolsTxt.includes('outline/') && toolsTxt.includes('notes/') && toolsTxt.includes('只有你本次送出的目前文件或明確點選附加的檔案'), toolsTxt.slice(0, 120));
+        check('U5 工具區標示稿件與設定集範圍', toolsTxt.includes('稿件') && toolsTxt.includes('canon/'), toolsTxt);
+        // review-1a 第 3 點(依 #98/#103/#104 更新):工具區對 canon/outline/notes 每一個都明確標示「整個資料夾可讀」或「你已排除」
+        const dirsStated = ['canon/', 'outline/', 'notes/'].every(d => toolsTxt.includes(d + '):整個資料夾') || toolsTxt.includes(d + '):你已排除'));
+        check('U5 工具區對 canon/outline/notes 逐一標示可讀或已排除', dirsStated, toolsTxt.slice(0, 160));
         const direct5 = await page.textContent('[data-testid=preview-direct]');
         check('U5 直接送出區含目前文件與問題', direct5.includes('目前文件') && direct5.includes('測試問題'), direct5);
         const dlg = await page.textContent('[role=dialog]');
