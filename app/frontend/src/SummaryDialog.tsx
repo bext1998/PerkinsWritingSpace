@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
 import {Loader2, Save, Sparkles, Square, TriangleAlert} from 'lucide-react';
-import {CancelAsk, DraftSummary, GetSummary, SaveSummary} from '../wailsjs/go/main/App';
+import {AckRemote, CancelAsk, DraftSummary, GetSummary, SaveSummary} from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
 import {main, summary} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -13,20 +13,19 @@ interface Props {
     chapter: string | null;
     onClose: () => void;
     cfg: main.SettingsView | null;
-    remoteOk: Record<string, boolean>;
-    setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
+    setCfg: (c: main.SettingsView) => void;
     saveFirst: () => Promise<void>;
     notify: (t: Toast) => void;
 }
 
 /** 章節摘要:AI 草擬只放在這個對話框裡,作者按「儲存」才成為前情摘要(B6)。 */
-export default function SummaryDialog({chapter, onClose, cfg, remoteOk, setRemoteOk, saveFirst, notify}: Props) {
+export default function SummaryDialog({chapter, onClose, cfg, setCfg, saveFirst, notify}: Props) {
     const [sum, setSum] = useState<summary.Summary | null>(null);
     const [text, setText] = useState('');
     const [drafting, setDrafting] = useState(false);
     const [error, setError] = useState('');
     const profile = cfg?.profiles.find(p => p.id === cfg.active);
-    const needsConfirm = !!profile?.remote && !remoteOk[profile.id];
+    const needsConfirm = !!profile?.remote && !profile.remoteOk; // 每個雲端端點確認一次並保存,網址改變才重新確認(#99)
 
     useEffect(() => {
         setSum(null);
@@ -76,8 +75,8 @@ export default function SummaryDialog({chapter, onClose, cfg, remoteOk, setRemot
                 )}
                 {needsConfirm && profile && (
                     <label className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
-                        <Checkbox className="mt-0.5 border-warning" checked={false} onCheckedChange={() => setRemoteOk(r => ({...r, [profile.id]: true}))}/>
-                        「{profile.name}」不在這台電腦上,草擬摘要會把本章全文傳到該服務。我了解。
+                        <Checkbox className="mt-0.5 border-warning" checked={false} onCheckedChange={() => AckRemote(profile.id).then(setCfg).catch(e => setError(errText(e)))}/>
+                        「{profile.name}」不在這台電腦上,草擬摘要會把本章全文傳到該服務。我了解(這個端點只需確認一次,網址改變時會再問)。
                     </label>
                 )}
                 <Textarea className="min-h-[16rem] font-serif text-sm leading-relaxed" value={text} data-testid="summary-text"

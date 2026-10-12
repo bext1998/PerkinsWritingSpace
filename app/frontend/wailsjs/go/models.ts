@@ -335,8 +335,10 @@ export namespace main {
 	    disableAutoCompact?: boolean;
 	    provider?: string;
 	    reasoningEffort?: string;
+	    remoteAckUrl?: string;
 	    hasKey: boolean;
 	    remote: boolean;
+	    remoteOk: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileView(source);
@@ -352,8 +354,10 @@ export namespace main {
 	        this.disableAutoCompact = source["disableAutoCompact"];
 	        this.provider = source["provider"];
 	        this.reasoningEffort = source["reasoningEffort"];
+	        this.remoteAckUrl = source["remoteAckUrl"];
 	        this.hasKey = source["hasKey"];
 	        this.remote = source["remote"];
+	        this.remoteOk = source["remoteOk"];
 	    }
 	}
 	export class RecentView {
@@ -952,6 +956,7 @@ export namespace settings {
 	    disableAutoCompact?: boolean;
 	    provider?: string;
 	    reasoningEffort?: string;
+	    remoteAckUrl?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Profile(source);
@@ -967,6 +972,7 @@ export namespace settings {
 	        this.disableAutoCompact = source["disableAutoCompact"];
 	        this.provider = source["provider"];
 	        this.reasoningEffort = source["reasoningEffort"];
+	        this.remoteAckUrl = source["remoteAckUrl"];
 	    }
 	}
 

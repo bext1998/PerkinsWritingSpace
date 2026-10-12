@@ -313,7 +313,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
                         </Field>
                         {remote && (
                             <p className="rounded-md bg-warning/10 p-2 text-xs text-warning">
-                                這個端點不在本機。使用時,附加的稿件與設定會傳到該服務;每次啟動 Perkins WritingSpace 後第一次送出前都會再確認一次。
+                                這個端點不在本機。使用時,送出的稿件與 Bot 讀取的內容會傳到該服務;第一次送出前會請你確認一次,之後不再詢問(網址改變時會再確認)。
                             </p>
                         )}
                         <Field label="API 型別" hint="Anthropic 官方端點選「Anthropic 原生」,其他服務與本機模型選「OpenAI 相容」。">

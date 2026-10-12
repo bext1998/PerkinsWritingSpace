@@ -43,6 +43,14 @@ type Profile struct {
 	// 允許值 low/medium/high/xhigh/max;載入時不合法的值視為 ""。
 	// OpenAI 相容端點只送 low/medium/high;xhigh/max 視為不指定(各自驗證)。
 	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	// RemoteAckURL 是作者確認過「內容會送到這個服務」的端點網址(#99):每個雲端端點確認一次並保存,
+	// 網址改變就不再相符、需要重新確認。只由 App.AckRemote 設定;SaveProfile 不接受前端傳來的值。
+	RemoteAckURL string `json:"remoteAckUrl,omitempty"`
+}
+
+// RemoteConfirmed 回傳端點是否可以送出內容:本機端點,或作者已確認過目前網址的雲端端點(#99)。
+func (p Profile) RemoteConfirmed() bool {
+	return !IsRemote(p.BaseURL) || p.RemoteAckURL == p.BaseURL
 }
 
 const (

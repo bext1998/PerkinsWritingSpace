@@ -13,6 +13,8 @@ import {snapshot} from '../models';
 import {notion} from '../models';
 import {publish} from '../models';
 
+export function AckRemote(arg1:string):Promise<main.SettingsView>;
+
 export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposal.Proposal>;
 
 export function AddCategory(arg1:string):Promise<Array<string>>;

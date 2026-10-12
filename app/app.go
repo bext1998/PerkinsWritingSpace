@@ -815,6 +815,8 @@ type ProfileView struct {
 	settings.Profile
 	HasKey bool `json:"hasKey"`
 	Remote bool `json:"remote"` // 端點不在本機:稿件會離開這台電腦
+	// RemoteOk:本機端點,或作者已確認過目前網址的雲端端點(#99);false 時送出前要先確認。
+	RemoteOk bool `json:"remoteOk"`
 }
 
 type SettingsView struct {
@@ -835,7 +837,7 @@ func (a *App) GetSettings() SettingsView {
 		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
-		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL)})
+		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL), RemoteOk: p.RemoteConfirmed()})
 	}
 	return v
 }
@@ -855,7 +857,9 @@ func (a *App) SaveProfile(p settings.Profile, apiKey *string) (SettingsView, err
 		p.Name = p.BaseURL
 	}
 	s := a.store.Load()
+	p.RemoteAckURL = "" // 外流確認只由 AckRemote 設定(#99);網址沒變時沿用已保存的確認
 	if cur := s.ProfileByID(p.ID); cur != nil {
+		p.RemoteAckURL = cur.RemoteAckURL
 		*cur = p
 	} else {
 		s.Profiles = append(s.Profiles, p)
@@ -890,6 +894,20 @@ func (a *App) DeleteProfile(id string) (SettingsView, error) {
 		return SettingsView{}, err
 	}
 	settings.SetProfileAPIKey(id, "")
+	return a.GetSettings(), nil
+}
+
+// AckRemote 記下作者已確認「內容會送到這個雲端端點」(#99):保存目前網址,之後不再詢問;網址改變時需重新確認。
+func (a *App) AckRemote(profileID string) (SettingsView, error) {
+	s := a.store.Load()
+	p := s.ProfileByID(profileID)
+	if p == nil {
+		return SettingsView{}, fmt.Errorf("找不到端點設定 %s", profileID)
+	}
+	p.RemoteAckURL = p.BaseURL
+	if err := a.store.Save(s); err != nil {
+		return SettingsView{}, err
+	}
 	return a.GetSettings(), nil
 }
 
@@ -1283,6 +1301,10 @@ func (a *App) begin() (*agent.Agent, context.Context, context.CancelFunc, error)
 	ag, err := a.prepare()
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	// 外流確認(#99):雲端端點要作者確認過目前網址才會送出(對話、/compact、章節摘要都經過這裡)
+	if s := a.store.Load(); !s.ActiveProfile().RemoteConfirmed() {
+		return nil, nil, nil, errors.New("目前的端點在本機之外:送出前請先確認內容會傳到該服務")
 	}
 	if ag.Model == "" {
 		return nil, nil, nil, errors.New("尚未選擇模型,請先在對話框或設定頁選擇")

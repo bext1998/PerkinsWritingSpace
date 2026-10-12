@@ -156,7 +156,6 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [selCount, setSelCount] = useState<number | null>(null); // 選取字數(#46 前半),沒選取時為 null
     // 最後一次的非空選取及其來源(§16 第 1 項 02):切章不清除;AI 視窗開啟時由 ChatWindow 判斷是否沿用
     const [lastSel, setLastSel] = useState<{sel: Selection; from: string} | null>(null);
-    const [remoteOk, setRemoteOk] = useState<Record<string, boolean>>({});
     const [pending, setPending] = useState(0);
     const [entity, setEntity] = useState<bible.Entity | null>(null);
     const [summaryTick, setSummaryTick] = useState(0);
@@ -877,7 +876,6 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                           fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
-                            remoteOk={remoteOk} setRemoteOk={setRemoteOk}
                             beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
@@ -890,7 +888,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                            lockEdits={lockEdits} onRestored={files => { refreshTree(); return reloadCurrent(files); }}/>
 
             <SummaryDialog chapter={summaryFor} onClose={() => { setSummaryFor(null); setSummaryTick(t => t + 1); }} cfg={cfg}
-                           remoteOk={remoteOk} setRemoteOk={setRemoteOk} saveFirst={save} notify={notify}/>
+                           setCfg={setCfg} saveFirst={save} notify={notify}/>
 
             {toast && (
                 <div data-testid="toast"

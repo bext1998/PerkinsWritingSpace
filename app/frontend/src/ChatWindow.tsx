@@ -4,7 +4,7 @@ import {
     Minus, Paperclip, Plus, RefreshCw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
-    AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
+    AckRemote, AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
     PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel, SuggestAttachments,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -41,8 +41,6 @@ interface Props {
     selection: unknown;
     cfg: main.SettingsView | null;
     setCfg: (c: main.SettingsView) => void;
-    remoteOk: Record<string, boolean>;
-    setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
     onAccepted: (p: proposal.Proposal) => Promise<void>;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
     onReveal: (p: proposal.Proposal) => void;               // 審查視窗「在稿件中顯示」(#45 方案 A)
@@ -107,7 +105,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
 const READABLE_LABEL: Record<string, string> = {canon: '設定集(canon/)', outline: '大綱(outline/)', notes: '筆記(notes/)'};
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -152,7 +150,7 @@ export default function ChatWindow(props: Props) {
     const input = useRef<HTMLTextAreaElement>(null);
 
     const profile = cfg?.profiles.find(p => p.id === cfg.active);
-    const needsConfirm = !!profile?.remote && !remoteOk[profile.id];
+    const needsConfirm = !!profile?.remote && !profile.remoteOk; // 每個雲端端點確認一次並保存,網址改變才重新確認(#99)
     const isChapter = !!doc?.startsWith('manuscript/');
 
     const refreshProposals = () => ListProposals().then(list => {
@@ -559,8 +557,8 @@ export default function ChatWindow(props: Props) {
                 {needsConfirm && profile && (
                     <label className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
                         <Checkbox className="mt-0.5 border-warning" checked={false}
-                                  onCheckedChange={() => setRemoteOk(r => ({...r, [profile.id]: true}))} data-testid="remote-ok"/>
-                        <span>「{profile.name}」不在這台電腦上。你附加的稿件與設定會傳到該服務。我了解(本次啟動有效)。</span>
+                                  onCheckedChange={() => AckRemote(profile.id).then(setCfg).catch(e => setError(errText(e)))} data-testid="remote-ok"/>
+                        <span>「{profile.name}」不在這台電腦上。你送出的稿件,以及 Bot 讀取的設定與附加內容,會傳到該服務。我了解(這個端點只需確認一次,網址改變時會再問)。</span>
                     </label>
                 )}
 

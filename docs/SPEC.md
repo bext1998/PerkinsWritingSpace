@@ -208,7 +208,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   - **只管讀取**:寫入權限不變——仍只能提案(G1),`canon/` 的提案照舊要作者接受;工具白名單不變(G4);`summaries/` 仍不接受提案。
   - **介面**:設定頁「Perkins Bot」的「Bot 可讀範圍」區塊,三個資料夾各一個開關(即按即存,沒開作品不顯示);不做檔案級權限。送出預覽的「AI 工具可讀取範圍」依後端回報的實際範圍顯示(`agent.Preview.readable`),前端不自己猜。
   - 可讀範圍在每次組裝請求時由後端從 `perkins.json` 讀取;改了下一次提問生效。
-- **多端點與模型切換**:設定頁管理多個端點設定檔(本機 LM Studio、雲端…),各自的金鑰存系統憑證庫;對話框可切換端點與模型。切換到遠端端點時,本次啟動內需重新確認外流警告。
+- **多端點與模型切換**:設定頁管理多個端點設定檔(本機 LM Studio、雲端…),各自的金鑰存系統憑證庫;對話框可切換端點與模型。雲端端點的外流確認見 §15「雲端外流確認」。
 - **端點 API 型別與思考強度**(2026-10-12,#30):每個端點設定檔有 `provider` 與 `reasoningEffort` 兩個欄位(舊設定檔沒有 = 現行行為,不需遷移)。`provider`:空或 `openai` = OpenAI 相容 `/chat/completions`;`anthropic` = Anthropic 原生 Messages API。`reasoningEffort`:空 = **不指定**(不送任何思考參數,用服務商預設)。允許值依端點各自驗證:OpenAI 相容只收 `low/medium/high`(OpenRouter 送 `reasoning.effort`,其他送 `reasoning_effort`),Anthropic 原生收 `low/medium/high/xhigh/max`(送 `output_config.effort`),值不在該端點允許清單就視為不指定。Anthropic 原生走 Messages API(`x-api-key`、`anthropic-version: 2023-06-01`、必填 `max_tokens`),prompt caching 用頂層 `cache_control`(官方自動快取);工具迴圈要把 assistant 的 thinking 區塊(含 signature)原樣傳回下一次請求,它不進對話歷史(`History` 只存文字回合)、不進研究記錄、不給前端。送出預覽與預算估算仍以 Agent 組裝的訊息為準(A6),不呈現各家 wire 格式。設定頁(Perkins Bot,#38)提供 Provider 切換與思考強度下拉(中文標示:不指定/低/中/高/更高/最高;不指定 = 不送任何思考參數),切換 Provider 時不合法的值重設為不指定。
 - **端點預設檔**(2026-10-12,#43):設定頁提供預設端點清單(`settings.Presets`,App 綁定 `ListProfilePresets`):本機(LM Studio、Ollama、llama.cpp server、vLLM、Jan)與服務商(OpenRouter、Fireworks AI、Together AI、OpenAI、Google AI Studio 的 OpenAI 相容入口、DeepSeek、xAI、Groq、Mistral、Cerebras、DeepInfra、SiliconFlow、Anthropic 原生),z.ai、DashScope(通義千問)、MiniMax、Moonshot 各列國際站與中國站兩組。**只填網址與顯示名稱**(z.ai 另給預設模型名,它沒有 `/models` 端點);金鑰由作者填入、存系統憑證庫;雲端端點沿用外流確認。上下文長度不預設(由作者填;未填用 §15 的預設值)。設定頁(Perkins Bot,#38)的「**從預設新增**」下拉(依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示)選了就建立端點並帶入名稱、網址、Provider、建議上下文長度與預設模型,金鑰欄空白由作者填;仍可手動新增空白端點。
 - **部分採用**:審查視窗中的建議文字可先編輯再接受。Provenance 記錄 `authorEdited` 與最終文字,以區分人類貢獻。
@@ -304,7 +304,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **寫法檢查範圍**:只檢查 3 字以上的名稱/別名、只回報「差一個漢字」且不包含任何已知名稱的寫法;作者可按「不是錯字」加入 `.perkins/variant-ignore.json`。
 - **上下文預算**:估算為中日韓字元 1 字 = 1 token、其他約 3 字元 = 1 token;預留 25%(上限 4096)給回覆;對話歷史超過預算 40% 時在回合結束後濃縮(保留最近 2 回合原文)。端點預設上下文長度 16384,可在設定頁改。自動壓縮可由作者關閉(每端點各自;關閉時超過預算不送出,改由 `/compact` 手動壓縮,見 §12.3)。
 - **快速指令不自動送出**:只帶入問題與模式,作者按送出。原因:送出前可以調整附加內容,也符合 A6「預覽 = 實際送出」。
-- **雲端外流確認**:每個端點在每次啟動後第一次使用時確認一次(對話與摘要共用)。
+- **雲端外流確認**(2026-10-12 作者改定,#99;原為「每次啟動後第一次使用時確認」,實作上每開一次作品就重設):每個雲端端點(網址不是 localhost/127.0.0.1/::1)**確認一次並保存**在 `settings.json` 的端點欄位 `remoteAckUrl`(記下確認時的網址),重開作品或重啟應用程式都不再詢問;**端點網址改變時**(與 `remoteAckUrl` 不同)要重新確認。確認只由 `AckRemote` 綁定設定,`SaveProfile` 不接受前端帶來的值(網址沒變時沿用已保存的確認)。對話、`/compact`、章節摘要共用:前端在送出前顯示確認勾選,後端 `begin()` 也拒絕送出到未確認的雲端端點。平時靠模型選單、狀態列與設定頁一直顯示的「雲端/本機」標示提醒,不反覆打斷作者。
 - **摘要不接受 AI 提案**:`summaries/` 只能由作者在摘要對話框中編輯與儲存。
 - **平台預設**:五個平台都用「兩格全形縮排、段落空一行、場景分隔 ◇◇◇」;簡中平台(輕之國度、菠蘿包)預設只轉字形(tw2s);巴哈姆特保留標題,其他平台不輸出標題。角角者已實際驗證可用(2026-10-10),其餘**未驗證**。
 - **整卷匯出不允許存進專案的作者資料夾**,避免匯出檔被當成稿件。

@@ -404,3 +404,71 @@ func TestBotReadSettingAppliesToNextRequest(t *testing.T) {
 		t.Fatalf("GetBotRead = %+v, %v", v, err)
 	}
 }
+
+// 意圖(#99):雲端端點確認一次後保存在設定檔(重開作品或應用程式都不再問);網址改變時要重新確認;
+// 未確認時後端拒絕送出(對話、/compact、章節摘要共用 begin)。前端不能用 SaveProfile 偷帶確認。
+func TestRemoteAckPersistsUntilURLChanges(t *testing.T) {
+	keyring.MockInit()
+	dir := t.TempDir()
+	p, err := project.Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgDir := t.TempDir()
+	a := NewApp()
+	a.proj = p
+	a.agent = &agent.Agent{Proj: p}
+	a.ctx = context.Background()
+	a.store = &settings.Store{Dir: cfgDir}
+	cloud := settings.Profile{ID: "cloud", Name: "雲端", BaseURL: "https://api.example.com/v1", Model: "m", RemoteAckURL: "https://api.example.com/v1"}
+	if _, err := a.SaveProfile(cloud, nil); err != nil {
+		t.Fatal(err)
+	}
+	s := a.store.Load()
+	s.Active = "cloud"
+	a.store.Save(s)
+	view := func(st *settings.Store) ProfileView {
+		b := &App{store: st}
+		for _, v := range b.GetSettings().Profiles {
+			if v.ID == "cloud" {
+				return v
+			}
+		}
+		t.Fatal("找不到端點")
+		return ProfileView{}
+	}
+	if v := view(a.store); v.RemoteOk {
+		t.Fatal("SaveProfile 不得接受前端帶來的確認")
+	}
+	if _, _, _, err := a.begin(); err == nil || !strings.Contains(err.Error(), "本機之外") {
+		t.Fatalf("未確認的雲端端點應拒絕送出: %v", err)
+	}
+	if _, err := a.AckRemote("cloud"); err != nil {
+		t.Fatal(err)
+	}
+	// 另一個 Store 實例讀同一個設定目錄 = 重新啟動應用程式
+	if v := view(&settings.Store{Dir: cfgDir}); !v.RemoteOk {
+		t.Fatal("確認應保存在設定檔")
+	}
+	_, _, cancel, err := a.begin()
+	if err != nil {
+		t.Fatalf("確認後應可送出: %v", err)
+	}
+	a.end(cancel)
+	// 改其他欄位(網址不變)不需重新確認
+	cloud.Model = "m2"
+	if _, err := a.SaveProfile(cloud, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !view(a.store).RemoteOk {
+		t.Fatal("網址沒變時確認應保留")
+	}
+	// 網址改變要重新確認
+	cloud.BaseURL = "https://other.example.com/v1"
+	if _, err := a.SaveProfile(cloud, nil); err != nil {
+		t.Fatal(err)
+	}
+	if view(a.store).RemoteOk {
+		t.Fatal("網址改變後應重新確認")
+	}
+}
