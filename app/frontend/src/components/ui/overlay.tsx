@@ -113,7 +113,8 @@ export const SelectContent = React.forwardRef<React.ElementRef<typeof SelectPrim
                                      {...props}>
                 {/* 捲動箭頭疊在清單上方、不佔版面(#94):原本佔高度,捲到底時箭頭消失 → 可視區變高 → 捲動位置變動 → 箭頭再出現,來回閃爍 */}
                 <SelectPrimitive.ScrollUpButton className="absolute inset-x-0 top-0 z-10 flex cursor-default items-center justify-center bg-popover py-1"><ChevronUp className="h-4 w-4"/></SelectPrimitive.ScrollUpButton>
-                <SelectPrimitive.Viewport className={cn('p-1', position === 'popper' && 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]')}>
+                {/* scroll-py-6:捲動箭頭(約 24px)疊在上下緣,鍵盤移動時被選中的項目捲進可視範圍要避開箭頭,不被遮住 */}
+                <SelectPrimitive.Viewport className={cn('scroll-py-6 p-1', position === 'popper' && 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]')}>
                     {children}
                 </SelectPrimitive.Viewport>
                 <SelectPrimitive.ScrollDownButton className="absolute inset-x-0 bottom-0 z-10 flex cursor-default items-center justify-center bg-popover py-1"><ChevronDown className="h-4 w-4"/></SelectPrimitive.ScrollDownButton>
