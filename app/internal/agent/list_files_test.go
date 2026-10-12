@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -150,8 +151,7 @@ func TestListFilesToolDefSerializesWithObjectSchema(t *testing.T) {
 	a, _, _ := setup(t)
 	var bodies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b := make([]byte, r.ContentLength)
-		r.Body.Read(b)
+		b, _ := io.ReadAll(r.Body) // 單次 Read 不保證讀完整個 body
 		bodies = append(bodies, string(b))
 		// 第一次回 tool_call,第二次回文字,讓 Ask 正常結束
 		resp := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"1\",\"type\":\"function\",\"function\":{\"name\":\"list_files\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n"

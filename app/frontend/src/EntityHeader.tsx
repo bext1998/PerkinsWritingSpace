@@ -4,7 +4,7 @@ import {bible} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/basic';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
-import {useCategories} from './panels/types';
+import {BUILTIN_TYPES} from './panels/types';
 
 interface Props {
     entity: bible.Entity;
@@ -27,8 +27,8 @@ export default function EntityHeader({entity, onApply}: Props) {
     }, [entity.type, entity.name, (entity.aliases ?? []).join('、')]);
 
     const changed = type !== entity.type || name !== entity.name || splitAliases(aliases).join('、') !== (entity.aliases ?? []).join('、');
-    const [cats] = useCategories(); // 內建+自訂分類(SPEC §12.2)
-    const types = cats.includes(type) ? cats : [...cats, type];
+    // 內建分類;檔案原有的非內建 type(例如舊的自訂分類)照樣列出並保留,不改寫(#100)
+    const types = BUILTIN_TYPES.includes(type) ? BUILTIN_TYPES : [...BUILTIN_TYPES, type];
 
     return (
         <form className="flex shrink-0 items-center gap-2 border-b bg-sidebar/60 px-4 py-2"

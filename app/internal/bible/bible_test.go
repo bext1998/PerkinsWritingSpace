@@ -171,3 +171,11 @@ func TestBuildIndexReadOnly(t *testing.T) {
 		t.Fatalf("第二章登場錯誤: %+v", bc)
 	}
 }
+
+// 意圖(#100):移除自訂分類後,作者檔案裡既有的非內建 type 照常讀取,索引照常收錄,不被改成「其他」。
+func TestNonBuiltinTypeStillParsedAfterCustomCategoriesRemoved(t *testing.T) {
+	e := Parse("canon/白塔會.md", "---\ntype: 組織\nname: 白塔會\naliases: [白塔]\n---\n本文\n")
+	if e.Type != "組織" || e.Name != "白塔會" || len(e.Aliases) != 1 {
+		t.Fatalf("非內建 type 應原樣保留: %+v", e)
+	}
+}

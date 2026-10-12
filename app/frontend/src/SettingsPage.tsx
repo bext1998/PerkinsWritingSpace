@@ -1,8 +1,8 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
-    AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
-    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAutosave, SetPaperLayout, SetResearch, SetTheme, WriteAgentsMd,
+    AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
+    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, SetTheme, WriteAgentsMd,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -70,6 +70,49 @@ function Section({title, desc, children, testid}: {title: string; desc: string; 
             </div>
             {children}
         </section>
+    );
+}
+
+// Bot 可讀範圍(SPEC §12.3,#98):以資料夾決定 Bot 能用工具自行搜尋、讀取的範圍;只管讀取,寫入仍只能提案
+const BOT_READ_ROWS: Record<string, {name: string; desc: string}> = {
+    canon: {name: '設定集(canon/)', desc: '角色、世界觀等設定。'},
+    outline: {name: '大綱(outline/)', desc: '可能含還沒寫到的劇情。'},
+    notes: {name: '筆記(notes/)', desc: '私人筆記。'},
+};
+
+function BotReadSection() {
+    const [rows, setRows] = useState<main.BotReadView[] | null>(null);
+    const [error, setError] = useState('');
+    const [saving, setSaving] = useState('');
+    useEffect(() => {
+        GetBotRead().then(r => setRows(r ?? [])).catch(e => setError(errText(e)));
+    }, []);
+    const toggle = async (dir: string, on: boolean) => {
+        setSaving(dir);
+        try {
+            await SetBotRead(dir, on); // 寫進 perkins.json 成功才更新畫面
+            setRows(rs => rs?.map(r => r.dir === dir ? {...r, on} : r) ?? rs);
+            setError('');
+        } catch (e) { setError(errText(e)); }
+        setSaving('');
+    };
+    return (
+        <Section title="Bot 可讀範圍" testid="bot-read-section"
+                 desc="開啟的資料夾,Perkins Bot 會在需要時自己搜尋、讀取,不必每次附加;不會預先整份送出。關閉的資料夾只有你附加的檔案才看得到。只影響讀取:任何修改仍要你接受提案才會寫入。設定存在這部作品,下一次提問生效。">
+            <div className="grid divide-y rounded-lg border py-1">
+                {rows?.map(r => (
+                    <div key={r.dir} className="flex items-center gap-4 px-4 py-3">
+                        <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium">{BOT_READ_ROWS[r.dir]?.name ?? r.dir}</div>
+                            <div className="mt-0.5 text-xs text-muted-foreground">{BOT_READ_ROWS[r.dir]?.desc}</div>
+                        </div>
+                        <Switch data-testid={`bot-read-${r.dir}`} checked={r.on} disabled={saving !== ''}
+                                onCheckedChange={v => toggle(r.dir, v)}/>
+                    </div>
+                ))}
+            </div>
+            {error && <p className="text-xs text-destructive" data-testid="bot-read-error">{error}</p>}
+        </Section>
     );
 }
 
@@ -270,7 +313,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
                         </Field>
                         {remote && (
                             <p className="rounded-md bg-warning/10 p-2 text-xs text-warning">
-                                這個端點不在本機。使用時,附加的稿件與設定會傳到該服務;每次啟動 Perkins WritingSpace 後第一次送出前都會再確認一次。
+                                這個端點不在本機。使用時,送出的稿件與 Bot 讀取的內容會傳到該服務;第一次送出前會請你確認一次,之後不再詢問(網址改變時會再確認)。
                             </p>
                         )}
                         <Field label="API 型別" hint="Anthropic 官方端點選「Anthropic 原生」,其他服務與本機模型選「OpenAI 相容」。">
@@ -330,6 +373,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
                     </div>
                 </div>
             </Section>
+            {hasProject && <BotReadSection/>}
             <Section title="作者指示(AGENTS.md)" testid="agents-section"
                      desc="每次送出都會放進系統訊息的通用指示。兩層:作品層優先;不論哪一層都不能改變系統規則(AI 只能閱讀獲准內容、只能提出修改提案)。按「儲存」才寫檔;超過長度上限(估算 tokens)時整份不送出並在送出預覽說明原因。">
                 <AgentsEditor scope="global" title="全域指示(所有作品)"

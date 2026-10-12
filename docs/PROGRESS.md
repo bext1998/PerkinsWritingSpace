@@ -1,5 +1,16 @@
 # PROGRESS.md
 
+## 2026-10-12 — 產品設計減法:Bot 可讀範圍、雲端確認一次、移除管理分類(Issues #98、#99、#100)
+
+來源:Perkins Bot 與作者操作體驗的設計審查,作者決策採用 P1–P3;送出預覽、提案、快照、工具列與名稱追蹤維持現況。
+
+- **Bot 可讀範圍(#98)**:`perkins.json` 新增 `botRead`(`project.Config.BotReadable()`;沒有的鍵套預設 = 只有 `canon` 可讀,舊作品不需遷移;`Project.SetBotRead` 以新 map 寫入、失敗還原)。`App.prepare` 每次組裝前把可讀資料夾套到 `agent.Agent.Readable`;`gate` 加「資料夾/」鍵,`gate.ok` = 非受保護 ∪ 本次附加 ∪ 可讀資料夾,`read_document`/`search_project`/`list_files`/`propose_patch` 沿用同一個 gate(寫入仍只能提案)。可讀範圍內的檔案**不預先送出全文**。`list_files` 受保護區塊標題改為「設定、大綱、筆記(作者允許讀取或本次附加)」;工具說明、未授權錯誤訊息與系統提示最後一條同步(系統提示只加一句「設定等資料不必等作者附加,可自行查找」,維持既有濃縮測試的預算邊界)。`agent.Preview.readable` 回報實際範圍,送出預覽「AI 工具可讀取範圍」依它顯示。設定頁 Perkins Bot 頁新增「Bot 可讀範圍」區塊(三列開關,`bot-read-<資料夾>`,開作品才顯示),綁定 `GetBotRead`/`SetBotRead`。設定集側欄與大綱/筆記的說明文字同步。
+- **雲端外流確認一次並保存(#99)**:`settings.Profile.RemoteAckURL` + `RemoteConfirmed()`;`App.AckRemote` 設定、`SaveProfile` 不接受前端傳來的值(網址沒變沿用);`ProfileView.remoteOk`。`App.begin()` 拒絕送出到未確認的雲端端點(對話、`/compact`、章節摘要共用)。前端移除 `Workspace` 的 `remoteOk` 狀態(原本回書櫃再開作品就重設),`ChatWindow`/`SummaryDialog` 改讀 `profile.remoteOk` 並呼叫 `AckRemote`。
+- **移除管理分類(#100)**:刪除 `AddCategory`/`CategoryUsage`/`DeleteCategory`/`EntityTypes`/`ProjectPath` 綁定、`categories.json` 讀寫與 `writeList` 測試注入點、`categories_test.go`(9 個只測分類機制的測試);前端刪除 `useCategories` 共用狀態、`setCategoriesProject`、`Workspace.deleteCategory` 與管理分類對話框。新增設定、EntityHeader、Notion 匯入只列內建分類(Notion 去處以 `bible.Types` 驗證)。既有非內建 `type` 照常讀取、顯示(EntityHeader 列在內建之後)與保留;`categories.json` 不刪除、不再讀取。
+- **測試(Go)**:`TestBotReadableFoldersAreToolReadableButNotPushed`、`TestAttachmentStillGrantsOutsideReadableScope`、`TestBotReadDefaultsAndPersists`、`TestBotReadSettingAppliesToNextRequest`、`TestRemoteAckPersistsUntilURLChanges`、`TestNonBuiltinTypeStillParsedAfterCustomCategoriesRemoved`。破壞驗證:gate 不看資料夾 → 可讀範圍測試 FAIL;`SaveProfile` 接受前端的確認值、`begin()` 不檢查確認 → 確認測試各自 FAIL;還原後全綠。另修 `TestListFilesToolDefSerializesWithObjectSchema` 以單次 `Read` 讀 HTTP body、body 變長讀不完整的測試問題(改 `io.ReadAll`)。
+- **驗證**:Linux 雲端環境 `go test ./...` 除既有失敗外全綠——`sessions.TestProjectsAreIsolated`(依賴 Windows 路徑不分大小寫)在 `main` 上同樣失敗;原 `TestDeleteCategoryRollsBackWhenSecondWriteFails`(root 不受唯讀權限限制)已隨分類機制移除。`tsc --noEmit`、`npm run build` 通過。介面以 Vite + Playwright 注入模擬綁定實際 render(1280×800、640×672):Bot 可讀範圍區塊與開關、640 寬內容區無水平捲軸、設定集側欄無「管理分類」、非內建 type「組織」照常顯示、雲端確認勾選後呼叫 `AckRemote` 並消失、送出預覽列出實際可讀資料夾。
+- **未做/邊界**:完整 E2E(需 Windows `wails dev` 與本機模型)未在此環境執行;`bible` 組改為檢查「沒有管理分類入口」與「非內建 type 照常顯示、檔案未被改寫」,其餘自訂分類檢查隨功能移除;`bot-chat` 的 `/compact` 外流確認檢查沿用(新端點未確認時仍擋下)。`NoteRejection` 對受保護資料夾仍不附原文片段(保守,未隨可讀範圍放寬)。
+
 ## 2026-10-12 — 設定頁改版:Perkins Bot 獨立設定頁 + 外觀分頁(Issues #38、#88)
 
 - **導覽四頁**(`app/frontend/src/SettingsPage.tsx`):「作品 / Perkins Bot / 平台輸出 / 外觀」;「Perkins Bot」取代「AI 模型」(`tab-models` 沿用,舊 E2E 可用),外觀為新 `tab-appearance`;**導覽欄底部不再放主題與稿紙版面**。預設開啟頁維持 Perkins Bot;未開作品時沒有作品頁。

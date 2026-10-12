@@ -4,7 +4,7 @@ import {
     Minus, Paperclip, Plus, RefreshCw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
-    AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
+    AckRemote, AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
     PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel, SuggestAttachments,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
@@ -41,8 +41,6 @@ interface Props {
     selection: unknown;
     cfg: main.SettingsView | null;
     setCfg: (c: main.SettingsView) => void;
-    remoteOk: Record<string, boolean>;
-    setRemoteOk: (f: (r: Record<string, boolean>) => Record<string, boolean>) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
     onAccepted: (p: proposal.Proposal) => Promise<void>;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
     onReveal: (p: proposal.Proposal) => void;               // 審查視窗「在稿件中顯示」(#45 方案 A)
@@ -104,8 +102,10 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
     );
 }
 
+const READABLE_LABEL: Record<string, string> = {canon: '設定集(canon/)', outline: '大綱(outline/)', notes: '筆記(notes/)'};
+
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, remoteOk, setRemoteOk, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -150,7 +150,7 @@ export default function ChatWindow(props: Props) {
     const input = useRef<HTMLTextAreaElement>(null);
 
     const profile = cfg?.profiles.find(p => p.id === cfg.active);
-    const needsConfirm = !!profile?.remote && !remoteOk[profile.id];
+    const needsConfirm = !!profile?.remote && !profile.remoteOk; // 每個雲端端點確認一次並保存,網址改變才重新確認(#99)
     const isChapter = !!doc?.startsWith('manuscript/');
 
     const refreshProposals = () => ListProposals().then(list => {
@@ -557,8 +557,8 @@ export default function ChatWindow(props: Props) {
                 {needsConfirm && profile && (
                     <label className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
                         <Checkbox className="mt-0.5 border-warning" checked={false}
-                                  onCheckedChange={() => setRemoteOk(r => ({...r, [profile.id]: true}))} data-testid="remote-ok"/>
-                        <span>「{profile.name}」不在這台電腦上。你附加的稿件與設定會傳到該服務。我了解(本次啟動有效)。</span>
+                                  onCheckedChange={() => AckRemote(profile.id).then(setCfg).catch(e => setError(errText(e)))} data-testid="remote-ok"/>
+                        <span>「{profile.name}」不在這台電腦上。你送出的稿件,以及 Bot 讀取的設定與附加內容,會傳到該服務。我了解(這個端點只需確認一次,網址改變時會再問)。</span>
                     </label>
                 )}
 
@@ -568,7 +568,7 @@ export default function ChatWindow(props: Props) {
                         <div className="mt-6 space-y-2 px-2 text-center text-xs leading-relaxed text-muted-foreground">
                             <Bot className="mx-auto h-8 w-8 opacity-40"/>
                             <p>選取文字後按右鍵「詢問 Perkins Bot」或「快速指令」,或直接在下方提問。</p>
-                            <p>AI 只能閱讀你附加的內容並提出建議;任何修改都要你接受才會寫入。</p>
+                            <p>AI 只能閱讀你允許的範圍與附加的內容並提出建議;任何修改都要你接受才會寫入。</p>
                         </div>
                     )}
                     {turns.map((t, i) => (
@@ -801,9 +801,12 @@ export default function ChatWindow(props: Props) {
                         </div>
                         <div className="rounded-md border" data-testid="preview-tools">
                             <div className="border-b bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">AI 工具可讀取範圍(唯讀,不會自動送出)</div>
-                            <div className="p-2 text-xs text-muted-foreground">
-                                · manuscript/ 全部章節、summaries/ 已確認的章節摘要(唯讀)
-                                · canon/、outline/、notes/:只有你本次送出的目前文件或明確點選附加的檔案
+                            <div className="space-y-0.5 p-2 text-xs text-muted-foreground" data-testid="preview-readable">
+                                <p>· 稿件全部章節、已確認的章節摘要</p>
+                                {/* 可讀資料夾由後端 Preview.readable 回報(#98),前端不自己猜 */}
+                                {(preview?.readable ?? []).map(d => <p key={d}>· {READABLE_LABEL[d] ?? d}:整個資料夾(設定頁「Bot 可讀範圍」允許)</p>)}
+                                <p>· 其他設定、大綱、筆記:只有本次附加或目前開啟的檔案</p>
+                                <p>Bot 用工具讀到的內容會出現在對話中的工具列。</p>
                             </div>
                         </div>
                         {/* 完整原始訊息放在可展開區 */}

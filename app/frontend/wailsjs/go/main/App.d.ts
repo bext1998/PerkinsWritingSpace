@@ -13,9 +13,9 @@ import {snapshot} from '../models';
 import {notion} from '../models';
 import {publish} from '../models';
 
-export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposal.Proposal>;
+export function AckRemote(arg1:string):Promise<main.SettingsView>;
 
-export function AddCategory(arg1:string):Promise<Array<string>>;
+export function AcceptProposal(arg1:string,arg2:number,arg3:any):Promise<proposal.Proposal>;
 
 export function AgentsMdTokens(arg1:string):Promise<number>;
 
@@ -28,8 +28,6 @@ export function AskAI(arg1:agent.AskParams):Promise<void>;
 export function BibleIndex():Promise<bible.Index>;
 
 export function CancelAsk():Promise<void>;
-
-export function CategoryUsage(arg1:string):Promise<number>;
 
 export function ChapterWordCounts():Promise<Record<string, number>>;
 
@@ -45,19 +43,17 @@ export function ConvertOptions():Promise<Array<main.Option>>;
 
 export function CopyChapter(arg1:string,arg2:string):Promise<string>;
 
-export function DeleteCategory(arg1:string):Promise<Array<string>>;
-
 export function DeleteProfile(arg1:string):Promise<main.SettingsView>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
 export function DraftSummary(arg1:string):Promise<string>;
 
-export function EntityTypes():Promise<Array<string>>;
-
 export function ExportVolume(arg1:number,arg2:string):Promise<string>;
 
 export function FindVariants():Promise<Array<bible.Variant>>;
+
+export function GetBotRead():Promise<Array<main.BotReadView>>;
 
 export function GetCover():Promise<string>;
 
@@ -111,8 +107,6 @@ export function PreviewContext(arg1:agent.AskParams):Promise<agent.Preview>;
 
 export function PreviewExport(arg1:string,arg2:publish.Rules):Promise<string>;
 
-export function ProjectPath():Promise<string>;
-
 export function PurgeSession(arg1:string):Promise<void>;
 
 export function ReadAgentsMd(arg1:string):Promise<main.AgentsMdView>;
@@ -154,6 +148,8 @@ export function SetAutosave(arg1:boolean):Promise<void>;
 export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 
 export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function SetBotRead(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetResearch(arg1:boolean):Promise<void>;
 

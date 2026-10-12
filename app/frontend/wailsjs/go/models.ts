@@ -36,6 +36,7 @@ export namespace agent {
 	    over: boolean;
 	    notices?: string[];
 	    instructions?: string[];
+	    readable: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -50,6 +51,7 @@ export namespace agent {
 	        this.over = source["over"];
 	        this.notices = source["notices"];
 	        this.instructions = source["instructions"];
+	        this.readable = source["readable"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -296,6 +298,20 @@ export namespace main {
 	        this.path = source["path"];
 	    }
 	}
+	export class BotReadView {
+	    dir: string;
+	    on: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new BotReadView(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dir = source["dir"];
+	        this.on = source["on"];
+	    }
+	}
 	export class Option {
 	    id: string;
 	    label: string;
@@ -319,8 +335,10 @@ export namespace main {
 	    disableAutoCompact?: boolean;
 	    provider?: string;
 	    reasoningEffort?: string;
+	    remoteAckUrl?: string;
 	    hasKey: boolean;
 	    remote: boolean;
+	    remoteOk: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProfileView(source);
@@ -336,8 +354,10 @@ export namespace main {
 	        this.disableAutoCompact = source["disableAutoCompact"];
 	        this.provider = source["provider"];
 	        this.reasoningEffort = source["reasoningEffort"];
+	        this.remoteAckUrl = source["remoteAckUrl"];
 	        this.hasKey = source["hasKey"];
 	        this.remote = source["remote"];
+	        this.remoteOk = source["remoteOk"];
 	    }
 	}
 	export class RecentView {
@@ -936,6 +956,7 @@ export namespace settings {
 	    disableAutoCompact?: boolean;
 	    provider?: string;
 	    reasoningEffort?: string;
+	    remoteAckUrl?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Profile(source);
@@ -951,6 +972,7 @@ export namespace settings {
 	        this.disableAutoCompact = source["disableAutoCompact"];
 	        this.provider = source["provider"];
 	        this.reasoningEffort = source["reasoningEffort"];
+	        this.remoteAckUrl = source["remoteAckUrl"];
 	    }
 	}
 
