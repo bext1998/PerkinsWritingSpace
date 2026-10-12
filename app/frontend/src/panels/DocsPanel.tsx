@@ -38,7 +38,7 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
         <div className="mb-5">
             <div className="group mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
                 <Icon className="h-3.5 w-3.5"/>{title}
-                <Tip label="只有在對話框附加後 AI 才看得到" side="top"><Lock className="h-3 w-3 opacity-60"/></Tip>
+                <Tip label="Bot 預設看不到;附加後,或在「設定 › Perkins Bot › Bot 可讀範圍」開放這個資料夾後才看得到" side="top"><Lock className="h-3 w-3 opacity-60"/></Tip>
                 <div className="flex-1"/>
                 <Button variant="ghost" size="iconSm" onClick={() => { setAdding(dir); setInput(''); }}><Plus/></Button>
             </div>

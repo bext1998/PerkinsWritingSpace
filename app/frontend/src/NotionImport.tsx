@@ -5,11 +5,11 @@ import {notion} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
 import {errText} from '@/lib/utils';
-import {useCategories} from './panels/types';
+import {BUILTIN_TYPES} from './panels/types';
 
 /** Notion 一次性匯入(SPEC §12.5):選來源 → 指定每組去處(可在資料夾之下逐頁覆寫)→ 匯入 → 可整批撤銷。 */
 export default function NotionImport({onDone}: {onDone: () => void}) {
-    const [cats] = useCategories(); // 分類清單(內建+自訂)只作 TARGETS 來源;版面不動(SPEC §12.2)
+    const cats = BUILTIN_TYPES; // 匯入去處只有內建分類(自訂分類已移除,#100)
     const targets = [...cats, '大綱', '筆記', '略過'];
     const [src, setSrc] = useState('');
     const [plan, setPlan] = useState<notion.Plan | null>(null);

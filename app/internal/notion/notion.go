@@ -55,7 +55,7 @@ type Plan struct {
 	Images int     `json:"images"` // 匯出中的圖片數(不匯入,只告知)
 }
 
-// Target 是作者為一組選擇的去處:分類(內建或自訂,由呼叫者給定 types,→ canon/)、"筆記"、"大綱"、"略過"。
+// Target 是作者為一組選擇的去處:分類(由呼叫者給定 types,目前為內建分類,→ canon/)、"筆記"、"大綱"、"略過"。
 const (
 	TargetNotes   = "筆記"
 	TargetOutline = "大綱"
@@ -259,7 +259,7 @@ func targetDir(target string, types []string) (string, string, bool) {
 // Apply 依作者的選擇匯入。choices:群組 key → 去處;pages:逐頁覆寫(頁面 File.Src → 去處,
 // 與群組同一套值),頁面有覆寫就用覆寫,否則用所屬群組的去處;key 不在掃描結果中時忽略。
 // 同名檔案一律略過並列入報告,絕不覆蓋(B9)。types:可匯入 canon/ 的分類清單
-// (內建+自訂,SPEC §12.2),targetDir 依它驗證去處。
+// (目前為內建分類,SPEC §12.2),targetDir 依它驗證去處。
 func Apply(p *project.Project, src string, choices map[string]string, pages map[string]string, types []string) (*Result, error) {
 	plan, err := Scan(src)
 	if err != nil {

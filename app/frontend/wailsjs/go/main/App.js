@@ -10,10 +10,6 @@ export function AcceptProposal(arg1, arg2, arg3) {
   return window['go']['main']['App']['AcceptProposal'](arg1, arg2, arg3);
 }
 
-export function AddCategory(arg1) {
-  return window['go']['main']['App']['AddCategory'](arg1);
-}
-
 export function AgentsMdTokens(arg1) {
   return window['go']['main']['App']['AgentsMdTokens'](arg1);
 }
@@ -36,10 +32,6 @@ export function BibleIndex() {
 
 export function CancelAsk() {
   return window['go']['main']['App']['CancelAsk']();
-}
-
-export function CategoryUsage(arg1) {
-  return window['go']['main']['App']['CategoryUsage'](arg1);
 }
 
 export function ChapterWordCounts() {
@@ -70,10 +62,6 @@ export function CopyChapter(arg1, arg2) {
   return window['go']['main']['App']['CopyChapter'](arg1, arg2);
 }
 
-export function DeleteCategory(arg1) {
-  return window['go']['main']['App']['DeleteCategory'](arg1);
-}
-
 export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
@@ -84,10 +72,6 @@ export function DeleteSession(arg1) {
 
 export function DraftSummary(arg1) {
   return window['go']['main']['App']['DraftSummary'](arg1);
-}
-
-export function EntityTypes() {
-  return window['go']['main']['App']['EntityTypes']();
 }
 
 export function ExportVolume(arg1, arg2) {
@@ -204,10 +188,6 @@ export function PreviewContext(arg1) {
 
 export function PreviewExport(arg1, arg2) {
   return window['go']['main']['App']['PreviewExport'](arg1, arg2);
-}
-
-export function ProjectPath() {
-  return window['go']['main']['App']['ProjectPath']();
 }
 
 export function PurgeSession(arg1) {
