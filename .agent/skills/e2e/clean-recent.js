@@ -12,6 +12,11 @@ const tmp = path.resolve(os.tmpdir()).toLowerCase();
 const inTmp = p => path.resolve(p).toLowerCase().startsWith(tmp + path.sep);
 
 const file = path.join(require('os').homedir(), '.perkins', 'settings.json');
+// 設定資料夾搬到 ~/.perkins 後(#104):新位置不存在而舊位置還在,表示後端仍在用舊位置,清理會清錯地方
+if (!fs.existsSync(file) && fs.existsSync(path.join(process.env.APPDATA || '', 'Perkins', 'settings.json'))) {
+    console.error('設定仍在舊位置 %APPDATA%\\Perkins(~/.perkins 不存在),後端可能搬移失敗;不清理');
+    process.exit(1);
+}
 const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
 const recent = cfg.recent || [];
 const drop = recent.filter(r => inTmp(r.path));

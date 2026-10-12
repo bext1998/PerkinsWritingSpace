@@ -19,6 +19,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 ## 步驟
 
 1. 備份設定:把 `%USERPROFILE%\.perkins\settings.json` 複製到暫存資料夾。
+   **升級後第一次跑**(只有舊的 `%APPDATA%\Perkins`、還沒有 `~/.perkins`):`wails dev` 一啟動就會把舊資料夾整個搬到 `~/.perkins`。先把舊資料夾**整個**備份,測完依作者意願處理(維持搬移後的狀態,或刪掉 `~/.perkins` 並從備份還原舊資料夾)。若搬移失敗(新位置不存在、舊的還在),`run.js` 與 `clean-recent.js` 會拒絕執行,先查原因。
 2. 建立拋棄式測試專案:`node app/e2e/run.js --fixture <暫存資料夾>/e2e-proj`(不要放在倉庫內)。
 3. 另開背景程序:在 `app/` 執行 `PERKINS_OPEN=<測試專案> wails dev -noreload`,等 `http://localhost:34115` 有回應且記錄出現 `Watching`。
    **要跑很多輪(破壞驗證)時只需啟動這一次**:之後每輪用 `--reuse`,它會重建 fixture、叫後端重新開啟作品、重載頁面(見「重用同一個 wails dev」)。

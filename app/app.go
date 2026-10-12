@@ -95,8 +95,14 @@ func randomID() string {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	s, err := settings.NewStore()
+	if s == nil {
+		// 沒有可用的設定目錄:之後所有設定、作者指示與對話記錄都無處讀寫,告知作者後結束,不帶著壞狀態繼續
+		runtime.MessageDialog(ctx, runtime.MessageDialogOptions{Type: runtime.ErrorDialog, Title: "無法開啟 Perkins 設定資料夾", Message: err.Error()})
+		runtime.Quit(ctx)
+		return
+	}
 	if err != nil {
-		runtime.LogError(ctx, err.Error()) // 搬移舊設定資料夾失敗:沿用舊位置繼續,下次啟動再試
+		runtime.LogError(ctx, err.Error()) // 搬移舊設定資料夾失敗:沿用舊位置繼續(資料完整),下次啟動再試
 	}
 	a.store = s
 	// 開發/測試用:以環境變數直接開啟專案,略過原生資料夾對話框。
