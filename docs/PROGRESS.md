@@ -1,5 +1,16 @@
 # PROGRESS.md
 
+## 2026-10-13(夜) — 設定資料夾搬到 ~/.perkins、本段提到的設定、平台輸出頁改版、下拉閃爍(#104、#108、#94)
+
+作者決定(#104 留言)後由 Orchestrator 推進;各 PR 均經 Hemingway(Codex)審查通過後合併。
+
+- **#107 設定資料夾**:`%APPDATA%\Perkins` → `%USERPROFILE%\.perkins`(設定、全域 AGENTS.md、sessions)。新資料夾不存在時以一次 rename 搬移;只有 ErrNotExist 才當不存在,其他查詢錯誤不改用空白目錄;沒有可用目錄時錯誤對話框後結束;E2E 在未搬移時拒絕執行。**作者機器已完成搬移**(2026-10-13 E2E 啟動時),搬移後 `~/.perkins` 與事前備份逐檔相同;備份在 `D:\AgentCoding\.codex\perkins-appdata-backup-20261013`(作者確認新版正常後可刪)。
+- **#109 本段提到的設定**:取代「建議附加」,只把選取段落(或目前文件)提到的設定「名稱(路徑)」附給 Bot,不送內容;作者排除且未附加的不列;送出預覽列出。另:雲端確認說明、附加提示、移除資料夾鎖頭、預覽可讀範圍文字;E2E `polish` U5 自 #101 起已失效的檢查改寫;pi-dispatch 啟動 pane 的工作目錄與回報規則修正。
+- **#110 平台輸出頁**(Pi 實作,0.109 美元):清單+子頁,恢復預設與刪除兩步確認;審查發現平台清單整份覆寫造成的並行寫入覆蓋,改為模組層級寫入佇列、輪到時讀後端最新清單(兩輪返工由 Orchestrator 完成)。
+- **#111 下拉閃爍(#94)**:捲動箭頭改為疊在清單上、Viewport 加 scroll-padding。**原問題在無頭 Edge 無法重現**,#94 標「待作者實測」、未關閉。
+- **重新編譯**:以 `main` c70bbf3 `wails build`,放在 `app/build/bin/perkins.exe`(舊版備份 `D:\AgentCoding\.codex\perkins-exe-before-20261013.exe`);啟動 8 秒正常、使用 `~/.perkins`、設定未變動。
+- **作者待辦**:實際開新版確認設定與對話記錄都在;測 #94 下拉捲到底是否還閃爍。
+
 ## 2026-10-13 — 設定頁 Perkins Bot 頁改為清單+子頁(Issue #95)
 
 依 `docs/UI_GUIDE.md` §12(作者提供 Codex 設定頁案例後定案)。
