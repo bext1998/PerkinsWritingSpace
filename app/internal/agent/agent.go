@@ -101,7 +101,7 @@ type Agent struct {
 	// 送出前超過預算不自動濃縮、直接擋下(請作者 /compact 或開新對話),回合結束後的門檻壓縮也不做。
 	// 手動 Compact 不受這個欄位影響。
 	DisableAutoCompact bool
-	// GlobalAgentsPath 是全域作者指示(%APPDATA%\Perkins\AGENTS.md)的完整路徑。
+	// GlobalAgentsPath 是全域作者指示(%USERPROFILE%\.perkins\AGENTS.md)的完整路徑。
 	// 空 = 不讀全域層(測試注入用);每次組裝訊息都重新讀取,改檔不必重啟。
 	GlobalAgentsPath string
 

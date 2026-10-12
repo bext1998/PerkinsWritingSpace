@@ -1,6 +1,6 @@
 // Package sessions 保存 Perkins Bot 的對話記錄(#33,SPEC §12.3「對話記錄」)。
 //
-// 位置在使用者設定目錄(%APPDATA%\Perkins\sessions\<作品鍵>\,與 settings.json 同層),
+// 位置在使用者設定目錄(%USERPROFILE%\.perkins\sessions\<作品鍵>\,與 settings.json 同層),
 // 與作品內的 audit.jsonl、research.jsonl 完全分開、互不取代;不寫入作品資料夾。
 // 作品鍵是作品根目錄絕對路徑的雜湊:作品沒有固定 ID,作品搬家後舊記錄不跟著走(已知限制)。
 //

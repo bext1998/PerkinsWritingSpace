@@ -11,14 +11,15 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 
 ## 副作用(執行前必讀)
 
-- `wails dev` 讀寫**使用者真實的** `%APPDATA%\Perkins\settings.json`(最近專案清單、目前模型)。執行前先備份到暫存區,結束後逐位元組還原。
-- 後端會從同一目錄讀**全域作者指示** `%APPDATA%\Perkins\AGENTS.md`。`run.js` 開跑時自動把它改名成 `AGENTS.md.e2e-bak` 移出讀取路徑,結束(含 process.exit、Ctrl+C)自動改名還原;原本不存在就保持不存在。測試期間原路徑被重建時不覆蓋,兩份都保留並印出警告。看到殘留 `.e2e-bak`(上次 run.js 被強制結束)時:原路徑沒有 `AGENTS.md` 就把備份改回原名;兩份並存就由作者比對合併,不要直接覆蓋。
+- `wails dev` 讀寫**使用者真實的** `%USERPROFILE%\.perkins\settings.json`(最近專案清單、目前模型)。執行前先備份到暫存區,結束後逐位元組還原。
+- 後端會從同一目錄讀**全域作者指示** `%USERPROFILE%\.perkins\AGENTS.md`。`run.js` 開跑時自動把它改名成 `AGENTS.md.e2e-bak` 移出讀取路徑,結束(含 process.exit、Ctrl+C)自動改名還原;原本不存在就保持不存在。測試期間原路徑被重建時不覆蓋,兩份都保留並印出警告。看到殘留 `.e2e-bak`(上次 run.js 被強制結束)時:原路徑沒有 `AGENTS.md` 就把備份改回原名;兩份並存就由作者比對合併,不要直接覆蓋。
 - 「複製到平台」步驟會覆寫**系統剪貼簿**,無法還原;回報時要說明。
 - 提案步驟會呼叫本機 LM Studio(`http://localhost:1234/v1`)上設定中選定的模型,一次約 40–120 秒。LM Studio 未啟動時該步驟會失敗(平常開發用 `E2E_SKIP_AI=1` 跳過)。
 
 ## 步驟
 
-1. 備份設定:把 `%APPDATA%\Perkins\settings.json` 複製到暫存資料夾。
+1. 備份設定:把 `%USERPROFILE%\.perkins\settings.json` 複製到暫存資料夾。
+   **升級後第一次跑**(只有舊的 `%APPDATA%\Perkins`、還沒有 `~/.perkins`):`wails dev` 一啟動就會把舊資料夾整個搬到 `~/.perkins`。先把舊資料夾**整個**備份,測完依作者意願處理(維持搬移後的狀態,或刪掉 `~/.perkins` 並從備份還原舊資料夾)。若搬移失敗(新位置不存在、舊的還在),`run.js` 與 `clean-recent.js` 會拒絕執行,先查原因。
 2. 建立拋棄式測試專案:`node app/e2e/run.js --fixture <暫存資料夾>/e2e-proj`(不要放在倉庫內)。
 3. 另開背景程序:在 `app/` 執行 `PERKINS_OPEN=<測試專案> wails dev -noreload`,等 `http://localhost:34115` 有回應且記錄出現 `Watching`。
    **要跑很多輪(破壞驗證)時只需啟動這一次**:之後每輪用 `--reuse`,它會重建 fixture、叫後端重新開啟作品、重載頁面(見「重用同一個 wails dev」)。
