@@ -118,7 +118,7 @@ func TestAskAIPrematureFailureRecordsOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.mu.Lock()
-	ag, perr := a.prepare()
+	ag, _, perr := a.prepare()
 	a.mu.Unlock()
 	if perr != nil {
 		t.Fatalf("prepare 不應失敗: %v", perr)
@@ -279,7 +279,7 @@ func TestCompactChatWiringAndPreparePassesSwitch(t *testing.T) {
 	// prepare 把端點的開關套到 Agent(情境 A 的呼叫已跑過 prepare,這裡直接驗欄位)
 	a.mu.Lock()
 	a.cancel = nil
-	ag, perr := a.prepare()
+	ag, _, perr := a.prepare()
 	a.mu.Unlock()
 	if perr != nil {
 		t.Fatal(perr)

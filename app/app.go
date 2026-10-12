@@ -819,20 +819,20 @@ func (a *App) ListModels(profileID string) ([]string, error) {
 
 // ---- AI 對話 ----
 
-// prepare 把目前啟用的端點與模型套到 agent 上。呼叫者需持有 a.mu。
-func (a *App) prepare() (*agent.Agent, error) {
+// prepare 把目前啟用的端點與模型套到 agent 上,並回傳建立客戶端所用的同一份端點設定。呼叫者需持有 a.mu。
+func (a *App) prepare() (*agent.Agent, settings.Profile, error) {
 	if a.agent == nil {
-		return nil, errNoProject
+		return nil, settings.Profile{}, errNoProject
 	}
 	c, p, err := a.clientFor("")
 	if err != nil {
-		return nil, err
+		return nil, p, err
 	}
 	a.agent.LLM, a.agent.Model, a.agent.ContextTokens = c, p.Model, p.ContextTokens
 	a.agent.DisableAutoCompact = p.DisableAutoCompact // #32:每個端點各自的自動壓縮開關
 	a.agent.Remote = settings.IsRemote(p.BaseURL)     // 研究記錄:ask 筆記下 profile 是否 remote
 	a.agent.Readable = a.proj.Config.BotReadable()    // Bot 可讀範圍(#98):每次組裝前從 perkins.json 重讀
-	return a.agent, nil
+	return a.agent, p, nil
 }
 
 // PreviewContext 回傳「實際會送往模型」的訊息與預算估算(與 AskAI 走同一個組裝函式,A6)。
@@ -846,7 +846,7 @@ func (a *App) PreviewContext(p agent.AskParams) (*agent.Preview, error) {
 		return nil, errNoProject
 	}
 	if a.cancel == nil {
-		if _, err := a.prepare(); err != nil {
+		if _, _, err := a.prepare(); err != nil {
 			return nil, err
 		}
 	}
@@ -1058,12 +1058,13 @@ func (a *App) begin() (*agent.Agent, context.Context, context.CancelFunc, error)
 	if a.cancel != nil {
 		return nil, nil, nil, errors.New("上一個請求尚未結束")
 	}
-	ag, err := a.prepare()
+	ag, p, err := a.prepare()
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	// 外流確認(#99):雲端端點要作者確認過目前網址才會送出(對話、/compact、章節摘要都經過這裡)
-	if s := a.store.Load(); !s.ActiveProfile().RemoteConfirmed() {
+	// 外流確認(#99):雲端端點要作者確認過目前網址才會送出(對話、/compact、章節摘要都經過這裡)。
+	// 檢查建立 ag.LLM 的同一份設定,不重讀:兩次讀取之間切換端點會讓確認與實際送往的端點不一致
+	if !p.RemoteConfirmed() {
 		return nil, nil, nil, errors.New("目前的端點在本機之外:送出前請先確認內容會傳到該服務")
 	}
 	if ag.Model == "" {
