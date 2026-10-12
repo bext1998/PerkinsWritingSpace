@@ -70,8 +70,8 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
 
     return (
         <div className="p-3">
-            {section('outline', '大綱', Waypoints, tree.outline, '全書概要、各卷大綱都可以放這裡。大綱可能包含還沒寫到的劇情,所以預設不給 AI 看。')}
-            {section('notes', '筆記', NotebookPen, tree.notes, '靈感、資料、待辦。筆記是私人的,只有你附加時 AI 才看得到。')}
+            {section('outline', '大綱', Waypoints, tree.outline, '全書概要、各卷大綱都可以放這裡。不想讓 AI 看到還沒寫到的劇情,可在設定頁關閉這個資料夾。')}
+            {section('notes', '筆記', NotebookPen, tree.notes, '靈感、資料、待辦。想讓筆記保持私人,可在設定頁關閉這個資料夾。')}
         </div>
     );
 }
