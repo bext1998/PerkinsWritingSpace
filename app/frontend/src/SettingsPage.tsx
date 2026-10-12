@@ -1,5 +1,5 @@
-import {useEffect, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, BookMarked, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {ArrowLeft, BookMarked, ChevronRight, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
     ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, SetTheme, WriteAgentsMd,
@@ -7,7 +7,7 @@ import {
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Badge, Checkbox, Input, Label, Switch, Textarea} from '@/components/ui/basic';
-import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue} from '@/components/ui/overlay';
+import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue, Tip} from '@/components/ui/overlay';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
 import {GeneratedCover} from './Bookshelf';
@@ -60,16 +60,74 @@ function newProfileID() {
     return 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
 }
 
-// Section 是「Perkins Bot」「外觀」頁的分區塊:標題 + 一句說明 + 內容
+// Section(UI_GUIDE §12.1):區塊標題與一句說明放在卡片外,內容(通常是一張設定卡片)在下
 function Section({title, desc, children, testid}: {title: string; desc: string; children: React.ReactNode; testid?: string}) {
     return (
-        <section aria-label={title} className="grid gap-4" data-testid={testid}>
+        <section aria-label={title} className="grid gap-3" data-testid={testid}>
             <div>
-                <h2 className="font-serif text-lg font-semibold">{title}</h2>
+                <h2 className="text-sm font-semibold">{title}</h2>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{desc}</p>
             </div>
             {children}
         </section>
+    );
+}
+
+// 設定卡片:各列以分隔線隔開(UI_GUIDE §12.1)
+function RowCard({children, testid}: {children: React.ReactNode; testid?: string}) {
+    return <div className="grid divide-y overflow-hidden rounded-lg border" data-testid={testid}>{children}</div>;
+}
+
+// 設定列:左名稱+說明、右控制項;窄寬度時控制項換到下方(UI_GUIDE §12.2)
+function SettingRow({title, desc, children}: {title: string; desc?: React.ReactNode; children: React.ReactNode}) {
+    return (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+            <div className="min-w-[12rem] flex-1">
+                <div className="text-sm font-medium">{title}</div>
+                {desc && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>}
+            </div>
+            <div className="shrink-0">{children}</div>
+        </div>
+    );
+}
+
+// 長文字輸入(名稱、網址、金鑰、模型)的列:標題在上、輸入框全寬(UI_GUIDE §12.2)
+function FieldRow({title, desc, children}: {title: string; desc?: React.ReactNode; children: React.ReactNode}) {
+    return (
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5 px-4 py-3">
+            <div className="text-sm font-medium">{title}</div>
+            {children}
+            {desc && <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">{desc}</p>}
+        </div>
+    );
+}
+
+// 進入子頁的列:結尾「›」、整列可點(UI_GUIDE §12.3)
+function NavRow({title, desc, icon, badge, onClick, testid}: {
+    title: string; desc?: string; icon?: React.ReactNode; badge?: React.ReactNode; onClick: () => void; testid?: string;
+}) {
+    return (
+        <button type="button" onClick={onClick} data-testid={testid}
+                className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left hover:bg-accent/60">
+            {icon}
+            <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{title}</span>
+                {desc && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{desc}</span>}
+            </span>
+            {badge}
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground"/>
+        </button>
+    );
+}
+
+// 子頁標題列:返回鍵+項目名稱,右側放此項目的動作(例如刪除)
+function SubpageHeader({title, onBack, children}: {title: string; onBack: () => void; children?: React.ReactNode}) {
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            <Button variant="ghost" size="iconSm" onClick={onBack} aria-label="返回" data-testid="subpage-back"><ArrowLeft/></Button>
+            <h3 className="min-w-0 flex-1 truncate text-lg font-semibold" data-testid="subpage-title">{title}</h3>
+            {children}
+        </div>
     );
 }
 
@@ -99,18 +157,14 @@ function BotReadSection() {
     return (
         <Section title="Bot 可讀範圍" testid="bot-read-section"
                  desc="開啟的資料夾,Perkins Bot 會在需要時自己搜尋、讀取,不必每次附加;不會預先整份送出。關閉的資料夾只有你附加的檔案才看得到。只影響讀取:任何修改仍要你接受提案才會寫入。設定存在這部作品,下一次提問生效。">
-            <div className="grid divide-y rounded-lg border py-1">
+            <RowCard>
                 {rows?.map(r => (
-                    <div key={r.dir} className="flex items-center gap-4 px-4 py-3">
-                        <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium">{BOT_READ_ROWS[r.dir]?.name ?? r.dir}</div>
-                            <div className="mt-0.5 text-xs text-muted-foreground">{BOT_READ_ROWS[r.dir]?.desc}</div>
-                        </div>
+                    <SettingRow key={r.dir} title={BOT_READ_ROWS[r.dir]?.name ?? r.dir} desc={BOT_READ_ROWS[r.dir]?.desc}>
                         <Switch data-testid={`bot-read-${r.dir}`} checked={r.on} disabled={saving !== ''}
                                 onCheckedChange={v => toggle(r.dir, v)}/>
-                    </div>
+                    </SettingRow>
                 ))}
-            </div>
+            </RowCard>
             {error && <p className="text-xs text-destructive" data-testid="bot-read-error">{error}</p>}
         </Section>
     );
@@ -123,11 +177,18 @@ function presetLabel(p: settings.Preset) {
     return `${p.name}${region}${provider}`;
 }
 
+// 離開保護(UI_GUIDE §12.5):子頁回報是否有未儲存變更;返回、切換導覽頁、關閉設定頁前由 guard 提醒
+interface LeaveGuard {
+    guard: (leave: () => void) => void;
+    setDirty: (dirty: boolean) => void;
+}
+
 // AgentsEditor 是一份作者指示(AGENTS.md)的編輯區(Issue #38):作者本人編輯,按「儲存」才寫檔。
 // 檔案不存在時編輯區為空、儲存即建立;內容清空並儲存 = 寫入空檔(不刪檔)。
 // 估算長度與上限由後端以同一套估算提供(App.AgentsMdTokens / agent.AgentsLimit),前端不自己算。
-function AgentsEditor({scope, title, hint}: {scope: 'global' | 'project'; title: string; hint: string}) {
+function AgentsEditor({scope, hint, setDirty}: {scope: 'global' | 'project'; hint: string; setDirty: (d: boolean) => void}) {
     const [text, setText] = useState('');
+    const [saved, setSaved] = useState('');
     const [tokens, setTokens] = useState(0);
     const [limit, setLimit] = useState(4000);
     const [path, setPath] = useState('');
@@ -139,10 +200,14 @@ function AgentsEditor({scope, title, hint}: {scope: 'global' | 'project'; title:
         let alive = true;
         ReadAgentsMd(scope).then(v => {
             if (!alive) return;
-            setText(v.text); setTokens(v.tokens); setLimit(v.limit); setPath(v.path);
+            setText(v.text); setSaved(v.text); setTokens(v.tokens); setLimit(v.limit); setPath(v.path);
         }).catch(e => { if (alive) setError(errText(e)); });
         return () => { alive = false; };
     }, [scope]);
+
+    const dirty = text !== saved;
+    useEffect(() => { setDirty(dirty); }, [dirty, setDirty]);
+    useEffect(() => () => setDirty(false), [setDirty]);
 
     // 估算長度:輸入後 debounce 重算(與「超過上限整份不送出」用同一套估算)
     useEffect(() => {
@@ -156,51 +221,55 @@ function AgentsEditor({scope, title, hint}: {scope: 'global' | 'project'; title:
     const save = async () => {
         try {
             const v = await WriteAgentsMd(scope, text);
-            setTokens(v.tokens); setLimit(v.limit); setPath(v.path);
+            setSaved(text); setTokens(v.tokens); setLimit(v.limit); setPath(v.path);
             setMsg('已儲存。'); setError('');
         } catch (e) { setMsg(''); setError(errText(e)); }
     };
 
     return (
-        <div className="grid gap-2 rounded-lg border p-4" data-testid={`agents-${scope}`}>
-            <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                    <Label className="text-sm font-medium">{title}</Label>
-                    <p className="mt-1 break-all text-xs text-muted-foreground">{path}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                    <span className={cn('text-xs', tokens > limit ? 'text-warning' : 'text-muted-foreground')} data-testid={`agents-${scope}-tokens`}>
-                        約 {tokens} / {limit} 估算 tokens
-                    </span>
-                    <Button size="sm" onClick={save} data-testid={`agents-${scope}-save`}><Save/>儲存</Button>
-                </div>
-            </div>
+        <div className="grid gap-3" data-testid={`agents-${scope}`}>
             <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
-            <Textarea rows={7} className="min-w-0 font-mono text-xs leading-relaxed" value={text}
-                      onChange={e => setText(e.target.value)} data-testid={`agents-${scope}-text`}/>
+            <p className="break-all text-xs text-muted-foreground">{path}</p>
+            <Textarea rows={14} className="min-w-0 font-mono text-xs leading-relaxed" value={text}
+                      onChange={e => { setText(e.target.value); setMsg(''); }} data-testid={`agents-${scope}-text`}/>
             {tokens > limit && (
                 <p className="rounded-md bg-warning/10 p-2 text-xs text-warning" data-testid={`agents-${scope}-over`}>
                     超過長度上限:這份指示本次整份不送出(不會靜默截斷)。請刪減內容。
                 </p>
             )}
-            {msg && <p className="text-xs text-success">{msg}</p>}
+            <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" onClick={save} data-testid={`agents-${scope}-save`}><Save/>儲存</Button>
+                <span className={cn('text-xs', tokens > limit ? 'text-warning' : 'text-muted-foreground')} data-testid={`agents-${scope}-tokens`}>
+                    約 {tokens} / {limit} 估算 tokens
+                </span>
+                {dirty && <span className="text-xs text-warning" data-testid={`agents-${scope}-dirty`}>有未儲存的變更</span>}
+                {msg && <span className="text-xs text-success">{msg}</span>}
+            </div>
             {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
     );
 }
 
-function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void; hasProject: boolean}) {
-    const [selId, setSelId] = useState(cfg.active);
-    const current = cfg.profiles.find(p => p.id === selId) ?? cfg.profiles[0];
-    const [form, setForm] = useState<settings.Profile>(current);
+// 端點設定中作者可編輯的欄位;用來判斷子頁是否有未儲存變更
+const PROFILE_KEYS = ['name', 'baseUrl', 'provider', 'reasoningEffort', 'model', 'contextTokens', 'disableAutoCompact'] as const;
+const normField = (v: unknown) => v === undefined || v === null || v === false || v === '' ? '' : String(v);
+const sameProfile = (a: settings.Profile, b: settings.Profile) => PROFILE_KEYS.every(k => normField(a[k]) === normField(b[k]));
+
+// 端點子頁(#95):一個端點的完整設定,按「儲存」才寫入;刪除在標題列,兩步確認(UI_GUIDE §7)
+function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
+    cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void; view: main.ProfileView; notice: string;
+    onBack: () => void; onDeleted: () => void; setDirty: (d: boolean) => void;
+}) {
+    const [form, setForm] = useState<settings.Profile>(view);
     const [key, setKey] = useState('');
     const [models, setModels] = useState<string[]>([]);
-    const [presets, setPresets] = useState<settings.Preset[]>([]);
-    const [msg, setMsg] = useState('');
+    const [msg, setMsg] = useState(notice);
     const [error, setError] = useState('');
+    const [confirmDel, setConfirmDel] = useState(false);
 
-    useEffect(() => { setForm(current); setKey(''); setModels([]); setMsg(''); setError(''); }, [current?.id]);
-    useEffect(() => { ListProfilePresets().then(setPresets).catch(() => setPresets([])); }, []);
+    const dirty = !sameProfile(form, view) || key !== '';
+    useEffect(() => { setDirty(dirty); }, [dirty, setDirty]);
+    useEffect(() => () => setDirty(false), [setDirty]);
 
     const save = async (apiKey: string | null) => {
         try {
@@ -214,49 +283,17 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
 
     const load = async () => {
         try {
-            await SaveProfile(form, null as any);
+            setCfg(await SaveProfile(form, null as any));
             setModels(await ListModels(form.id));
             setError('');
         } catch (e) { setError(errText(e)); setModels([]); }
     };
 
-    const add = async () => {
-        const id = newProfileID();
-        try {
-            const c = await SaveProfile({id, name: '新端點', baseUrl: 'https://openrouter.ai/api/v1', model: '', contextTokens: 32768} as settings.Profile, null as any);
-            setCfg(c);
-            setSelId(id);
-        } catch (e) { setError(errText(e)); }
-    };
-
-    // 從預設新增(#43):帶入名稱、網址、Provider、建議上下文長度與預設模型;金鑰欄空白讓作者填
-    const addFromPreset = async (presetID: string) => {
-        const p = presets.find(x => x.id === presetID);
-        if (!p) return;
-        const id = newProfileID();
-        try {
-            const c = await SaveProfile({
-                id,
-                name: p.name,
-                baseUrl: p.baseUrl,
-                provider: p.provider || '',
-                model: p.model || '',
-                // 預設檔沒給建議值時用 §15 的預設上下文長度(16384),作者可再改
-                contextTokens: p.contextTokens && p.contextTokens > 0 ? p.contextTokens : 16384,
-            } as settings.Profile, null as any);
-            setCfg(c);
-            setSelId(id);
-            setMsg('已從預設新增端點;請填入 API 金鑰(本機端點通常不需要)後按「儲存」。');
-            setError('');
-        } catch (e) { setError(errText(e)); }
-    };
-
     const remove = async () => {
         try {
-            const c = await DeleteProfile(form.id);
-            setCfg(c);
-            setSelId(c.active);
-        } catch (e) { setError(errText(e)); }
+            setCfg(await DeleteProfile(form.id));
+            onDeleted();
+        } catch (e) { setError(errText(e)); setConfirmDel(false); }
     };
 
     // 換 Provider 時,新 Provider 不允許的思考強度重設為「不指定」(#30)
@@ -267,121 +304,215 @@ function PerkinsBotTab({cfg, setCfg, hasProject}: {cfg: main.SettingsView; setCf
     const remote = useMemo(() => {
         try { return !['localhost', '127.0.0.1', '[::1]'].includes(new URL(form.baseUrl).hostname); } catch { return true; }
     }, [form.baseUrl]);
-    const view = cfg.profiles.find(p => p.id === form.id);
+    const onlyOne = cfg.profiles.length <= 1;
 
     return (
-        <div className="grid gap-8">
-            <Section title="模型端點" desc="每個端點是一個模型服務(本機 LM Studio、雲端服務商…)。金鑰存 Windows 憑證管理員,不會寫進任何專案或設定檔。">
-                {/* 窄寬度(lg 以下,含 640/768/960 半螢幕):清單與表單上下堆疊,表單滿寬;
-                    否則 220px 清單 + 表單並排會把表單壓到約 148px,輸入框剩 24px(返回工#1,2026-10-07) */}
-                <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-                    <div className="space-y-1">
-                        {cfg.profiles.map(p => (
-                            <button key={p.id} onClick={() => setSelId(p.id)}
-                                    className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm', p.id === form.id ? 'bg-accent' : 'hover:bg-accent/60')}>
-                                {p.remote ? <Cloud className="h-4 w-4 text-muted-foreground"/> : <Monitor className="h-4 w-4 text-muted-foreground"/>}
-                                <span className="flex-1 truncate">{p.name}</span>
-                                {p.id === cfg.active && <Badge variant="secondary" className="text-xs">使用中</Badge>}
-                            </button>
-                        ))}
-                        {/* 從預設新增(#43):依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示 */}
-                        <Select onValueChange={addFromPreset}>
-                            <SelectTrigger data-testid="preset-select" className="mt-2 w-full text-xs">
-                                <SelectValue placeholder="從預設新增…"/>
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectGroup>
-                                    <SelectLabel>本機</SelectLabel>
-                                    {presets.filter(p => p.local).map(p => (
-                                        <SelectItem key={p.id} value={p.id} data-testid={`preset-opt-${p.id}`}>{presetLabel(p)}</SelectItem>
-                                    ))}
-                                </SelectGroup>
-                                <SelectGroup>
-                                    <SelectLabel>服務商</SelectLabel>
-                                    {presets.filter(p => !p.local).map(p => (
-                                        <SelectItem key={p.id} value={p.id} data-testid={`preset-opt-${p.id}`}>{presetLabel(p)}</SelectItem>
-                                    ))}
-                                </SelectGroup>
-                            </SelectContent>
-                        </Select>
-                        <Button variant="ghost" size="sm" className="w-full justify-start" onClick={add} data-testid="add-profile"><Plus/>新增空白端點</Button>
+        <div className="grid gap-8" data-testid="profile-page">
+            <div className="grid gap-3">
+                <SubpageHeader title={view.name} onBack={onBack}>
+                    {onlyOne ? (
+                        <Tip label="至少要保留一個端點" side="left">
+                            <span><Button variant="ghost" size="sm" className="text-destructive" disabled><Trash2/>刪除端點</Button></span>
+                        </Tip>
+                    ) : (
+                        <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDel(true)}
+                                data-testid="delete-profile"><Trash2/>刪除端點</Button>
+                    )}
+                </SubpageHeader>
+                {confirmDel && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 p-3 text-xs" data-testid="delete-profile-confirm">
+                        <span className="min-w-0 flex-1 text-destructive">刪除「{view.name}」後無法復原,它的 API 金鑰也會從 Windows 憑證管理員移除。</span>
+                        <Button size="sm" variant="ghost" onClick={() => setConfirmDel(false)}>取消</Button>
+                        <Button size="sm" variant="destructive" onClick={remove} data-testid="delete-profile-yes"><Trash2/>刪除端點</Button>
                     </div>
-                    <div className="grid grid-cols-[minmax(0,1fr)] max-w-xl gap-4">
-                        <Field label="名稱"><Input value={form.name} onChange={e => setForm({...form, name: e.target.value})}/></Field>
-                        <Field label="端點網址" hint="OpenAI 相容的 /v1 位址。LM Studio 預設為 http://localhost:1234/v1。">
-                            <Input value={form.baseUrl} onChange={e => setForm({...form, baseUrl: e.target.value})} data-testid="profile-url"/>
-                        </Field>
+                )}
+            </div>
+            <Section title="連線" desc="模型服務的位址與存取方式。">
+                <RowCard>
+                    <FieldRow title="名稱"><Input value={form.name} onChange={e => setForm({...form, name: e.target.value})}/></FieldRow>
+                    <FieldRow title="端點網址" desc="OpenAI 相容的 /v1 位址。LM Studio 預設為 http://localhost:1234/v1。">
+                        <Input value={form.baseUrl} onChange={e => setForm({...form, baseUrl: e.target.value})} data-testid="profile-url"/>
                         {remote && (
                             <p className="rounded-md bg-warning/10 p-2 text-xs text-warning">
                                 這個端點不在本機。使用時,送出的稿件與 Bot 讀取的內容會傳到該服務;第一次送出前會請你確認一次,之後不再詢問(網址改變時會再確認)。
                             </p>
                         )}
-                        <Field label="API 型別" hint="Anthropic 官方端點選「Anthropic 原生」,其他服務與本機模型選「OpenAI 相容」。">
-                            <Select value={form.provider || 'openai'} onValueChange={changeProvider}>
-                                <SelectTrigger data-testid="provider-select"><SelectValue/></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="openai" data-testid="provider-opt-openai">OpenAI 相容(/chat/completions)</SelectItem>
-                                    <SelectItem value="anthropic" data-testid="provider-opt-anthropic">Anthropic 原生(Messages API)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        <Field label="思考強度" hint="強度越高越慢、花費越多;本機模型多半不支援,保持「不指定」。">
-                            <Select value={form.reasoningEffort || EFFORT_NONE} onValueChange={v => setForm({...form, reasoningEffort: v === EFFORT_NONE ? '' : v})}>
-                                <SelectTrigger data-testid="effort-select"><SelectValue/></SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value={EFFORT_NONE} data-testid="effort-opt-none">不指定(服務商預設)</SelectItem>
-                                    {effortsFor(form.provider || 'openai').map(e => (
-                                        <SelectItem key={e} value={e} data-testid={`effort-opt-${e}`}>{EFFORT_LABELS[e]}</SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </Field>
-                        <Field label="模型">
-                            <div className="flex flex-wrap gap-2">
-                                <Input list="model-list" className="min-w-0 flex-1" value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="模型 id"/>
-                                <datalist id="model-list">{models.map(m => <option key={m} value={m}/>)}</datalist>
-                                <Button variant="outline" onClick={load}><RefreshCw/>載入清單</Button>
+                    </FieldRow>
+                    <SettingRow title="API 型別" desc="Anthropic 官方端點選「Anthropic 原生」,其他服務與本機模型選「OpenAI 相容」。">
+                        <Select value={form.provider || 'openai'} onValueChange={changeProvider}>
+                            <SelectTrigger className="w-72" data-testid="provider-select"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="openai" data-testid="provider-opt-openai">OpenAI 相容(/chat/completions)</SelectItem>
+                                <SelectItem value="anthropic" data-testid="provider-opt-anthropic">Anthropic 原生(Messages API)</SelectItem>
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <FieldRow title="API 金鑰" desc={view.hasKey ? '已儲存金鑰。留空表示不變更。' : '本機模型通常不需要。'}>
+                        <div className="flex gap-2">
+                            <div className="relative min-w-0 flex-1">
+                                <KeyRound className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"/>
+                                <Input type="password" className="pl-8" value={key} onChange={e => setKey(e.target.value)} placeholder={view.hasKey ? '••••••••' : ''}/>
                             </div>
-                        </Field>
-                        <Field label="上下文長度(tokens)" hint="用來估算能送多少內容;自動壓縮開啟時,超過會先濃縮較早的對話。請依模型實際設定填寫(LM Studio 在載入模型時設定)。">
-                            <Input type="number" min={2048} step={1024} value={form.contextTokens}
-                                   onChange={e => setForm({...form, contextTokens: Number(e.target.value)})}/>
-                        </Field>
-                        <Field label="自動壓縮上下文" hint="關閉後,對話超過上下文長度時會擋下不送出,不會自動濃縮;請在聊天輸入 /compact 手動壓縮較早的對話,或開新對話。">
-                            <label className="flex items-center gap-2 text-sm">
-                                <Checkbox checked={!form.disableAutoCompact}
-                                          onCheckedChange={v => setForm({...form, disableAutoCompact: v !== true})}
-                                          data-testid="auto-compact-setting"/>
-                                <span>開啟:超過上限時自動把較早的對話濃縮成摘要</span>
-                            </label>
-                        </Field>
-                        <Field label="API 金鑰" hint={view?.hasKey ? '已儲存金鑰。留空表示不變更。' : '本機模型通常不需要。'}>
-                            <div className="flex gap-2">
-                                <div className="relative flex-1">
-                                    <KeyRound className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"/>
-                                    <Input type="password" className="pl-8" value={key} onChange={e => setKey(e.target.value)} placeholder={view?.hasKey ? '••••••••' : ''}/>
-                                </div>
-                                {view?.hasKey && <Button variant="outline" onClick={() => save('')}>清除金鑰</Button>}
-                            </div>
-                        </Field>
-                        {msg && <p className="text-xs text-success">{msg}</p>}
-                        {error && <p className="text-xs text-destructive">{error}</p>}
-                        <div className="flex flex-wrap gap-2">
-                            <Button onClick={() => save(key ? key : null)} data-testid="save-profile"><Save/>儲存</Button>
-                            <Button variant="ghost" className="text-destructive" disabled={cfg.profiles.length <= 1} onClick={remove}><Trash2/>刪除端點</Button>
+                            {view.hasKey && <Button variant="outline" onClick={() => save('')}>清除金鑰</Button>}
                         </div>
-                    </div>
+                    </FieldRow>
+                </RowCard>
+            </Section>
+            <Section title="模型" desc="這個端點使用的模型與送出方式。">
+                <RowCard>
+                    <FieldRow title="模型">
+                        <div className="flex flex-wrap gap-2">
+                            <Input list="model-list" className="min-w-0 flex-1" value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="模型 id"/>
+                            <datalist id="model-list">{models.map(m => <option key={m} value={m}/>)}</datalist>
+                            <Button variant="outline" onClick={load}><RefreshCw/>載入清單</Button>
+                        </div>
+                    </FieldRow>
+                    <SettingRow title="思考強度" desc="強度越高越慢、花費越多;本機模型多半不支援,保持「不指定」。">
+                        <Select value={form.reasoningEffort || EFFORT_NONE} onValueChange={v => setForm({...form, reasoningEffort: v === EFFORT_NONE ? '' : v})}>
+                            <SelectTrigger className="w-56" data-testid="effort-select"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value={EFFORT_NONE} data-testid="effort-opt-none">不指定(服務商預設)</SelectItem>
+                                {effortsFor(form.provider || 'openai').map(e => (
+                                    <SelectItem key={e} value={e} data-testid={`effort-opt-${e}`}>{EFFORT_LABELS[e]}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <SettingRow title="上下文長度" desc="用來估算能送多少內容;請依模型實際設定填寫(LM Studio 在載入模型時設定)。">
+                        <div className="flex items-center gap-2">
+                            <Input type="number" min={2048} step={1024} className="w-56" value={form.contextTokens}
+                                   onChange={e => setForm({...form, contextTokens: Number(e.target.value)})}/>
+                            <span className="text-xs text-muted-foreground">tokens</span>
+                        </div>
+                    </SettingRow>
+                    <SettingRow title="自動壓縮上下文" desc="開啟時,超過上下文長度會先把較早的對話濃縮成摘要;關閉時會擋下不送出,可在聊天輸入 /compact 手動壓縮或開新對話。">
+                        <Switch checked={!form.disableAutoCompact} onCheckedChange={v => setForm({...form, disableAutoCompact: !v})}
+                                data-testid="auto-compact-setting"/>
+                    </SettingRow>
+                </RowCard>
+            </Section>
+            <div className="grid gap-2">
+                <div className="flex flex-wrap items-center gap-3">
+                    <Button onClick={() => save(key ? key : null)} data-testid="save-profile"><Save/>儲存</Button>
+                    {dirty && <span className="text-xs text-warning" data-testid="profile-dirty">有未儲存的變更</span>}
+                    {msg && !dirty && <span className="text-xs text-success">{msg}</span>}
                 </div>
+                {error && <p className="text-xs text-destructive">{error}</p>}
+            </div>
+        </div>
+    );
+}
+
+type BotSub = {kind: 'profile'; id: string; notice: string} | {kind: 'agents'; scope: 'global' | 'project'} | null;
+
+const AGENTS_PAGES = {
+    global: {title: '全域指示(所有作品)', desc: '%APPDATA%\\Perkins\\AGENTS.md', hint: '放在 %APPDATA%\\Perkins\\AGENTS.md,所有作品共用。與作品指示衝突時以作品指示為準。'},
+    project: {title: '目前作品指示', desc: '作品資料夾根目錄的 AGENTS.md', hint: '放在作品資料夾根目錄的 AGENTS.md(其他 coding agent 也會讀同一份)。與全域指示衝突時以這份為準。'},
+};
+
+// Perkins Bot 頁(#38、#95):端點與作者指示是「›」進入子頁的列,Bot 可讀範圍是即時生效的開關(UI_GUIDE §12)
+function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
+    cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void; hasProject: boolean;
+} & LeaveGuard) {
+    const [sub, setSub] = useState<BotSub>(null);
+    const [presets, setPresets] = useState<settings.Preset[]>([]);
+    const [error, setError] = useState('');
+    useEffect(() => { ListProfilePresets().then(setPresets).catch(() => setPresets([])); }, []);
+
+    const back = () => guard(() => setSub(null));
+
+    const add = async () => {
+        const id = newProfileID();
+        try {
+            setCfg(await SaveProfile({id, name: '新端點', baseUrl: 'https://openrouter.ai/api/v1', model: '', contextTokens: 32768} as settings.Profile, null as any));
+            setSub({kind: 'profile', id, notice: ''});
+            setError('');
+        } catch (e) { setError(errText(e)); }
+    };
+
+    // 從預設新增(#43):帶入名稱、網址、Provider、建議上下文長度與預設模型;金鑰欄空白讓作者填
+    const addFromPreset = async (presetID: string) => {
+        const p = presets.find(x => x.id === presetID);
+        if (!p) return;
+        const id = newProfileID();
+        try {
+            setCfg(await SaveProfile({
+                id,
+                name: p.name,
+                baseUrl: p.baseUrl,
+                provider: p.provider || '',
+                model: p.model || '',
+                // 預設檔沒給建議值時用 §15 的預設上下文長度(16384),作者可再改
+                contextTokens: p.contextTokens && p.contextTokens > 0 ? p.contextTokens : 16384,
+            } as settings.Profile, null as any));
+            setSub({kind: 'profile', id, notice: '已從預設新增端點;請填入 API 金鑰(本機端點通常不需要)後按「儲存」。'});
+            setError('');
+        } catch (e) { setError(errText(e)); }
+    };
+
+    const subView = sub?.kind === 'profile' ? cfg.profiles.find(p => p.id === sub.id) : undefined;
+    if (sub?.kind === 'profile' && subView) {
+        return <ProfilePage key={sub.id} cfg={cfg} setCfg={setCfg} view={subView} notice={sub.notice} onBack={back}
+                            onDeleted={() => { setDirty(false); setSub(null); }} setDirty={setDirty}/>;
+    }
+    if (sub?.kind === 'agents') {
+        const pg = AGENTS_PAGES[sub.scope];
+        return (
+            <div className="grid gap-6">
+                <SubpageHeader title={pg.title} onBack={back}/>
+                <AgentsEditor key={sub.scope} scope={sub.scope} hint={pg.hint} setDirty={setDirty}/>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid gap-8">
+            <Section title="模型端點" desc="每個端點是一個模型服務(本機 LM Studio、雲端服務商…)。點選端點編輯設定;金鑰存 Windows 憑證管理員,不會寫進任何專案或設定檔。">
+                <div className="flex flex-wrap items-center gap-2">
+                    {/* 從預設新增(#43):依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示 */}
+                    <Select onValueChange={addFromPreset}>
+                        <SelectTrigger data-testid="preset-select" className="h-8 w-56 text-xs">
+                            <SelectValue placeholder="從預設新增…"/>
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectGroup>
+                                <SelectLabel>本機</SelectLabel>
+                                {presets.filter(p => p.local).map(p => (
+                                    <SelectItem key={p.id} value={p.id} data-testid={`preset-opt-${p.id}`}>{presetLabel(p)}</SelectItem>
+                                ))}
+                            </SelectGroup>
+                            <SelectGroup>
+                                <SelectLabel>服務商</SelectLabel>
+                                {presets.filter(p => !p.local).map(p => (
+                                    <SelectItem key={p.id} value={p.id} data-testid={`preset-opt-${p.id}`}>{presetLabel(p)}</SelectItem>
+                                ))}
+                            </SelectGroup>
+                        </SelectContent>
+                    </Select>
+                    <Button variant="outline" size="sm" onClick={add} data-testid="add-profile"><Plus/>新增空白端點</Button>
+                </div>
+                <RowCard testid="profile-list">
+                    {cfg.profiles.map(p => (
+                        <NavRow key={p.id} testid={`profile-card-${p.id}`} title={p.name}
+                                desc={`${p.model || '尚未選擇模型'} · ${p.remote ? '雲端' : '本機'}`}
+                                icon={p.remote ? <Cloud className="h-4 w-4 shrink-0 text-muted-foreground"/> : <Monitor className="h-4 w-4 shrink-0 text-muted-foreground"/>}
+                                badge={p.id === cfg.active ? <Badge variant="secondary" className="shrink-0 text-xs">使用中</Badge> : undefined}
+                                onClick={() => setSub({kind: 'profile', id: p.id, notice: ''})}/>
+                    ))}
+                </RowCard>
+                {error && <p className="text-xs text-destructive">{error}</p>}
             </Section>
             {hasProject && <BotReadSection/>}
             <Section title="作者指示(AGENTS.md)" testid="agents-section"
-                     desc="每次送出都會放進系統訊息的通用指示。兩層:作品層優先;不論哪一層都不能改變系統規則(AI 只能閱讀獲准內容、只能提出修改提案)。按「儲存」才寫檔;超過長度上限(估算 tokens)時整份不送出並在送出預覽說明原因。">
-                <AgentsEditor scope="global" title="全域指示(所有作品)"
-                              hint="放在 %APPDATA%\Perkins\AGENTS.md。作品資料夾裡沒有 AGENTS.md 時用這份。"/>
-                {hasProject && (
-                    <AgentsEditor scope="project" title="目前作品指示"
-                                  hint="放在作品資料夾根目錄的 AGENTS.md(其他 coding agent 也會讀同一份)。與全域指示衝突時以這份為準。"/>
-                )}
+                     desc="每次送出都會放進系統訊息的通用指示。兩層:作品層優先;不論哪一層都不能改變系統規則(AI 只能閱讀獲准內容、只能提出修改提案)。超過長度上限(估算 tokens)時整份不送出並在送出預覽說明原因。">
+                <RowCard>
+                    <NavRow testid="agents-row-global" title={AGENTS_PAGES.global.title} desc={AGENTS_PAGES.global.desc}
+                            onClick={() => setSub({kind: 'agents', scope: 'global'})}/>
+                    {hasProject && (
+                        <NavRow testid="agents-row-project" title={AGENTS_PAGES.project.title} desc={AGENTS_PAGES.project.desc}
+                                onClick={() => setSub({kind: 'agents', scope: 'project'})}/>
+                    )}
+                </RowCard>
             </Section>
         </div>
     );
@@ -507,7 +638,7 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
         <div className="grid gap-8">
             {/* 區塊一:基本資料(小標題 + 封面/欄位;窄寬度 flex-wrap 換行,不重疊) */}
             <section aria-labelledby="proj-basic" className="grid gap-4">
-                <h2 id="proj-basic" className="font-serif text-lg font-semibold">基本資料</h2>
+                <h2 id="proj-basic" className="text-sm font-semibold">基本資料</h2>
                 <div className="flex flex-wrap items-start gap-6">
                     <div className="h-[220px] w-[156px] shrink-0 overflow-hidden rounded-r-md rounded-l-sm border">
                         {cover ? <img src={cover} className="h-full w-full object-cover" alt=""/> : <GeneratedCover name={name || tree.name}/>}
@@ -636,15 +767,34 @@ function AppearanceTab({theme, setTheme, paper, setPaper}: Pick<Props, 'theme' |
     );
 }
 
+type Page = 'project' | 'models' | 'platforms' | 'appearance';
+const PAGE_LABEL: Record<Page, string> = {project: '作品', models: 'Perkins Bot', platforms: '平台輸出', appearance: '外觀'};
+
 export default function SettingsPage({tree, setTree, theme, setTheme, paper, setPaper, onClose}: Props) {
     const [cfg, setCfg] = useState<main.SettingsView | null>(null);
-    const [page, setPage] = useState<'project' | 'models' | 'platforms' | 'appearance'>('models'); // 預設頁維持 Perkins Bot(SPEC §17.2)
+    const [page, setPage] = useState<Page>('models'); // 預設頁維持 Perkins Bot(SPEC §17.2)
     useEffect(() => { GetSettings().then(setCfg); }, []);
+
+    // 離開保護(UI_GUIDE §12.5):子頁有未儲存變更時,返回、切換導覽頁、關閉設定頁前先提醒
+    const dirty = useRef(false);
+    const setDirty = useCallback((d: boolean) => { dirty.current = d; }, []);
+    const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+    const guard = useCallback((leave: () => void) => {
+        if (dirty.current) setPendingLeave(() => leave);
+        else leave();
+    }, []);
+    const discardAndLeave = () => {
+        const leave = pendingLeave;
+        dirty.current = false;
+        setPendingLeave(null);
+        leave?.();
+    };
+
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) onClose(); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) guard(onClose); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [onClose]);
+    }, [onClose, guard]);
 
     // 自動存檔(SPEC §17.3):寫入設定檔成功後才更新畫面;Workspace 在設定頁關閉時重讀設定。
     const setAutosave = async (on: boolean) => {
@@ -652,12 +802,12 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
         setCfg(c => c ? main.SettingsView.createFrom({...c, autosave: on}) : c);
     };
 
-    const navBtn = (id: 'project' | 'models' | 'platforms' | 'appearance', label: string, Icon: typeof Cpu) => (
-        <button data-testid={`tab-${id}`} onClick={() => setPage(id)}
+    const navBtn = (id: Page, Icon: typeof Cpu) => (
+        <button data-testid={`tab-${id}`} onClick={() => guard(() => setPage(id))}
                 aria-current={page === id}
                 className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm',
                     page === id ? 'bg-accent font-medium text-foreground' : 'text-muted-foreground hover:bg-accent/60')}>
-            <Icon className="h-4 w-4"/>{label}
+            <Icon className="h-4 w-4"/>{PAGE_LABEL[id]}
         </button>
     );
 
@@ -666,23 +816,33 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
              className="fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden bg-background" data-testid="settings-page">
             {/* 頁首:返回 + 標題 */}
             <div className="flex shrink-0 items-center gap-3 border-b px-6 py-3">
-                <Button variant="ghost" size="icon" onClick={onClose} data-testid="close-settings"><ArrowLeft/></Button>
+                <Button variant="ghost" size="icon" onClick={() => guard(onClose)} data-testid="close-settings"><ArrowLeft/></Button>
                 <h1 className="font-serif text-2xl font-bold">設定</h1>
             </div>
             <div className="flex min-h-0 flex-1">
                 {/* 左側導覽欄(約 200px,選中態明顯);主題與稿紙版面搬到「外觀」頁(Issue #88) */}
                 <nav data-testid="settings-nav" className="flex w-[200px] shrink-0 flex-col gap-1 border-r bg-sidebar p-3">
-                    {tree && navBtn('project', '作品', BookMarked)}
-                    {navBtn('models', 'Perkins Bot', Cpu)}
-                    {navBtn('platforms', '平台輸出', Share2)}
-                    {navBtn('appearance', '外觀', Palette)}
+                    {tree && navBtn('project', BookMarked)}
+                    {navBtn('models', Cpu)}
+                    {navBtn('platforms', Share2)}
+                    {navBtn('appearance', Palette)}
                 </nav>
                 {/* 內容區:獨立捲動、單一 max-w-5xl 置中(SPEC §17.2) */}
                 <div data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
                     {cfg && (
                         <div className="mx-auto w-full max-w-5xl px-6 py-6">
+                            {pendingLeave && (
+                                <div className="sticky top-0 z-10 bg-background pb-3">
+                                    <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning" data-testid="unsaved-leave">
+                                        <span className="min-w-0 flex-1">有尚未儲存的變更,離開會捨棄這些變更。</span>
+                                        <Button size="sm" variant="ghost" onClick={() => setPendingLeave(null)} data-testid="unsaved-stay">繼續編輯</Button>
+                                        <Button size="sm" variant="destructive" onClick={discardAndLeave} data-testid="unsaved-discard">捨棄並離開</Button>
+                                    </div>
+                                </div>
+                            )}
+                            <h2 className="mb-6 text-xl font-semibold" data-testid="settings-page-title">{PAGE_LABEL[page]}</h2>
                             {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}/>}
-                            {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree}/>}
+                            {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree} guard={guard} setDirty={setDirty}/>}
                             {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg}/>}
                             {page === 'appearance' && <AppearanceTab theme={theme} setTheme={setTheme} paper={paper} setPaper={setPaper}/>}
                         </div>

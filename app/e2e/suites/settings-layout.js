@@ -86,7 +86,7 @@ module.exports = {
         let navSwitch = false;
         if (hasNav) {
             await page.click('[data-testid=tab-models]');
-            const n1 = await waitSel('[data-testid=profile-url]');
+            const n1 = await waitSel('[data-testid=profile-list]');
             await page.click('[data-testid=tab-platforms]');
             const n2 = await waitSel('[data-testid=platform-preview]');
             await page.click('[data-testid=tab-project]');
@@ -125,7 +125,7 @@ module.exports = {
         if (hasNav) {
             await shot('70-settings-project-900');
             await page.click('[data-testid=tab-models]');
-            await waitSel('[data-testid=profile-url]');
+            await waitSel('[data-testid=profile-list]');
             await shot('72-settings-models-900');
             await page.click('[data-testid=tab-platforms]');
             await waitSel('[data-testid=platform-preview]');
@@ -155,7 +155,14 @@ module.exports = {
 
         // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
         await page.click('[data-testid=tab-models]');
-        await waitSel('[data-testid=profile-url]');
+        await waitSel('[data-testid=profile-list]');
+        // #95:清單頁只列端點(「›」進子頁),不在清單頁攤開編輯表單,也沒有第二條側欄式按鈕
+        const listOnly = await page.evaluate(() => ({
+            list: !!document.querySelector('[data-testid=profile-list]'),
+            form: !!document.querySelector('[data-testid=profile-url]'),
+            agentsInline: !!document.querySelector('[data-testid=agents-global-text]'),
+        }));
+        check('#95 Perkins Bot 頁清單頁只列端點與作者指示入口(表單在子頁)', listOnly.list && !listOnly.form && !listOnly.agentsInline, JSON.stringify(listOnly));
         // 從預設新增(#43):帶入名稱、網址、Provider;金鑰欄空白讓作者填
         const ids0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.profiles.map(p => p.id)));
         await page.click('[data-testid=preset-select]');
@@ -200,24 +207,49 @@ module.exports = {
         await page.click('[data-testid=provider-opt-openai]');
         const effortReset = ((await page.textContent('[data-testid=effort-select]') || '').trim()).includes('不指定');
         check('切換 Provider 時不合法的思考強度重設為不指定', effortReset);
-        // 清理:刪除本次建立的暫時端點(不動作者既有端點)
-        if (fresh.length === 1) await page.evaluate(id => window.go.main.App.DeleteProfile(id), fresh[0].id);
+        // #95 刪除在子頁標題列、兩步確認:第一次按只出現後果說明,端點仍在;按確認才刪除並回到清單(同時清理暫時端點)
+        let delOK = false, delDetail = '';
+        if (fresh.length === 1) {
+            await page.click('[data-testid=delete-profile]');
+            await page.waitForSelector('[data-testid=delete-profile-confirm]', {timeout: 3000}).catch(() => {});
+            const stillThere = await page.evaluate(id => window.go.main.App.GetSettings().then(s => s.profiles.some(p => p.id === id)), fresh[0].id);
+            await page.click('[data-testid=delete-profile-yes]');
+            await page.waitForSelector('[data-testid=profile-list]', {timeout: 5000}).catch(() => {});
+            const gone = await page.evaluate(id => window.go.main.App.GetSettings().then(s => !s.profiles.some(p => p.id === id)), fresh[0].id);
+            const backToList = !!(await page.$('[data-testid=profile-list]'));
+            delOK = stillThere && gone && backToList;
+            delDetail = JSON.stringify({stillThere, gone, backToList});
+            if (!gone) await page.evaluate(id => window.go.main.App.DeleteProfile(id), fresh[0].id);
+        }
+        check('#95 刪除端點要先確認(第一次按不刪),確認後刪除並回到清單', delOK, delDetail);
 
         // 作者指示(AGENTS.md)編輯(Issue #38):作品層編輯儲存後寫入磁碟
         const agFile = path.join(PROJ, 'AGENTS.md');
         const agText = 'E2E 作者指示:提到森林時稱「紫斑蝶E2E森林」。';
+        await page.click('[data-testid=agents-row-project]');
+        await waitSel('[data-testid=agents-project-text]');
         const agVisible = !!(await page.$('[data-testid=agents-project]'));
         await page.fill('[data-testid=agents-project-text]', agText);
         await page.click('[data-testid=agents-project-save]');
-        await page.waitForSelector('[data-testid=agents-project] p:has-text("已儲存")', {timeout: 5000}); // 等寫檔完成(限本編輯區的訊息)
+        await page.waitForSelector('[data-testid=agents-project] >> text=已儲存', {timeout: 5000}); // 等寫檔完成(限本編輯區的訊息)
         const onDisk = fs.existsSync(agFile) ? fs.readFileSync(agFile, 'utf8') : '(不存在)';
         check('AGENTS.md 編輯儲存後寫入磁碟', agVisible && onDisk === agText, JSON.stringify(onDisk));
         await page.waitForFunction(() => /約\s*[1-9]/.test(document.querySelector('[data-testid=agents-project-tokens]')?.textContent || ''), null, {timeout: 5000}).catch(() => {});
         const agTokens = (await page.textContent('[data-testid=agents-project-tokens]') || '').trim();
         check('作者指示顯示估算長度與上限', /約\s*[1-9]\d*\s*\/\s*4000/.test(agTokens), agTokens);
-        // 全域層編輯區也要在(不寫入作者的真實全域檔)
-        check('作者指示顯示全域層編輯區與路徑', !!(await page.$('[data-testid=agents-global]')) &&
-            (await page.textContent('[data-testid=agents-global]') || '').includes('AGENTS.md'));
+        // #95 離開保護:改了沒儲存就按返回,先提醒且留在子頁、檔案不變;選「捨棄並離開」才回清單
+        await page.fill('[data-testid=agents-project-text]', agText + '(未儲存)');
+        await page.click('[data-testid=subpage-back]');
+        const warned = await page.waitForSelector('[data-testid=unsaved-leave]', {timeout: 3000}).then(() => true).catch(() => false);
+        const stayed = !!(await page.$('[data-testid=agents-project-text]'));
+        await page.click('[data-testid=unsaved-discard]');
+        const leftToList = await waitSel('[data-testid=profile-list]');
+        const diskAfter = fs.existsSync(agFile) ? fs.readFileSync(agFile, 'utf8') : '(不存在)';
+        check('#95 子頁有未儲存變更時返回會先提醒,捨棄後才離開且不寫檔', warned && stayed && leftToList && diskAfter === agText,
+            JSON.stringify({warned, stayed, leftToList, diskAfter}));
+        // 全域層入口也要在(不寫入作者的真實全域檔)
+        check('作者指示顯示全域層編輯區與路徑', !!(await page.$('[data-testid=agents-row-global]')) &&
+            (await page.textContent('[data-testid=agents-row-global]') || '').includes('AGENTS.md'));
         fs.rmSync(agFile, {force: true}); // 清理:不留給後面的組
 
         // ===== 設定頁 640×672(半螢幕,SPEC §16 第 7 項 (c) + 返工):堆疊版面 =====
@@ -226,6 +258,12 @@ module.exports = {
         await page.setViewportSize({width: 640, height: 672});
         await settle(80, 900); // 等 UI 更新(原固定等 500ms)
         await page.click('[data-testid=tab-models]');
+        await waitSel('[data-testid=profile-list]');
+        await settle(80, 700);
+        const list640 = await page.evaluate(() => { const c = document.querySelector('[data-testid=settings-content]'); return {sw: c.scrollWidth, cw: c.clientWidth}; });
+        check('#95 設定頁 640×672 端點清單頁無水平捲軸', list640.sw <= list640.cw + 1, JSON.stringify(list640));
+        await shot('76-settings-models-640');
+        await page.click('[data-testid=profile-list] button');
         await waitSel('[data-testid=profile-url]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         const stacked640 = await page.evaluate(() => {
@@ -235,21 +273,17 @@ module.exports = {
             const controls = [...c.querySelectorAll('input, button[role=combobox]')]
                 .filter(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
                 .map(el => { const r = el.getBoundingClientRect(); return {w: Math.round(r.width), t: (el.getAttribute('data-testid') || el.tagName)}; });
-            // 堆疊驗證:找到含 lg:grid-cols 的外層 grid(清單+表單容器),lg 以下必須單欄(上下堆疊);
-            // 注意 url.closest('div.grid') 會抓到 Field 的內層 grid(永遠 1 欄),必須往上找 lg:grid-cols
-            let outer = url.parentElement;
-            while (outer && !(outer.className || '').includes('lg:grid-cols')) outer = outer.parentElement;
-            const cols = outer ? getComputedStyle(outer).gridTemplateColumns.split(' ').length : 0;
+            // #95:端點表單在子頁、佔滿內容寬(清單與表單不並排擠壓);網址欄至少佔內容寬 70%
             return {sw: c.scrollWidth, cw: c.clientWidth, urlW: Math.round(url.getBoundingClientRect().width),
                     urlClientW: url.clientWidth, minControl: Math.min(...controls.map(x => x.w)), controls,
-                    gridCols: cols};
+                    urlRatio: url.getBoundingClientRect().width / c.clientWidth};
         });
         check('設定頁 640×672 模型輸入框可用寬度 ≥ 200', stacked640.urlClientW >= 200, JSON.stringify(stacked640.urlClientW));
         check('設定頁 640×672 所有表單控制項可用寬度 ≥ 200', stacked640.minControl >= 200,
             JSON.stringify(stacked640.controls));
-        check('設定頁 640×672 清單與表單上下堆疊(非三欄並排)', stacked640.gridCols === 1, `gridCols=${stacked640.gridCols}`);
+        check('設定頁 640×672 端點子頁表單滿寬(清單與表單不並排)', stacked640.urlRatio >= 0.7, `urlRatio=${stacked640.urlRatio}`);
         check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
-        await shot('76-settings-models-640');
+        await shot('76b-settings-profile-640');
         await page.click('[data-testid=tab-appearance]');
         await waitSel('[data-testid=appearance-theme]');
         await settle(80, 700); // 等 UI 更新
@@ -306,7 +340,7 @@ module.exports = {
         if (hasNav) await shot('71-settings-project-1280');
 
         await page.click('[data-testid=tab-models], button:has-text("模型端點")'); // 現況無 tab-models,用文字
-        const mod1280 = await waitSel('[data-testid=profile-url]');
+        const mod1280 = await waitSel('[data-testid=profile-list]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         g = await geoSettings();
         check('設定頁 1280×800 AI 模型頁 捲軸在內容區(根節點不滾動)', mod1280 && !!g && !g.rootScrollable,
