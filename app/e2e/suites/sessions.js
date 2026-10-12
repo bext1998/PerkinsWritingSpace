@@ -1,6 +1,6 @@
 // sessions — 對話記錄(#33):保存、清單、接續、封存、刪除、還原、永久刪除、640 寬清單
 // 不呼叫模型:以 __perkinsChatInject 注入一個回合,再以綁定 SaveSession 保存。
-// 副作用:%APPDATA%\Perkins\sessions\<fixture 作品的鍵>\ 會被建立;開跑與結束都只清這個鍵,不碰其他作品的記錄。
+// 副作用:%USERPROFILE%\.perkins\sessions\<fixture 作品的鍵>\ 會被建立;開跑與結束都只清這個鍵,不碰其他作品的記錄。
 module.exports = {
     name: 'sessions',
     desc: '對話記錄(#33):保存、清單、接續、封存、刪除、還原、永久刪除、640 寬清單',
@@ -9,9 +9,10 @@ module.exports = {
         const fs = require('fs');
         const path = require('path');
         const crypto = require('crypto');
+        const os = require('os');
 
         // 作品鍵與 Go 的 sessions.Key 一致:絕對路徑(正斜線、小寫)的 SHA-256 前 32 位 hex
-        const sessDir = path.join(process.env.APPDATA, 'Perkins', 'sessions',
+        const sessDir = path.join(os.homedir(), '.perkins', 'sessions',
             crypto.createHash('sha256').update(path.resolve(PROJ).replace(/\\/g, '/').toLowerCase()).digest('hex').slice(0, 32));
         const clean = () => { if (fs.existsSync(sessDir)) fs.rmSync(sessDir, {recursive: true, force: true}); };
         const files = () => fs.existsSync(sessDir)

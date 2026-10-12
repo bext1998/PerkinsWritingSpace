@@ -160,13 +160,47 @@ func defaults() Settings {
 
 type Store struct{ Dir string }
 
-// NewStore 使用 %APPDATA%\Perkins(其他平台為對應的使用者設定目錄)。
+// NewStore 使用 %USERPROFILE%\.perkins(2026-10-13 作者定案,#104;同 Codex 的 ~/.codex)。
+// 舊版的 %APPDATA%\Perkins(os.UserConfigDir)由 migrateDir 搬到新位置。
+// 回傳值:store 為 nil 表示沒有可用的設定目錄(呼叫者不得繼續);store 非 nil 而 err 非 nil 表示搬移失敗、
+// 暫時沿用舊位置(資料完整,下次啟動再試)。
 func NewStore() (*Store, error) {
-	d, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	return &Store{Dir: filepath.Join(d, "Perkins")}, nil
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	return migrateDir(filepath.Join(cfg, "Perkins"), filepath.Join(home, ".perkins"))
+}
+
+// ErrMigrate 表示舊設定資料夾搬移失敗,暫時沿用舊位置。
+var ErrMigrate = errors.New("設定資料夾搬移失敗")
+
+// migrateDir 決定要使用的設定目錄:新目錄已存在就用新目錄(舊目錄不動);確定沒有新目錄、只有舊目錄時以一次 rename
+// 整個搬過去(設定、全域 AGENTS.md、對話記錄一起走,舊目錄不再保留);rename 失敗沿用舊目錄並回傳 ErrMigrate。
+// 只有「確定不存在」(fs.ErrNotExist)才當作沒有;其他查詢錯誤(權限、網路磁碟暫時失效)無法判斷,回傳 nil store,
+// 不能把它當成首次安裝而改用空白的新目錄——否則舊資料恢復可用後也不會再被讀到。
+func migrateDir(legacy, dir string) (*Store, error) {
+	_, err := os.Stat(dir)
+	if err == nil {
+		return &Store{Dir: dir}, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("無法確認設定資料夾 %s: %w", dir, err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return &Store{Dir: dir}, nil // 首次安裝
+		}
+		return nil, fmt.Errorf("無法確認舊設定資料夾 %s: %w", legacy, err)
+	}
+	if err := os.Rename(legacy, dir); err != nil {
+		return &Store{Dir: legacy}, fmt.Errorf("%w:無法從 %s 搬到 %s,暫時沿用舊位置: %v", ErrMigrate, legacy, dir, err)
+	}
+	return &Store{Dir: dir}, nil
 }
 
 func (s *Store) Load() Settings {

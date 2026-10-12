@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,5 +381,77 @@ func TestPresetsAreValid(t *testing.T) {
 	}
 	if n := len(Presets()); n != 26 {
 		t.Fatalf("預設檔數量 = %d", n)
+	}
+}
+
+// 意圖(#104):設定資料夾改到 ~/.perkins。舊版資料夾(設定、全域 AGENTS.md、對話記錄)在第一次啟動時整個搬過去、
+// 舊位置不再保留;新資料夾已存在時不動舊資料夾(不覆蓋、不刪除作者可能還需要的資料)。
+func TestMigrateDirMovesLegacyFolderOnce(t *testing.T) {
+	base := t.TempDir()
+	legacy, dir := filepath.Join(base, "Perkins"), filepath.Join(base, ".perkins")
+	if err := os.MkdirAll(filepath.Join(legacy, "sessions", "k"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(legacy, "settings.json"), []byte(`{"active":"x"}`), 0o644)
+	os.WriteFile(filepath.Join(legacy, "sessions", "k", "s1.json"), []byte(`{}`), 0o644)
+
+	got, err := migrateDir(legacy, dir)
+	if err != nil || got == nil || got.Dir != dir {
+		t.Fatalf("migrateDir = %+v, %v; want %q", got, err, dir)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "settings.json")); err != nil || string(b) != `{"active":"x"}` {
+		t.Fatalf("settings.json 沒有搬到新位置: %q %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sessions", "k", "s1.json")); err != nil {
+		t.Fatalf("對話記錄沒有搬到新位置: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("舊資料夾應已不存在: %v", err)
+	}
+
+	// 新資料夾已存在:舊資料夾(假設又被舊版建立)原封不動
+	os.MkdirAll(legacy, 0o755)
+	os.WriteFile(filepath.Join(legacy, "settings.json"), []byte(`old`), 0o644)
+	if got, err := migrateDir(legacy, dir); err != nil || got == nil || got.Dir != dir {
+		t.Fatalf("新資料夾已存在時應直接使用: %+v %v", got, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(legacy, "settings.json")); string(b) != "old" {
+		t.Fatal("新資料夾已存在時不得動舊資料夾")
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "settings.json")); string(b) != `{"active":"x"}` {
+		t.Fatal("新資料夾已存在時不得被舊資料覆蓋")
+	}
+
+	// 兩者都沒有:用新位置(首次安裝)
+	fresh := filepath.Join(base, "fresh")
+	if got, err := migrateDir(filepath.Join(base, "none"), fresh); err != nil || got == nil || got.Dir != fresh {
+		t.Fatalf("首次安裝應使用新位置: %+v %v", got, err)
+	}
+}
+
+// 意圖(#104,PR #107 審查):搬不動時沿用舊位置(資料完整、下次再試);無法確認資料夾是否存在時不得當成首次安裝
+// 改用空白的新目錄(否則舊設定恢復可用後也不會再被讀到),而是回報沒有可用的設定目錄。
+func TestMigrateDirFailureKeepsLegacyOrStops(t *testing.T) {
+	base := t.TempDir()
+	legacy := filepath.Join(base, "Perkins")
+	os.MkdirAll(legacy, 0o755)
+	os.WriteFile(filepath.Join(legacy, "settings.json"), []byte(`{"active":"x"}`), 0o644)
+
+	// rename 失敗(目的地的上層資料夾不存在):沿用舊位置並回報 ErrMigrate,舊資料不動
+	got, err := migrateDir(legacy, filepath.Join(base, "missing-parent", ".perkins"))
+	if !errors.Is(err, ErrMigrate) || got == nil || got.Dir != legacy {
+		t.Fatalf("搬移失敗應沿用舊位置: %+v %v", got, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(legacy, "settings.json")); string(b) != `{"active":"x"}` {
+		t.Fatal("搬移失敗時舊資料不得變動")
+	}
+
+	// 查詢舊資料夾出錯(不是「不存在」):不得回傳新目錄
+	if got, err := migrateDir(filepath.Join(base, "bad\x00name"), filepath.Join(base, "new")); err == nil || got != nil {
+		t.Fatalf("無法確認舊資料夾時不得改用新目錄: %+v %v", got, err)
+	}
+	// 查詢新資料夾出錯:同樣不得決定位置
+	if got, err := migrateDir(legacy, filepath.Join(base, "bad\x00new")); err == nil || got != nil {
+		t.Fatalf("無法確認新資料夾時不得決定位置: %+v %v", got, err)
 	}
 }

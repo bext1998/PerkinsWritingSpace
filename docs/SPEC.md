@@ -234,12 +234,12 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **一致性檢查(報告模式)**:本次請求**不提供** `propose_patch` 工具,AI 只能輸出檢查報告,由作者決定改什麼。
 - **章節摘要**:AI 草擬 → 作者在對話框中編輯 → 儲存才生效,存於 `summaries/`(frontmatter 記錄來源章節與其雜湊)。章節改動後摘要標示「可能過期」。未儲存的草稿永遠不進上下文(延伸 A3)。
 - **分層上下文**:設定原文(不壓縮)+「前情摘要」(本章之前已確認的章節摘要)+ 目前章節全文 + AI 以工具查原文。
-- **作者指示 AGENTS.md**(2026-10-11,#38):每次組裝送給模型的訊息時讀取兩層通用 `AGENTS.md`——全域一份在 `%APPDATA%\Perkins\AGENTS.md`(與 `settings.json` 同目錄)、作品一份在作品資料夾根目錄 `AGENTS.md`(作品資料夾裡其他 coding agent 也會讀同一份,預期行為;越接近越優先)。兩層放進 system 訊息、在既有系統規則之後,依序「全域 → 作品」,各自有標題(預覽可看出來源),並附說明:兩者衝突時以作品層為準,且作者指示不能改變系統規則(G1–G4:只能讀、只能提案、受保護資料夾等限制不變)。每次組裝都重讀,作者改檔不必重啟;檔案不存在就略過,讀取失敗回錯不吞掉。單份超過 4000 估算 tokens 時整份不送出(不靜默截斷),送出預覽與對話中以通知顯示原因;計入上下文預算。報告模式套用;章節摘要與對話濃縮不套用。Bot 的工具(讀取/搜尋/提案)與附加都碰不到作品根目錄的 AGENTS.md(路徑規則只允許五個內容資料夾)。**設定頁編輯**(2026-10-12,#38 設定頁改版):設定頁「Perkins Bot」提供兩個編輯區(全域 `%APPDATA%\Perkins\AGENTS.md`、目前作品的作品根目錄 `AGENTS.md`,沒開作品不顯示作品層),顯示估算長度與上限、按「儲存」才寫檔(不存在即建立;清空儲存 = 寫入空檔不刪檔;寫檔失敗回錯並顯示),綁定 `ReadAgentsMd`/`WriteAgentsMd`/`AgentsMdTokens`(見 §17.2);這是作者本人編輯,不是 AI 寫入(與 G1 不衝突)。**送出預覽的「本次直接送出」逐項列出本次送出的作者指示**(例如「· 作者指示:全域 AGENTS.md」),由後端 `agent.Preview.instructions` 回報 `buildMessages` 實際放進 system 的層,前端不自己猜;超過上限未送出的層不列入,原因照現有 notices 顯示。
+- **作者指示 AGENTS.md**(2026-10-11,#38):每次組裝送給模型的訊息時讀取兩層通用 `AGENTS.md`——全域一份在 `%USERPROFILE%\.perkins\AGENTS.md`(與 `settings.json` 同目錄)、作品一份在作品資料夾根目錄 `AGENTS.md`(作品資料夾裡其他 coding agent 也會讀同一份,預期行為;越接近越優先)。兩層放進 system 訊息、在既有系統規則之後,依序「全域 → 作品」,各自有標題(預覽可看出來源),並附說明:兩者衝突時以作品層為準,且作者指示不能改變系統規則(G1–G4:只能讀、只能提案、受保護資料夾等限制不變)。每次組裝都重讀,作者改檔不必重啟;檔案不存在就略過,讀取失敗回錯不吞掉。單份超過 4000 估算 tokens 時整份不送出(不靜默截斷),送出預覽與對話中以通知顯示原因;計入上下文預算。報告模式套用;章節摘要與對話濃縮不套用。Bot 的工具(讀取/搜尋/提案)與附加都碰不到作品根目錄的 AGENTS.md(路徑規則只允許五個內容資料夾)。**設定頁編輯**(2026-10-12,#38 設定頁改版):設定頁「Perkins Bot」提供兩個編輯區(全域 `%USERPROFILE%\.perkins\AGENTS.md`、目前作品的作品根目錄 `AGENTS.md`,沒開作品不顯示作品層),顯示估算長度與上限、按「儲存」才寫檔(不存在即建立;清空儲存 = 寫入空檔不刪檔;寫檔失敗回錯並顯示),綁定 `ReadAgentsMd`/`WriteAgentsMd`/`AgentsMdTokens`(見 §17.2);這是作者本人編輯,不是 AI 寫入(與 G1 不衝突)。**送出預覽的「本次直接送出」逐項列出本次送出的作者指示**(例如「· 作者指示:全域 AGENTS.md」),由後端 `agent.Preview.instructions` 回報 `buildMessages` 實際放進 system 的層,前端不自己猜;超過上限未送出的層不列入,原因照現有 notices 顯示。
 - **對話壓縮**:對話歷史超過端點上下文長度(設定頁可調)的預算時,程式先請模型把較早對話濃縮成摘要,並在對話中顯示通知;預覽顯示的即為實際送出的內容。預算計算由程式執行。
 - **自動壓縮開關與 /compact**(2026-10-11,#32):每個端點各有開關(設定頁「AI 模型」,預設**開啟**;舊設定檔不需遷移)。關閉時不做任何自動濃縮——送出前超過預算直接擋下不送出,提示可輸入 `/compact` 手動壓縮或開新對話(減少附加檔案/取消前情摘要的既有建議保留),回合結束後的門檻壓縮也不做;送出預覽的超量說明改成對應文案(不再說「會先濃縮」)。**`/compact`**:聊天輸入 `/compact` 就手動壓縮一次(不論開關),不送給模型、不進對話歷史;成功沿用壓縮通知(B7),對話太短沒有可壓縮內容時明確告知(不是靜默不做)。聊天浮窗在「上下文 N%」旁顯示自動壓縮開/關(tooltip 說明行為),640 寬放得下。
 
 - **對話記錄**(#33,2026-10-12):Perkins Bot 的對話可保存、瀏覽、接續、封存與刪除。
-  - **位置**:`<設定目錄>/sessions/<作品鍵>/`(與 `settings.json` 同層、依作品分開;設定目錄取法沿用 `settings.NewStore` 的 `os.UserConfigDir()`)。與作品內 `audit.jsonl`、研究記錄完全分開、互不取代,不寫入作品資料夾。作品鍵 = 作品根目錄絕對路徑的雜湊(大小寫視為同一個路徑);作品沒有固定 ID,**作品搬家後舊記錄不跟著走(已知限制)**。
+  - **位置**:`<設定目錄>/sessions/<作品鍵>/`(與 `settings.json` 同層、依作品分開;設定目錄 = `settings.NewStore` 的目錄,即 `%USERPROFILE%\.perkins`)。與作品內 `audit.jsonl`、研究記錄完全分開、互不取代,不寫入作品資料夾。作品鍵 = 作品根目錄絕對路徑的雜湊(大小寫視為同一個路徑);作品沒有固定 ID,**作品搬家後舊記錄不跟著走(已知限制)**。
   - **一份會話一個 JSON**:id、建立/更新時間、標題(第一個問題截短)、`History`(送給模型的 user/assistant 回合,含濃縮摘要)、本次會話的拒絕原因(#40)、前端顯示用的 turns(含工具列與通知)。
   - **狀態**:一般/封存/已刪除;已刪除放在 `<作品鍵>/trash/` 子資料夾,可還原,也可永久刪除(永久刪除前前端要作者確認)。刪除沿用 §15 回收區做法。
   - **何時存**:每個回合結束(`chat:done` 成功後)與手動壓縮後存一次目前會話;「新對話」開始新的會話 id;空會話(沒有任何回合)不存檔;寫檔失敗在對話框顯示錯誤列,不靜默。
@@ -324,7 +324,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **平台預設**:五個平台都用「兩格全形縮排、段落空一行、場景分隔 ◇◇◇」;簡中平台(輕之國度、菠蘿包)預設只轉字形(tw2s);巴哈姆特保留標題,其他平台不輸出標題。角角者已實際驗證可用(2026-10-10),其餘**未驗證**。
 - **整卷匯出不允許存進專案的作者資料夾**,避免匯出檔被當成稿件。
 - **Notion 匯入**:圖片不匯入(只告知數量);頁面標題下方的「欄位: 值」屬性轉成條列;依資料夾名稱猜測預設類型(含「角色」「地點」等字樣),其餘預設匯入為筆記,作者可逐組修改。
-- **封面**:存在 `.perkins/cover.*`(上限 4MB),書櫃讀取專案內的封面;最近專案清單存在 `%APPDATA%\Perkins\settings.json`。
+- **封面**:存在 `.perkins/cover.*`(上限 4MB),書櫃讀取專案內的封面;最近專案清單存在 `%USERPROFILE%\.perkins\settings.json`。
 - **技術**:Go 套件 `export` 改名為 `publish`(`export` 是 TypeScript 保留字,Wails 生成的綁定無法編譯);shadcn/ui 元件集中在 `components/ui/{button,basic,overlay}.tsx` 三個檔案,而不是一個元件一個檔。
 
 ## 17. 品牌與命名(2026-10-05)
@@ -332,7 +332,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
 - **應用程式顯示名稱**:`Perkins WritingSpace`。用於視窗標題(`app/main.go`)、`app/wails.json` 的 `info.productName`(決定 exe 檔案內容與工作列顯示)、`index.html` 與前端顯示應用程式名稱的文字。`info.productVersion` 為 `0.2.0`(對應第二階段規格 v0.2)。
 - **AI 助手名稱**:`Perkins Bot`。用於對話框標題與開啟按鈕的 title。泛指功能類別的「AI」字樣保留不改(例如「AI 模型」、「AI 一致性檢查」與設定頁的說明文字);編輯器右鍵選單為「詢問 Perkins Bot…」(2026-10-08)。
 - **圖示來源**:以作者 2026-09-30 選定的 `docs/perkins-icon-black-gold.png` 為原稿,產出 `app/build/appicon.png`(1024×1024,保留透明)與 `app/build/windows/icon.ico`(內含 16/24/32/48/64/128/256 各尺寸);標題欄的 logo 用向量版(見下一條)。造型與主配色不變,細節見 `docs/BRAND_ICON.md`。
-- **刻意不改的內部識別**:`outputfilename`(維持 `perkins`,E2E 流程依賴 `perkins-dev.exe`)、Go module 與套件路徑 `perkins`、`%APPDATA%\Perkins` 設定目錄、專案內 `.perkins/` 與 `perkins.json`、keyring 服務名、`PERKINS_OPEN` 環境變數、`window.__perkins*` 開發鉤子。這些是磁碟與程式介面上的識別,改名會讓作者既有的設定、金鑰與作品讀不到。
+- **刻意不改的內部識別**:`outputfilename`(維持 `perkins`,E2E 流程依賴 `perkins-dev.exe`)、Go module 與套件路徑 `perkins`、`%USERPROFILE%\.perkins` 設定目錄、專案內 `.perkins/` 與 `perkins.json`、keyring 服務名、`PERKINS_OPEN` 環境變數、`window.__perkins*` 開發鉤子。這些是磁碟與程式介面上的識別,改名會讓作者既有的設定、金鑰與作品讀不到。
 - **向量版 logo**:標題欄(應用程式選單按鈕)用 `app/frontend/src/assets/images/perkins-logo.svg`(兩色黑底圓角方塊 + 金色 P,由 PNG 原稿描圖);exe 圖示(`appicon.png`、`icon.ico`)仍用點陣原稿。
 
 ### 17.1 視窗與關閉(2026-10-05)
@@ -382,7 +382,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   - **模型端點**:內容欄內的端點清單(`profile-list`,每列名稱、模型、本機/雲端、使用中標記,`profile-card-<id>`),點選進入該端點的子頁編輯(`profile-page`,按「儲存」才寫入);刪除在子頁標題列,兩步確認並說明金鑰一併移除,只剩一個端點時停用並說明原因(新增/金鑰 keyring/雲端外流標示不變);新增或從預設新增後直接進入新端點的子頁;「**從預設新增**」下拉列出 `ListProfilePresets()`(#43),依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示;選了就建立端點並帶入名稱、網址、Provider、建議上下文長度(預設檔沒給值時用 §15 的 16384)與預設模型,金鑰欄空白由作者填;仍可「新增空白端點」手動建。
   - **API 型別(Provider)**:顯示並可切換 OpenAI 相容(`/chat/completions`)/ Anthropic 原生(Messages API);**思考強度**下拉:「不指定(服務商預設)」+ 依 Provider 的允許值(OpenAI 相容:低/中/高 = `low/medium/high`;Anthropic 原生另加 更高/最高 = `xhigh/max`),中文標示;**切換 Provider 時不合法的值重設為不指定**。說明一句:強度越高越慢、花費越多;本機模型多半不支援,保持不指定。
   - 模型(沿用抓模型清單;抓不到例如 z.ai 沒有 `/models` 時可手填)、上下文長度、自動壓縮開關、API 金鑰都在同一頁。
-  - **作者指示(AGENTS.md)編輯**(#38):兩列入口(`agents-row-global`、`agents-row-project`),各自進入子頁編輯——**全域**(`%APPDATA%\Perkins\AGENTS.md`)與**目前作品**(作品資料夾根目錄 `AGENTS.md`;沒有開作品時不顯示作品層)。說明兩層關係(作品層優先、不能改變系統規則 G1–G4)、顯示估算長度與上限(`agent.AgentsLimit` = 4000 估算 tokens,超出時整份不送出並在送出預覽說明原因)。**按「儲存」才寫檔**;檔案不存在時編輯區為空、儲存即建立;內容清空並儲存 = 寫入空檔(不刪檔);寫檔失敗回錯並顯示。綁定:`ReadAgentsMd(scope)`/`WriteAgentsMd(scope, text)`/`AgentsMdTokens(text)`,scope = `global`|`project`。這是**作者本人**編輯(不是 AI 寫入,與 G1 不衝突);Bot 的工具仍碰不到這兩個檔。
+  - **作者指示(AGENTS.md)編輯**(#38):兩列入口(`agents-row-global`、`agents-row-project`),各自進入子頁編輯——**全域**(`%USERPROFILE%\.perkins\AGENTS.md`)與**目前作品**(作品資料夾根目錄 `AGENTS.md`;沒有開作品時不顯示作品層)。說明兩層關係(作品層優先、不能改變系統規則 G1–G4)、顯示估算長度與上限(`agent.AgentsLimit` = 4000 估算 tokens,超出時整份不送出並在送出預覽說明原因)。**按「儲存」才寫檔**;檔案不存在時編輯區為空、儲存即建立;內容清空並儲存 = 寫入空檔(不刪檔);寫檔失敗回錯並顯示。綁定:`ReadAgentsMd(scope)`/`WriteAgentsMd(scope, text)`/`AgentsMdTokens(text)`,scope = `global`|`project`。這是**作者本人**編輯(不是 AI 寫入,與 G1 不衝突);Bot 的工具仍碰不到這兩個檔。
 - **平台輸出頁**(#95 延續,2026-10-13):與 Perkins Bot 頁同一套「清單 → 子頁」版型(UI_GUIDE §12)——清單頁一個「平台」區塊(`platform-list`,每列 `platform-card-<id>` 顯示規則摘要與已驗證標記,上方「新增平台」與「恢復內建預設」),點選進入該平台的子頁;規則表單與預覽(`platform-preview`)在子頁,按「儲存」才寫入(`SavePlatforms`),刪除在子頁標題列兩步確認後立即保存,「恢復內建預設」同樣兩步確認(`ResetPlatforms`),未儲存變更的離開保護同 Perkins Bot 頁。新增平台直接進子頁,未儲存離開不出現在清單與設定檔;規則欄位、預覽與繁簡選項(`ConvertOptions`)不變。
 - **外觀頁(#88,2026-10-12)**:主題與稿紙版面的獨立頁,取代舊的「導覽欄底部」那一塊;**重新排版**(不是原封搬移):每個選項一列,左邊名稱+一句說明、右邊控制項;主題用兩張較大的選擇卡(含圖示、名稱與說明,選中態明顯,`theme-dark`/`theme-light`)。行為不變:即按即存、立即套用、重開設定與重啟應用都保留;稿紙版面沿用既有 `data-testid`(`paper-width`、`paper-font-size`、`paper-gap` 及各選項 `*-opt-<值>`),主題按鈕保留「夜間書房」/「白紙」文字。導覽欄底部不再放主題與稿紙版面。
 - **間距單一來源**:作品頁各區塊用同一個容器間距(例如 `gap-8`),不再以個別 `mt-*` 疊加。

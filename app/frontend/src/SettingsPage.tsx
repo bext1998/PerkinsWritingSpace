@@ -421,7 +421,7 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
 type BotSub = {kind: 'profile'; id: string; notice: string} | {kind: 'agents'; scope: 'global' | 'project'} | null;
 
 const AGENTS_PAGES = {
-    global: {title: '全域指示(所有作品)', desc: '%APPDATA%\\Perkins\\AGENTS.md', hint: '放在 %APPDATA%\\Perkins\\AGENTS.md,所有作品共用。與作品指示衝突時以作品指示為準。'},
+    global: {title: '全域指示(所有作品)', desc: '%USERPROFILE%\\.perkins\\AGENTS.md', hint: '放在 %USERPROFILE%\\.perkins\\AGENTS.md,所有作品共用。與作品指示衝突時以作品指示為準。'},
     project: {title: '目前作品指示', desc: '作品資料夾根目錄的 AGENTS.md', hint: '放在作品資料夾根目錄的 AGENTS.md(其他 coding agent 也會讀同一份)。與全域指示衝突時以這份為準。'},
 };
 
