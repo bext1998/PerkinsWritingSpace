@@ -552,8 +552,11 @@ const samePlatform = (a: publish.Platform, b: publish.Platform) =>
     PLATFORM_KEYS.every(k => normField(a[k]) === normField(b[k])) && RULE_KEYS.every(k => normField(a.rules[k]) === normField(b.rules[k]));
 
 // 平台子頁(#95):一個平台的規則與預覽,按「儲存」才寫入;刪除在標題列,兩步確認(UI_GUIDE §7)
-function PlatformPage({cfg, setCfg, initial, opts, onBack, onDeleted, setDirty}: {
-    cfg: main.SettingsView; setCfg: (c: main.SettingsView) => void; initial: publish.Platform; opts: main.Option[];
+// 平台清單的寫入(儲存、刪除、恢復預設):後端整份覆寫清單,所以一律經 PlatformsTab 排隊依序執行(PR #110 審查)
+type PlatformWrite = (edit: ((list: publish.Platform[]) => publish.Platform[]) | 'reset') => Promise<main.SettingsView>;
+
+function PlatformPage({cfg, write, initial, opts, onBack, onDeleted, setDirty}: {
+    cfg: main.SettingsView; write: PlatformWrite; initial: publish.Platform; opts: main.Option[];
     onBack: () => void; onDeleted: () => void; setDirty: (d: boolean) => void;
 }) {
     const [form, setForm] = useState<publish.Platform>(initial);
@@ -579,9 +582,8 @@ function PlatformPage({cfg, setCfg, initial, opts, onBack, onDeleted, setDirty}:
     const save = async () => {
         const sent = form;
         try {
-            const next = saved ? cfg.platforms.map(x => (x.id === sent.id ? sent : x)) : [...cfg.platforms, sent];
-            const c = await SavePlatforms(next);
-            setCfg(c);
+            // 以「上一次寫入完成後」的最新清單為基礎取代或加入這個平台,不用畫面上可能過期的 cfg
+            const c = await write(list => list.some(x => x.id === sent.id) ? list.map(x => (x.id === sent.id ? sent : x)) : [...list, sent]);
             // 後端可能正規化欄位:只同步送出後沒再改過的欄位,儲存期間的新輸入保留
             const got = c.platforms.find(x => x.id === sent.id);
             if (got) setForm(f => ({
@@ -597,7 +599,7 @@ function PlatformPage({cfg, setCfg, initial, opts, onBack, onDeleted, setDirty}:
     // 刪除:以 SavePlatforms(刪掉該項的清單)立即保存並回到清單(尚未儲存的新平台等於直接捨棄)
     const remove = async () => {
         try {
-            setCfg(await SavePlatforms(cfg.platforms.filter(x => x.id !== form.id)));
+            await write(list => list.filter(x => x.id !== form.id));
             onDeleted();
         } catch (e) { setError(errText(e)); setConfirmDel(false); }
     };
@@ -677,6 +679,23 @@ function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; s
     const [error, setError] = useState('');
     useEffect(() => { ConvertOptions().then(setOpts); }, []);
 
+    // 平台清單寫入排隊(PR #110 審查):後端 SavePlatforms 整份覆寫清單。前一次寫入還沒回應就離開子頁再刪別的平台,
+    // 若用畫面上的舊清單會把剛儲存的內容蓋回去,遲到的回應也會讓刪掉的平台在畫面上復活。
+    // 所以每次寫入都排在前一次之後,並以前一次回應的最新清單為基礎;回應依序套用,不會有過期的覆蓋較新的。
+    const chain = useRef<Promise<unknown>>(Promise.resolve());
+    const latest = useRef(cfg.platforms);
+    useEffect(() => { latest.current = cfg.platforms; }, [cfg.platforms]);
+    const write: PlatformWrite = edit => {
+        const run = chain.current.then(async () => {
+            const c = edit === 'reset' ? await ResetPlatforms() : await SavePlatforms(edit(latest.current));
+            latest.current = c.platforms;
+            setCfg(c);
+            return c;
+        });
+        chain.current = run.catch(() => {}); // 失敗由呼叫者顯示;不讓佇列卡住
+        return run;
+    };
+
     const view = sub ? (cfg.platforms.find(p => p.id === sub) ?? (fresh?.id === sub ? fresh : undefined)) : undefined;
     const back = () => guard(() => { setSub(null); setFresh(null); });
 
@@ -690,11 +709,11 @@ function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; s
 
     // 恢復內建預設:破壞性操作,兩步確認(UI_GUIDE §7)後才丟掉作者自訂的平台與修改
     const reset = async () => {
-        try { setCfg(await ResetPlatforms()); setConfirmReset(false); setMsg('已恢復內建預設。'); setError(''); } catch (e) { setError(errText(e)); }
+        try { await write('reset'); setConfirmReset(false); setMsg('已恢復內建預設。'); setError(''); } catch (e) { setError(errText(e)); }
     };
 
     if (sub && view) {
-        return <PlatformPage key={sub} cfg={cfg} setCfg={setCfg} initial={view} opts={opts} onBack={back}
+        return <PlatformPage key={sub} cfg={cfg} write={write} initial={view} opts={opts} onBack={back}
                             onDeleted={() => { setDirty(false); setSub(null); setFresh(null); }} setDirty={setDirty}/>;
     }
 
