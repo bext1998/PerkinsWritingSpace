@@ -96,11 +96,11 @@ for (const n of only) {
     try { loader(n); } catch (e) { console.error(`找不到測試組:${n}(${e.message})`); printUsage(); process.exit(1); }
 }
 
-// 隔離全域作者指示:後端會從真實 settings 目錄讀 %APPDATA%\Perkins\AGENTS.md,
+// 隔離全域作者指示:後端會從真實 settings 目錄讀 %USERPROFILE%\.perkins\AGENTS.md,
 // 不隔離的話 PreviewContext/Ask 會讀到作者真實的全域指示,測試結果取決於本機環境(PR #75 審查)。
 // 開跑前把真實檔改名移出讀取路徑,結束(含 process.exit 與未捕捉例外)改名還原——改名即逐位元組相同;
 // 原本不存在就保持不存在(不寫入拋棄內容)。
-const APPDATA_AGENTS = path.join(process.env.APPDATA || '', 'Perkins', 'AGENTS.md');
+const APPDATA_AGENTS = path.join(require('os').homedir(), '.perkins', 'AGENTS.md');
 const APPDATA_AGENTS_BAK = APPDATA_AGENTS + '.e2e-bak';
 if (fs.existsSync(APPDATA_AGENTS_BAK)) {
     console.error(`發現殘留備份 ${APPDATA_AGENTS_BAK}(上次 E2E 未正常還原),請先手動改回 ${APPDATA_AGENTS} 再執行`);

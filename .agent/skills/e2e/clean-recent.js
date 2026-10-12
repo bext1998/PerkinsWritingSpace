@@ -1,4 +1,4 @@
-// 清掉 E2E 留在作者真實設定裡的書櫃垃圾:%APPDATA%\Perkins\settings.json 的「最近作品」中,
+// 清掉 E2E 留在作者真實設定裡的書櫃垃圾:%USERPROFILE%\.perkins\settings.json 的「最近作品」中,
 // 路徑位於系統暫存資料夾(os.tmpdir())的項目,以及暫存資料夾下殘留的 perkins-e2e-b-* 測試專案(e2e.js 以 mkdtemp 建立的「乙作品」)。
 // 不刪 perkins-e2e-backup-* 等其他資料夾(可能是正在進行的 E2E 的設定備份)。
 // 只動暫存資料夾內的東西;作者真正的作品(暫存資料夾以外的路徑)一律保留。
@@ -11,7 +11,7 @@ const dry = process.argv.includes('--dry-run');
 const tmp = path.resolve(os.tmpdir()).toLowerCase();
 const inTmp = p => path.resolve(p).toLowerCase().startsWith(tmp + path.sep);
 
-const file = path.join(process.env.APPDATA, 'Perkins', 'settings.json');
+const file = path.join(require('os').homedir(), '.perkins', 'settings.json');
 const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
 const recent = cfg.recent || [];
 const drop = recent.filter(r => inTmp(r.path));

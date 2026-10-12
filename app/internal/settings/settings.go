@@ -160,13 +160,34 @@ func defaults() Settings {
 
 type Store struct{ Dir string }
 
-// NewStore 使用 %APPDATA%\Perkins(其他平台為對應的使用者設定目錄)。
+// NewStore 使用 %USERPROFILE%\.perkins(2026-10-13 作者定案,#104;同 Codex 的 ~/.codex)。
+// 舊版的 %APPDATA%\Perkins(os.UserConfigDir)由 migrateDir 搬到新位置;搬移失敗時回傳錯誤並沿用舊資料夾。
 func NewStore() (*Store, error) {
-	d, err := os.UserConfigDir()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	return &Store{Dir: filepath.Join(d, "Perkins")}, nil
+	cfg, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := migrateDir(filepath.Join(cfg, "Perkins"), filepath.Join(home, ".perkins"))
+	return &Store{Dir: dir}, err
+}
+
+// migrateDir 回傳要使用的設定目錄:新目錄已存在就用新目錄(舊目錄不動);只有舊目錄時以一次 rename
+// 整個搬過去(設定、全域 AGENTS.md、對話記錄一起走,舊目錄不再保留);搬移失敗回傳舊目錄與錯誤,資料不遺失。
+func migrateDir(legacy, dir string) (string, error) {
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		return dir, nil
+	}
+	if err := os.Rename(legacy, dir); err != nil {
+		return legacy, fmt.Errorf("無法把設定資料夾從 %s 搬到 %s,暫時沿用舊位置: %w", legacy, dir, err)
+	}
+	return dir, nil
 }
 
 func (s *Store) Load() Settings {

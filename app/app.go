@@ -94,7 +94,11 @@ func randomID() string {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.store, _ = settings.NewStore()
+	s, err := settings.NewStore()
+	if err != nil {
+		runtime.LogError(ctx, err.Error()) // 搬移舊設定資料夾失敗:沿用舊位置繼續,下次啟動再試
+	}
+	a.store = s
 	// 開發/測試用:以環境變數直接開啟專案,略過原生資料夾對話框。
 	if dir := os.Getenv("PERKINS_OPEN"); dir != "" {
 		if p, err := project.Open(dir); err == nil {
@@ -113,7 +117,7 @@ func (a *App) setProject(p *project.Project) {
 	a.research = research.New(p, a.session)
 	a.curSess = "" // 換作品就不是同一個對話(#33)
 	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}, Research: a.research}
-	if a.store != nil { // 全域作者指示(%APPDATA%\Perkins\AGENTS.md,與 settings.json 同目錄)
+	if a.store != nil { // 全域作者指示(%USERPROFILE%\.perkins\AGENTS.md,與 settings.json 同目錄)
 		a.agent.GlobalAgentsPath = filepath.Join(a.store.Dir, "AGENTS.md")
 	}
 	a.mu.Unlock()
@@ -725,7 +729,7 @@ type AgentsMdView struct {
 	Path   string `json:"path"`  // 檔案完整路徑(顯示給作者)
 }
 
-// agentsMdPath 解析作者指示的範圍(global = %APPDATA%\Perkins\AGENTS.md;project = 作品資料夾根目錄 AGENTS.md)。
+// agentsMdPath 解析作者指示的範圍(global = %USERPROFILE%\.perkins\AGENTS.md;project = 作品資料夾根目錄 AGENTS.md)。
 func (a *App) agentsMdPath(scope string) (string, error) {
 	switch scope {
 	case "global":
@@ -885,7 +889,7 @@ func (a *App) CancelAsk() {
 // 存在使用者設定目錄(sessions/<作品鍵>/),與 audit.jsonl、研究記錄分開、互不取代。
 
 // sessionCtx 取得對話記錄需要的 agent、儲存層與作品根目錄。儲存層目錄取自設定目錄
-// (與 settings.json 同層,沿用 settings.NewStore 的 os.UserConfigDir());測試以 a.store 注入目錄。
+// (與 settings.json 同層,即 settings.NewStore 的目錄);測試以 a.store 注入目錄。
 func (a *App) sessionCtx() (*agent.Agent, *sessions.Store, string, error) {
 	if a.proj == nil || a.agent == nil {
 		return nil, nil, "", errNoProject

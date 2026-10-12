@@ -177,7 +177,7 @@ module.exports = {
         }
 
         // ===== 作者指示 AGENTS.md(Issue #38):作品層進 system 訊息、超上限不送出且有原因 =====
-        // 本段自己寫/刪作品根目錄的 AGENTS.md,不污染 fixture 原始內容。真實全域層(%APPDATA%)由 run.js
+        // 本段自己寫/刪作品根目錄的 AGENTS.md,不污染 fixture 原始內容。真實全域層(%USERPROFILE%\.perkins)由 run.js
         // 開跑前改名移開、結束還原,所以這裡也斷言預覽不含全域層,隔離失效時會立刻 FAIL。
         const agFile = path.join(PROJ, 'AGENTS.md');
         fs.writeFileSync(agFile, '作者指示E2E:回覆請一律用繁體中文,提到森林時稱「紫斑蝶E2E森林」。');
