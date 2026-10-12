@@ -222,6 +222,21 @@ module.exports = {
         const nameSynced = await page.inputValue('[data-testid=profile-name]');
         const dirtyAfter = !!(await page.$('[data-testid=profile-dirty]'));
         check('#95 空白名稱儲存後表單與後端同步,不殘留未儲存', nameSynced === 'https://api.anthropic.com/v1' && !dirtyAfter, JSON.stringify({nameSynced, dirtyAfter}));
+        // (d) 儲存請求進行中繼續改名稱:回應回來後保留新輸入、仍標示未儲存(以延遲 500ms 的 SaveProfile 控制時序)
+        await page.evaluate(() => {
+            const app = window.go.main.App;
+            window.__origSaveProfile = app.SaveProfile;
+            app.SaveProfile = (...a) => new Promise(res => setTimeout(res, 500)).then(() => window.__origSaveProfile(...a));
+        });
+        await page.fill('[data-testid=profile-name]', 'E2E 第一次儲存');
+        await page.click('[data-testid=save-profile]');
+        await page.fill('[data-testid=profile-name]', 'E2E 儲存期間的新輸入');
+        await page.waitForFunction(id => window.go.main.App.GetSettings().then(s => (s.profiles.find(p => p.id === id) || {}).name === 'E2E 第一次儲存'), fresh[0] && fresh[0].id, {timeout: 5000}).catch(() => {});
+        await settle(80, 700);
+        const keptName = await page.inputValue('[data-testid=profile-name]');
+        const stillDirty = !!(await page.$('[data-testid=profile-dirty]'));
+        await page.evaluate(() => { window.go.main.App.SaveProfile = window.__origSaveProfile; });
+        check('#95 儲存進行中的新輸入在回應後保留且仍標示未儲存', keptName === 'E2E 儲存期間的新輸入' && stillDirty, JSON.stringify({keptName, stillDirty}));
         // 換回 OpenAI 相容:不合法的值(xhigh)重設為不指定
         await page.click('[data-testid=provider-select]');
         await page.waitForSelector('[data-testid=provider-opt-openai]');

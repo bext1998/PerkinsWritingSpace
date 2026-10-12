@@ -272,12 +272,14 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
     useEffect(() => () => setDirty(false), [setDirty]);
 
     const save = async (apiKey: string | null) => {
+        const sent = form;
         try {
-            const c = await SaveProfile(form, apiKey as any);
+            const c = await SaveProfile(sent, apiKey as any);
             setCfg(c);
-            const saved = c.profiles.find(p => p.id === form.id);
-            if (saved) setForm(saved); // 後端可能正規化欄位(空白名稱改用網址),表單跟著同步
-            setKey('');
+            // 後端可能正規化欄位(空白名稱改用網址):只同步送出後沒再改過的欄位,儲存期間的新輸入保留
+            const saved = c.profiles.find(p => p.id === sent.id);
+            if (saved) setForm(f => ({...f, ...Object.fromEntries(PROFILE_KEYS.filter(k => normField(f[k]) === normField(sent[k])).map(k => [k, saved[k]]))}));
+            setKey(k => (k === (apiKey ?? '') ? '' : k));
             setMsg('已儲存。金鑰存在 Windows 憑證管理員,不會寫進任何專案或設定檔。');
             setError('');
         } catch (e) { setError(errText(e)); }
