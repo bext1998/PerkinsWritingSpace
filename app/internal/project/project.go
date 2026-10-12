@@ -54,8 +54,8 @@ type Config struct {
 // ProtectedDirs 是「Bot 可讀範圍」管理的資料夾(SPEC §12.3)。
 var ProtectedDirs = []string{CanonDir, OutlineDir, NotesDir}
 
-// BotReadDefault 回傳資料夾的預設可讀狀態:設定集允許,大綱、筆記不允許(#98 作者定案)。
-func BotReadDefault(dir string) bool { return dir == CanonDir }
+// BotReadDefault 回傳資料夾的預設可讀狀態:全部可讀,作者自行排除(SPEC §0 第 10 條,2026-10-13 作者定案)。
+func BotReadDefault(dir string) bool { return true }
 
 // BotReadable 回傳作者允許 Bot 讀取的受保護資料夾(依 ProtectedDirs 順序,非 nil)。
 func (c Config) BotReadable() []string {

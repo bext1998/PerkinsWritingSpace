@@ -383,13 +383,13 @@ func TestBotReadSettingAppliesToNextRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(pv.Readable, ",") != "canon" {
-		t.Fatalf("預設可讀 = %v, want [canon]", pv.Readable)
+	if strings.Join(pv.Readable, ",") != "canon,outline,notes" {
+		t.Fatalf("預設可讀 = %v, want [canon outline notes]", pv.Readable)
 	}
 	if err := a.SetBotRead("canon", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.SetBotRead("outline", true); err != nil {
+	if err := a.SetBotRead("notes", false); err != nil {
 		t.Fatal(err)
 	}
 	pv, err = a.PreviewContext(agent.AskParams{Question: "q"})
