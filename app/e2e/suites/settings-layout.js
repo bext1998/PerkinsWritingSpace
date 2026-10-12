@@ -201,6 +201,27 @@ module.exports = {
         }, fresh[0] && fresh[0].id);
         check('思考強度選項依 Provider 變化(Anthropic 有 更高/最高)', effortAnthropic);
         check('思考強度保存後寫入設定(xhigh)', !!savedEffort && savedEffort.reasoningEffort === 'xhigh', JSON.stringify(savedEffort));
+        // #95 審查返工(Hemingway):子頁「只有按儲存才寫入」與離開保護
+        // (a) 網址改了沒儲存:載入清單停用(不偷存表單),設定檔仍是原網址
+        await page.fill('[data-testid=profile-url]', 'http://localhost:9/v1');
+        const loadDisabled = await page.isDisabled('[data-testid=load-models]');
+        const urlOnDisk = await page.evaluate(id => window.go.main.App.GetSettings().then(s => (s.profiles.find(p => p.id === id) || {}).baseUrl), fresh[0] && fresh[0].id);
+        check('#95 網址未儲存時載入清單停用,設定檔不被偷存', loadDisabled && urlOnDisk === 'https://api.anthropic.com/v1', JSON.stringify({loadDisabled, urlOnDisk}));
+        // (b) 點目前所在的導覽頁不觸發提醒、留在子頁;之後關閉設定頁仍會提醒(未儲存狀態沒被清掉)
+        await page.click('[data-testid=tab-models]');
+        const noPrompt = !(await page.$('[data-testid=unsaved-leave]')) && !!(await page.$('[data-testid=profile-page]'));
+        await page.click('[data-testid=close-settings]');
+        const prompted = await page.waitForSelector('[data-testid=unsaved-leave]', {timeout: 3000}).then(() => true).catch(() => false);
+        if (prompted) await page.click('[data-testid=unsaved-stay]');
+        check('#95 點目前導覽頁不清掉未儲存狀態,關閉設定頁仍會提醒', noPrompt && prompted, JSON.stringify({noPrompt, prompted}));
+        await page.fill('[data-testid=profile-url]', 'https://api.anthropic.com/v1');
+        // (c) 名稱清空後儲存:後端補成網址,表單同步,不殘留「未儲存」
+        await page.fill('[data-testid=profile-name]', '');
+        await page.click('[data-testid=save-profile]');
+        await page.waitForFunction(() => (document.querySelector('[data-testid=profile-name]') || {}).value === 'https://api.anthropic.com/v1', null, {timeout: 5000}).catch(() => {});
+        const nameSynced = await page.inputValue('[data-testid=profile-name]');
+        const dirtyAfter = !!(await page.$('[data-testid=profile-dirty]'));
+        check('#95 空白名稱儲存後表單與後端同步,不殘留未儲存', nameSynced === 'https://api.anthropic.com/v1' && !dirtyAfter, JSON.stringify({nameSynced, dirtyAfter}));
         // 換回 OpenAI 相容:不合法的值(xhigh)重設為不指定
         await page.click('[data-testid=provider-select]');
         await page.waitForSelector('[data-testid=provider-opt-openai]');

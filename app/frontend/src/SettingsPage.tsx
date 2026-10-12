@@ -206,7 +206,7 @@ function AgentsEditor({scope, hint, setDirty}: {scope: 'global' | 'project'; hin
     }, [scope]);
 
     const dirty = text !== saved;
-    useEffect(() => { setDirty(dirty); }, [dirty, setDirty]);
+    useEffect(() => { setDirty(dirty); }); // 每次 render 都回報:父層清掉後子頁若仍在,立即恢復
     useEffect(() => () => setDirty(false), [setDirty]);
 
     // 估算長度:輸入後 debounce 重算(與「超過上限整份不送出」用同一套估算)
@@ -268,22 +268,34 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
     const [confirmDel, setConfirmDel] = useState(false);
 
     const dirty = !sameProfile(form, view) || key !== '';
-    useEffect(() => { setDirty(dirty); }, [dirty, setDirty]);
+    useEffect(() => { setDirty(dirty); }); // 每次 render 都回報:父層清掉後子頁若仍在,立即恢復
     useEffect(() => () => setDirty(false), [setDirty]);
 
     const save = async (apiKey: string | null) => {
         try {
             const c = await SaveProfile(form, apiKey as any);
             setCfg(c);
+            const saved = c.profiles.find(p => p.id === form.id);
+            if (saved) setForm(saved); // 後端可能正規化欄位(空白名稱改用網址),表單跟著同步
             setKey('');
             setMsg('已儲存。金鑰存在 Windows 憑證管理員,不會寫進任何專案或設定檔。');
             setError('');
         } catch (e) { setError(errText(e)); }
     };
 
+    // 清除金鑰:只動金鑰,以已儲存的設定送出,不把表單上未儲存的修改一起寫入(UI_GUIDE §12.5)
+    const clearKey = async () => {
+        try {
+            setCfg(await SaveProfile(view, ''));
+            setMsg('已清除金鑰。');
+            setError('');
+        } catch (e) { setError(errText(e)); }
+    };
+
+    // 載入清單用的是已儲存的連線設定(後端 ListModels 依端點 id 讀設定與金鑰),不寫入表單
+    const connDirty = normField(form.baseUrl) !== normField(view.baseUrl) || normField(form.provider) !== normField(view.provider) || key !== '';
     const load = async () => {
         try {
-            setCfg(await SaveProfile(form, null as any));
             setModels(await ListModels(form.id));
             setError('');
         } catch (e) { setError(errText(e)); setModels([]); }
@@ -329,7 +341,7 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
             </div>
             <Section title="連線" desc="模型服務的位址與存取方式。">
                 <RowCard>
-                    <FieldRow title="名稱"><Input value={form.name} onChange={e => setForm({...form, name: e.target.value})}/></FieldRow>
+                    <FieldRow title="名稱"><Input value={form.name} onChange={e => setForm({...form, name: e.target.value})} data-testid="profile-name"/></FieldRow>
                     <FieldRow title="端點網址" desc="OpenAI 相容的 /v1 位址。LM Studio 預設為 http://localhost:1234/v1。">
                         <Input value={form.baseUrl} onChange={e => setForm({...form, baseUrl: e.target.value})} data-testid="profile-url"/>
                         {remote && (
@@ -353,7 +365,7 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
                                 <KeyRound className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground"/>
                                 <Input type="password" className="pl-8" value={key} onChange={e => setKey(e.target.value)} placeholder={view.hasKey ? '••••••••' : ''}/>
                             </div>
-                            {view.hasKey && <Button variant="outline" onClick={() => save('')}>清除金鑰</Button>}
+                            {view.hasKey && <Button variant="outline" onClick={clearKey}>清除金鑰</Button>}
                         </div>
                     </FieldRow>
                 </RowCard>
@@ -364,8 +376,9 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
                         <div className="flex flex-wrap gap-2">
                             <Input list="model-list" className="min-w-0 flex-1" value={form.model} onChange={e => setForm({...form, model: e.target.value})} placeholder="模型 id"/>
                             <datalist id="model-list">{models.map(m => <option key={m} value={m}/>)}</datalist>
-                            <Button variant="outline" onClick={load}><RefreshCw/>載入清單</Button>
+                            <Button variant="outline" onClick={load} disabled={connDirty} data-testid="load-models"><RefreshCw/>載入清單</Button>
                         </div>
+                        {connDirty && <p className="text-xs text-muted-foreground">網址、API 型別或金鑰改過還沒儲存;先按「儲存」再載入模型清單。</p>}
                     </FieldRow>
                     <SettingRow title="思考強度" desc="強度越高越慢、花費越多;本機模型多半不支援,保持「不指定」。">
                         <Select value={form.reasoningEffort || EFFORT_NONE} onValueChange={v => setForm({...form, reasoningEffort: v === EFFORT_NONE ? '' : v})}>
@@ -803,7 +816,7 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
     };
 
     const navBtn = (id: Page, Icon: typeof Cpu) => (
-        <button data-testid={`tab-${id}`} onClick={() => guard(() => setPage(id))}
+        <button data-testid={`tab-${id}`} onClick={() => { if (id !== page) guard(() => setPage(id)); }}
                 aria-current={page === id}
                 className={cn('flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm',
                     page === id ? 'bg-accent font-medium text-foreground' : 'text-muted-foreground hover:bg-accent/60')}>
