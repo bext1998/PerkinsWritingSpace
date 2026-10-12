@@ -37,6 +37,7 @@ export namespace agent {
 	    notices?: string[];
 	    instructions?: string[];
 	    readable: string[];
+	    mentioned?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -52,6 +53,7 @@ export namespace agent {
 	        this.notices = source["notices"];
 	        this.instructions = source["instructions"];
 	        this.readable = source["readable"];
+	        this.mentioned = source["mentioned"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

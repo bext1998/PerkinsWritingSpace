@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import {
     AckRemote, AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
-    PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel, SuggestAttachments,
+    PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
 import {agent, main, project, proposal, sessions} from '../wailsjs/go/models';
@@ -111,7 +111,7 @@ export default function ChatWindow(props: Props) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
     const [attach, setAttach] = useState<string[]>([]);
-    // 附加來源(§16 第 16 項):作者手動附加(迴紋針/點選)= manual;採用建議附加(點建議標籤、檢查面板帶入)= suggested。
+    // 附加來源(§16 第 16 項):作者手動附加(迴紋針/點選)= manual;檢查面板帶入 = suggested(研究記錄沿用此值)。
     // 只影響送出預覽的來源標示,不改變送出內容本身。
     const [attachSrc, setAttachSrc] = useState<Record<string, 'manual' | 'suggested'>>({});
     const [withDoc, setWithDoc] = useState(true);
@@ -121,7 +121,6 @@ export default function ChatWindow(props: Props) {
     const [keepSel, setKeepSel] = useState(false); // 作者明確點「仍要附加」後為 true
     const [mode, setMode] = useState<'' | 'report'>('');
     const [prior, setPrior] = useState(false);
-    const [suggest, setSuggest] = useState<string[]>([]);
     const [proposals, setProposals] = useState<proposal.Proposal[]>([]);
     const [edited, setEdited] = useState<Record<string, string>>({});
     const [reviewId, setReviewId] = useState<string | null>(null); // 提案審查視窗(#35)正在看的提案;null = 關著
@@ -258,17 +257,8 @@ export default function ChatWindow(props: Props) {
         onClearLastSel?.();
     };
 
-    // 建議附加:選取段落(沒有選取時為目前章節)中出現的設定實體。只是建議,作者點選才附加。
-    useEffect(() => {
-        if (!open) return;
-        const text = sel ?? (withDoc && isChapter ? docText : '');
-        if (!text) { setSuggest([]); return; }
-        const id = setTimeout(() => SuggestAttachments(text).then(r => setSuggest(r ?? [])).catch(() => setSuggest([])), 400);
-        return () => clearTimeout(id);
-    }, [open, sel, docText, withDoc, isChapter]);
-
     // 上下文用量:開啟浮窗、問題/選取/附加/目前文件/選取附加資格(keepSel)等組成改變時重算
-    // (debounce 400ms,同 SuggestAttachments);usageTick 由 chat:done 與「新對話」觸發
+    // (debounce 400ms);usageTick 由 chat:done 與「新對話」觸發
     // (後端 History 變了但這些狀態沒變);請求進行中不重算(chat:done 後再算,PR #54 返工)。
     useEffect(() => {
         // 世代計數:較早發出、較晚回來的回應不得覆蓋較新的用量;關閉或忙碌時也先遞增,讓在途的舊回應失效
@@ -495,7 +485,6 @@ export default function ChatWindow(props: Props) {
             return n;
         });
     };
-    const suggested = suggest.filter(s => !attach.includes(s) && s !== doc).slice(0, 6);
     const titleOf = (p: string) => [...tree.canon, ...tree.outline, ...tree.notes, ...tree.manuscript].find(e => e.path === p)?.title ?? baseName(p);
 
     const style: React.CSSProperties = pos
@@ -558,7 +547,7 @@ export default function ChatWindow(props: Props) {
                     <label className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
                         <Checkbox className="mt-0.5 border-warning" checked={false}
                                   onCheckedChange={() => AckRemote(profile.id).then(setCfg).catch(e => setError(errText(e)))} data-testid="remote-ok"/>
-                        <span>「{profile.name}」不在這台電腦上。你送出的稿件,以及 Bot 讀取的設定與附加內容,會傳到該服務。我了解(這個端點只需確認一次,網址改變時會再問)。</span>
+                        <span>「{profile.name}」不在這台電腦上。你送出的稿件與附加內容,以及 Bot 讀取的作品內容(設定集、大綱、筆記中你沒有排除的部分),會傳到該服務。我了解(這個端點只需確認一次,網址改變時會再問)。</span>
                     </label>
                 )}
 
@@ -678,11 +667,6 @@ export default function ChatWindow(props: Props) {
                             </Chip>
                         ))}
                         {mode === 'report' && <Chip onRemove={() => setMode('')} className="border-warning/40 text-warning">檢查報告</Chip>}
-                        {suggested.map(s => (
-                            <Chip key={s} dashed onClick={() => toggleAttach(s, 'suggested')} title="稿件中出現了這個設定,點選附加">
-                                <Plus className="inline h-3 w-3"/>{titleOf(s)}
-                            </Chip>
-                        ))}
                     </div>
                     <Textarea ref={input} value={question} data-testid="question"
                               placeholder={mode === 'report' ? '要檢查什麼?(Ctrl+Enter 送出)' : '問問看…(Ctrl+Enter 送出)'}
@@ -691,7 +675,7 @@ export default function ChatWindow(props: Props) {
                               onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') send(); }}/>
                     <div className="mt-1.5 flex items-center gap-1">
                         <Popover onOpenChange={o => o && setPickQ('')}>
-                            <Tip label="附加檔案" side="top">
+                            <Tip label="附加檔案:本次一定要看、整份送出" side="top">
                                 <PopoverTrigger asChild>
                                     <Button variant="ghost" size="iconSm" data-testid="attach-btn"><Paperclip/></Button>
                                 </PopoverTrigger>
@@ -793,8 +777,10 @@ export default function ChatWindow(props: Props) {
                                 {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
                                 {!withDoc && <p className="text-muted-foreground">· 目前文件:未附加</p>}
                                 {!selSent && sel && <p className="text-warning">· 選取:未附加(來自〈{titleOf(selFrom!)}〉,與目前文件不同)</p>}
-                                {attach.map(a => <p key={a}>· 附加設定/檔案:{titleOf(a)}(全文,{attachSrc[a] === 'suggested' ? '採用建議附加' : '手動附加'})</p>)}
+                                {attach.map(a => <p key={a}>· 附加設定/檔案:{titleOf(a)}(全文,{attachSrc[a] === 'suggested' ? '檢查面板帶入' : '手動附加'})</p>)}
                                 {prior && withDoc && isChapter && <p>· 前情摘要:本章之前的章節摘要</p>}
+                                {/* 本段提到的設定(#104 第 3 項):程式比對後只附名稱與路徑,由後端 Preview.mentioned 回報 */}
+                                {(preview?.mentioned?.length ?? 0) > 0 && <p data-testid="preview-mentioned">· 本段提到的設定(只送名稱,Bot 需要時自行讀取):{preview!.mentioned!.join('、')}</p>}
                                 <p>· 你的問題:{question || '(尚未輸入)'}</p>
                                 {mode === 'report' && <p>· 檢查報告模式:本次不含提案工具</p>}
                             </div>
@@ -805,7 +791,9 @@ export default function ChatWindow(props: Props) {
                                 <p>· 稿件全部章節、已確認的章節摘要</p>
                                 {/* 可讀資料夾由後端 Preview.readable 回報(#98),前端不自己猜 */}
                                 {(preview?.readable ?? []).map(d => <p key={d}>· {READABLE_LABEL[d] ?? d}:整個資料夾(設定頁「Bot 可讀範圍」允許)</p>)}
-                                <p>· 其他設定、大綱、筆記:只有本次附加或目前開啟的檔案</p>
+                                {['canon', 'outline', 'notes'].filter(d => preview && !preview.readable?.includes(d)).map(d => (
+                                    <p key={d}>· {READABLE_LABEL[d]}:你已排除,只有本次附加或目前開啟的檔案</p>
+                                ))}
                                 <p>Bot 用工具讀到的內容會出現在對話中的工具列。</p>
                             </div>
                         </div>

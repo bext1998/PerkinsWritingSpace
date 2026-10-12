@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import {Lock, NotebookPen, Plus, Trash2, Waypoints} from 'lucide-react';
+import {NotebookPen, Plus, Trash2, Waypoints} from 'lucide-react';
 import {NewDoc, TrashFile} from '../../wailsjs/go/main/App';
 import {project} from '../../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
@@ -38,7 +38,6 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
         <div className="mb-5">
             <div className="group mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
                 <Icon className="h-3.5 w-3.5"/>{title}
-                <Tip label="Bot 預設可自行讀取;不想讓 Bot 看,可在「設定 › Perkins Bot › Bot 可讀範圍」關閉這個資料夾" side="top"><Lock className="h-3 w-3 opacity-60"/></Tip>
                 <div className="flex-1"/>
                 <Button variant="ghost" size="iconSm" onClick={() => { setAdding(dir); setInput(''); }}><Plus/></Button>
             </div>

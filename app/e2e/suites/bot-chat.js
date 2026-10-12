@@ -1,8 +1,8 @@
-// bot-chat — 快速指令、建議附加、提案(需模型)、版本初覽
+// bot-chat — 快速指令、本段提到的設定、提案(需模型)、版本初覽
 // (由 e2e.js 拆組;此段為原始流程的連續片段,檢查名稱與斷言未改)
 module.exports = {
     name: 'bot-chat',
-    desc: '快速指令、建議附加、提案(需模型)、版本初覽',
+    desc: '快速指令、本段提到的設定、提案(需模型)、版本初覽',
     run: async ctx => {
         const {page, check, skip, maybe, shot, read, hash, P, PROJ, errors, cfgHash, ch1, SKIP_AI, NOTION_SRC, ensureProject, ensureChapter, ensureBookshelf, settle, SHOTS} = ctx;
         const fs = require('fs');
@@ -25,19 +25,26 @@ module.exports = {
         check('快速指令帶入問題', (await page.inputValue('[data-testid=question]')).includes('分析'));
         check('選取段落成為附加標籤', (await page.textContent('[data-testid=chips]')).includes('選取'));
 
-        // 建議附加(不會自動附加,點了才附加)
-        await page.waitForSelector('[data-testid=chips] >> text=艾莉絲', {timeout: 5000});
+        // #104 第 3 項:本段提到的設定由程式只附名稱給 Bot(取代作者點選的建議附加),不送設定內容
         let pv = '';
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview]');
         pv = await page.textContent('[data-testid=preview]');
-        check('建議附加在點選前不進入上下文', !pv.includes('十七歲'));
+        const mentionedTxt = (await page.$('[data-testid=preview-mentioned]')) ? await page.textContent('[data-testid=preview-mentioned]') : '';
+        const suggestChip = !!(await page.$('[data-testid=chips] >> text=艾莉絲'));
+        check('#104 本段提到的設定只附名稱給 Bot,不送內容、不再要作者點選', mentionedTxt.includes('艾莉絲') && !pv.includes('十七歲') && !suggestChip,
+            JSON.stringify({mentionedTxt, suggestChip}));
         await page.keyboard.press('Escape');
-        await page.click('[data-testid=chips] >> text=艾莉絲');
+        // 作者要 Bot 一定看完時才附加:附加後設定全文進入預覽,且不再重複列在「本段提到的設定」
+        await page.click('[data-testid=attach-btn]');
+        await page.waitForSelector('label:has-text("艾莉絲")');
+        await page.click('label:has-text("艾莉絲")');
+        await page.keyboard.press('Escape');
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview]');
         pv = await page.textContent('[data-testid=preview]');
-        check('點選建議後設定出現在預覽', pv.includes('十七歲'));
+        const mentionedAfter = (await page.$('[data-testid=preview-mentioned]')) ? await page.textContent('[data-testid=preview-mentioned]') : '';
+        check('附加後設定全文出現在預覽,本段提到的設定不重列', pv.includes('十七歲') && !mentionedAfter.includes('艾莉絲'), mentionedAfter);
         check('B2 未附加的筆記與大綱不在預覽', !pv.includes('雷恩的哥哥') && !pv.includes('王都陷落'));
         await shot('03-preview');
         await page.keyboard.press('Escape');
@@ -101,9 +108,7 @@ module.exports = {
         check('context-usage 顯示百分比與 PreviewContext(tokens/limit)一致',
             shown === `上下文 ${expectPct}%`, `shown=${shown} expect=${expectPct}% tokens=${pvCtx.tokens} limit=${pvCtx.limit}`);
 
-        // 送出預覽標示來源:艾莉絲用建議標籤附加(採用建議附加)、雷恩用迥紋針手動附加(手動附加)
-        await page.waitForSelector('[data-testid=chips] >> text=艾莉絲', {timeout: 5000});
-        await page.click('[data-testid=chips] >> text=艾莉絲');
+        // 送出預覽標示來源:雷恩用迴紋針手動附加(手動附加);建議附加已取消(#104),不再有「採用建議附加」
         await page.click('[data-testid=attach-btn]');
         await page.waitForSelector('label:has-text("雷恩")');
         await page.click('label:has-text("雷恩")');
@@ -111,8 +116,8 @@ module.exports = {
         await page.click('[data-testid=preview-btn]');
         await page.waitForSelector('[data-testid=preview]');
         const pvTxt = await page.textContent('[data-testid=preview]');
-        check('預覽區分手動附加與採用建議附加',
-            pvTxt.includes('雷恩(全文,手動附加)') && pvTxt.includes('艾莉絲(全文,採用建議附加)'),
+        check('預覽標示附加來源(手動附加),不再有採用建議附加',
+            pvTxt.includes('雷恩(全文,手動附加)') && !pvTxt.includes('採用建議附加'),
             pvTxt.split('\n').filter(l => l.includes('附加')).join(' / ').slice(0, 160));
         check('原始訊息有來源標籤(系統指示/本次提問)',
             pvTxt.includes('系統指示') && pvTxt.includes('本次提問'));
