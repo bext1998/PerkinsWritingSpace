@@ -24,6 +24,7 @@ import {
     DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tip,
 } from '@/components/ui/overlay';
 import {baseName, cn, errText} from '@/lib/utils';
+import {enter} from '@/lib/motion';
 import {Quick} from './quick';
 import {setShellActions} from '@/lib/shellState';
 import {AreaBoundary, CrashPoint, registerEmergencySave} from '@/components/ErrorBoundary';
@@ -679,9 +680,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         : current ? [({canon: '設定集', outline: '大綱', notes: '筆記'} as Record<string, string>)[current.split('/')[0]] ?? '', baseName(current)] : [];
 
     return (
-        <div className="flex h-full">
+        <div className={cn('flex h-full', enter.fade)}>
             {/* 圖示列:與標題欄同色連成 L 形外框(SPEC §17.1);齒輪固定在左下角 */}
-            <nav data-testid="rail" className={cn('flex w-[60px] shrink-0 flex-col items-center gap-1 bg-rail py-2', zen && 'hidden')}>
+            <nav data-testid="rail" className={cn('flex w-[60px] shrink-0 flex-col items-center gap-1 bg-rail py-2', enter.fade, zen && 'hidden')}>
                 {railBtn('manuscript', '稿件', BookOpen)}
                 {railBtn('bible', '設定集', Users)}
                 {railBtn('docs', '大綱與筆記', NotebookPen)}
@@ -708,12 +709,12 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             <div className={zen ? 'hidden' : 'contents'}>
             {panel && (
                 <AreaBoundary area="sidebar" fallbackClassName="w-[272px] shrink-0 justify-center overflow-y-auto border-r bg-sidebar">
-                <aside className="flex w-[272px] shrink-0 flex-col border-r bg-sidebar">
+                <aside data-testid="sidebar" className={cn('flex w-[272px] shrink-0 flex-col border-r bg-sidebar', enter.fromLeft)}>
                     {/* 作品名稱已在標題欄,這裡標示目前面板 */}
                     <div className="flex h-12 items-center border-b px-4">
                         <span data-testid="sidebar-title" className="truncate font-serif text-[15px] font-semibold">{PANEL_LABEL[panel]}</span>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-y-auto">
+                    <div key={panel} data-testid="sidebar-body" className={cn('min-h-0 flex-1 overflow-y-auto', enter.fade)}>
                         {panel === 'manuscript' && <ManuscriptPanel {...panelProps} onCopy={copyTo} onStatus={setStatus} onSummary={setSummaryFor}/>}
                         {panel === 'bible' && <BiblePanel {...panelProps}/>}
                         {panel === 'docs' && <DocsPanel {...panelProps}/>}
@@ -732,7 +733,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
             {/* 主編輯區 */}
             <main className="flex min-w-0 flex-1 flex-col bg-paper">
-                <div ref={tbRef} data-testid="editor-toolbar" className={cn('flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b px-4', zen && 'hidden')}>
+                <div ref={tbRef} data-testid="editor-toolbar" className={cn('flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b px-4', enter.fade, zen && 'hidden')}>
                     {current ? (
                         <>
                             <div data-testid="crumbs" className="flex min-w-0 items-center gap-1.5 overflow-hidden text-sm">
@@ -870,7 +871,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     {activeProfile && !zen && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                     {zen && (
                         <button data-testid="zen-exit" title="離開禪模式(Ctrl+Shift+F)"
-                                className="shrink-0 whitespace-nowrap rounded px-1.5 hover:bg-accent hover:text-foreground"
+                                className={cn('shrink-0 whitespace-nowrap rounded px-1.5 hover:bg-accent hover:text-foreground', enter.fade)}
                                 onClick={() => setZen(false)}>
                             離開禪模式
                         </button>
