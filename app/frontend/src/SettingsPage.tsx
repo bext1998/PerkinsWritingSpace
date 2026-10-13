@@ -476,7 +476,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
     if (sub?.kind === 'agents') {
         const pg = AGENTS_PAGES[sub.scope];
         return (
-            <div className={cn('grid gap-6', enter.fromRight)} data-testid="agents-page">
+            <div key="agents" className={cn('grid gap-6', enter.fromRight)} data-testid="agents-page">
                 <SubpageHeader title={pg.title} onBack={back}/>
                 <AgentsEditor key={sub.scope} scope={sub.scope} hint={pg.hint} setDirty={setDirty}/>
             </div>
@@ -484,7 +484,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
     }
 
     return (
-        <div className={cn('grid gap-8', enter.fade)}>
+        <div key="list" className={cn('grid gap-8', enter.fade)}>
             <Section title="模型端點" desc="每個端點是一個模型服務(本機 LM Studio、雲端服務商…)。點選端點編輯設定;金鑰存 Windows 憑證管理員,不會寫進任何專案或設定檔。">
                 <div className="flex flex-wrap items-center gap-2">
                     {/* 從預設新增(#43):依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示 */}
