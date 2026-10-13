@@ -287,5 +287,78 @@ module.exports = {
         await hWait('[data-testid=rail-checks]');
         check('#41 專用檔已清掉(不留痕跡)', !fs.existsSync(P('canon/健康壞檔.md')) && !fs.existsSync(P('notes/健康連結.md'))
             && !fs.existsSync(P('notes/健康外部連結.md')) && !fs.existsSync(P('summaries/第一章.md')));
+
+        // ===== #117 設定集刪除(兩次確認)與外部改動同步 =====
+        // 外部改動以「視窗回到前景」觸發同步:無頭模式不會真的切換視窗,直接派送 window focus 事件
+        const xw = (rel, s) => { const f = P(rel); fs.mkdirSync(path.dirname(f), {recursive: true}); fs.writeFileSync(f, s); };
+        const xdel = rel => { try { fs.unlinkSync(P(rel)); } catch {} };
+        const refocus = () => page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        const rowSel = rel => `[data-testid=entity-row][data-file="${rel}"]`;
+        const appear = rel => page.waitForSelector(rowSel(rel), {timeout: 5000}).then(() => true).catch(() => false);
+        const vanish = rel => page.waitForSelector(rowSel(rel), {state: 'detached', timeout: 5000}).then(() => true).catch(() => false);
+        await page.click('[data-testid=rail-bible]').catch(() => {});
+        await ensureProject(null, 'bible');
+
+        xw('canon/外部新增.md', '# 外部新增\n');
+        await refocus();
+        check('#117 外部新增的設定在視窗回到前景後列出', await appear('canon/外部新增.md'));
+        xdel('canon/外部新增.md');
+        await refocus();
+        check('#117 外部刪除的設定在視窗回到前景後消失', await vanish('canon/外部新增.md'));
+
+        // 點到清單上已不存在的檔案(還沒同步):清單更新並說明,不丟原始錯誤
+        xw('canon/點了才發現.md', '# 點了才發現\n');
+        await refocus();
+        await appear('canon/點了才發現.md');
+        xdel('canon/點了才發現.md');
+        await page.click(rowSel('canon/點了才發現.md'));
+        const goneMsg = await page.waitForSelector('[data-testid=toast]', {timeout: 5000})
+            .then(() => page.textContent('[data-testid=toast]')).catch(() => '');
+        check('#117 點到已刪除的檔案:提示已不存在並從清單移除',
+            goneMsg.includes('已不存在') && await vanish('canon/點了才發現.md'), goneMsg);
+
+        // 兩次確認刪除:第一次只進入確認狀態(檔案還在),滑鼠離開即取消;第二次才移到回收區
+        xw('canon/待刪設定.md', '# 待刪設定\n');
+        await refocus();
+        await appear('canon/待刪設定.md');
+        await page.hover(rowSel('canon/待刪設定.md'));
+        await page.click(`${rowSel('canon/待刪設定.md')} [data-testid=entity-delete]`);
+        const asked = await page.waitForSelector(`${rowSel('canon/待刪設定.md')} [data-testid=entity-delete-confirm]`, {timeout: 3000}).then(() => true).catch(() => false);
+        check('#117 第一次按刪除只顯示確認、檔案仍在', asked && fs.existsSync(P('canon/待刪設定.md')));
+        await page.mouse.move(5, 5);
+        const cancelled = await page.waitForSelector('[data-testid=entity-delete-confirm]', {state: 'detached', timeout: 3000}).then(() => true).catch(() => false);
+        check('#117 滑鼠離開該列就取消確認', cancelled && fs.existsSync(P('canon/待刪設定.md')));
+        await page.hover(rowSel('canon/待刪設定.md'));
+        await page.click(`${rowSel('canon/待刪設定.md')} [data-testid=entity-delete]`);
+        await page.click(`${rowSel('canon/待刪設定.md')} [data-testid=entity-delete-confirm]`);
+        const trashDir = P('.perkins/trash');
+        const inTrash = () => fs.existsSync(trashDir) && fs.readdirSync(trashDir).some(s => fs.existsSync(path.join(trashDir, s, 'canon', '待刪設定.md')));
+        check('#117 第二次確認後移到回收區並從清單移除',
+            await vanish('canon/待刪設定.md') && !fs.existsSync(P('canon/待刪設定.md')) && inTrash());
+
+        // 開著且有未存內容的設定在外部被刪除:保留編輯器內容並提示,存檔重新建立(不默默丟字)
+        xw('canon/編輯中.md', '# 編輯中\n');
+        await refocus();
+        await appear('canon/編輯中.md');
+        await page.click(rowSel('canon/編輯中.md'));
+        await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('編輯中'), null, {timeout: 5000}).catch(() => {});
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('未存的字');
+        xdel('canon/編輯中.md');
+        await refocus();
+        const keepMsg = await page.waitForFunction(() => (document.querySelector('[data-testid=toast]')?.textContent || '').includes('未儲存的內容還在'), null, {timeout: 5000})
+            .then(() => true).catch(() => false);
+        const stillThere = (await page.textContent('.cm-content').catch(() => '')).includes('未存的字');
+        check('#117 外部刪除開著的檔案時保留未存內容並提示', keepMsg && stillThere);
+        await page.keyboard.press('Control+s');
+        let recreated = false;
+        for (let i = 0; i < 30 && !recreated; i++) { await page.waitForTimeout(100); recreated = fs.existsSync(P('canon/編輯中.md')); }
+        check('#117 存檔重新建立檔案並列回清單',
+            recreated && read('canon/編輯中.md').includes('未存的字') && await appear('canon/編輯中.md'));
+        // 清掉專用檔(不刪 .perkins/trash:屬 fixture 內部,重建 fixture 時一併清除)
+        xdel('canon/編輯中.md');
+        await refocus();
+        await vanish('canon/編輯中.md');
     },
 };

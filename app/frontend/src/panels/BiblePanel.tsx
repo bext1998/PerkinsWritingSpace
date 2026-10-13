@@ -1,6 +1,6 @@
-import {useMemo, useState, type ReactNode} from 'react';
-import {ChevronDown, ChevronRight, Folder, Plus, Search} from 'lucide-react';
-import {NewDoc} from '../../wailsjs/go/main/App';
+import {useEffect, useMemo, useState, type ReactNode} from 'react';
+import {ChevronDown, ChevronRight, Folder, Plus, Search, Trash2} from 'lucide-react';
+import {NewDoc, TrashFile} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
 import {
@@ -42,7 +42,7 @@ function buildTree(files: FileNode[]): DirNode {
     return root;
 }
 
-export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail}: PanelProps) {
+export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, notify, fail}: PanelProps) {
     const [q, setQ] = useState('');
     const [creating, setCreating] = useState(false);
     const [name, setName] = useState('');
@@ -62,19 +62,53 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
 
     const appearances = (path: string) => index?.appearances?.[path]?.reduce((n, c) => n + c.count, 0) ?? 0;
 
+    // 刪除要按兩次(#117):第一次只進入確認狀態,滑鼠離開該列或幾秒內沒再按就取消
+    const [confirming, setConfirming] = useState<string | null>(null);
+    useEffect(() => {
+        if (!confirming) return;
+        const id = setTimeout(() => setConfirming(null), 4000);
+        return () => clearTimeout(id);
+    }, [confirming]);
+    const trash = async (rel: string) => {
+        setConfirming(null);
+        try {
+            await TrashFile(rel);
+            await refreshTree();
+            refreshIndex();
+            notify({text: '已移到回收區(.perkins/trash)', kind: 'info'});
+        } catch (e) { fail(e); }
+    };
+
     const fileRow = (f: FileNode, depth: number) => {
         const aliases = entityByPath.get(f.path)?.aliases ?? [];
+        const asking = confirming === f.path;
         return (
             <li key={f.path} data-testid="entity-row" data-file={f.path}
-                className={cn('flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-sm',
+                className={cn('group flex cursor-pointer items-center gap-2 rounded-md py-1.5 pr-2 text-sm',
                     f.path === current ? 'bg-accent' : 'hover:bg-accent/60')}
                 style={{paddingLeft: 8 + depth * 12}}
-                onClick={() => openFile(f.path)}>
+                onClick={() => openFile(f.path)}
+                onMouseLeave={() => { if (asking) setConfirming(null); }}>
                 <span className="min-w-0 flex-1 truncate">
                     {f.name}
                     {aliases.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">{aliases.join('、')}</span>}
                 </span>
-                <span className="text-xs text-muted-foreground" title="在稿件中出現的次數">{appearances(f.path) || ''}</span>
+                {asking ? (
+                    <button type="button" data-testid="entity-delete-confirm"
+                            className="shrink-0 rounded px-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
+                            onClick={ev => { ev.stopPropagation(); trash(f.path); }}>
+                        確認刪除?
+                    </button>
+                ) : (
+                    <>
+                        <span className="text-xs text-muted-foreground group-hover:hidden" title="在稿件中出現的次數">{appearances(f.path) || ''}</span>
+                        <button type="button" data-testid="entity-delete" title="刪除(移到回收區)" aria-label={`刪除 ${f.name}`}
+                                className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                                onClick={ev => { ev.stopPropagation(); setConfirming(f.path); }}>
+                            <Trash2 className="h-3.5 w-3.5"/>
+                        </button>
+                    </>
+                )}
             </li>
         );
     };
