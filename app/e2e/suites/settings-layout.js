@@ -92,7 +92,7 @@ module.exports = {
             await page.click('[data-testid=tab-project]');
             const n3 = await waitSel('[data-testid=research-row]');
             await page.click('[data-testid=tab-appearance]');
-            const n4 = await waitSel('[data-testid=appearance-theme]');
+            const n4 = await waitSel('[data-testid=appearance-visual]');
             navSwitch = n1 && n2 && n3 && n4;
         }
         check('設定頁 900×600 左側導覽欄存在且切換四頁正常', hasNav && navSwitch, `nav=${hasNav} switch=${navSwitch}`);
@@ -100,26 +100,39 @@ module.exports = {
         // 主題與稿紙版面搬到位於「外觀」頁(Issue #88):導覽欄底部不再放主題與稿紙版面
         await page.click('[data-testid=tab-project]');
         await waitSel('[data-testid=research-row]');
-        const navNoTheme = !(await page.isVisible('button:has-text("白紙")')) && !(await page.isVisible('[data-testid=paper-width]'));
+        const navNoTheme = !(await page.isVisible('[data-testid=appearance-mode-system]')) && !(await page.isVisible('[data-testid=paper-width]'));
         check('設定頁 導覽欄底部不再放主題與稿紙版面(作品頁看不到了)', navNoTheme);
         await page.click('[data-testid=tab-appearance]');
-        const themeVisible = await page.isVisible('button:has-text("白紙")');
-        let themeOk = false;
-        if (themeVisible) {
-            await page.click('button:has-text("白紙")');
-            await settle(80, 700); // 等 UI 更新(原固定等 300ms)
-            const lightHtml = await page.evaluate(() => document.documentElement.classList.contains('light'));
-            const savedLight = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => null));
-            await page.click('button:has-text("夜間書房")');
-            await settle(80, 700); // 等 UI 更新(原固定等 300ms)
-            const darkHtml = await page.evaluate(() => document.documentElement.classList.contains('dark'));
-            const savedDark = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => null));
-            themeOk = lightHtml && savedLight === 'light' && darkHtml && savedDark === 'dark';
-            check('設定頁 外觀頁主題切換會保存(白紙→夜間書房)', themeOk,
-                JSON.stringify({lightHtml, savedLight, darkHtml, savedDark}));
-        } else {
-            check('設定頁 外觀頁主題切換會保存(白紙→夜間書房)', false, '外觀頁看不到「白紙」主題卡');
-        }
+        await waitSel('[data-testid=appearance-visual]');
+        // 切換模式 (Issue #118):分段按鈕切換,html class 跟著改,設定檔寫進 Appearance.Mode
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(80, 500);
+        const lightHtml = await page.evaluate(() => document.documentElement.classList.contains('light'));
+        const savedLight = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.mode).catch(() => null));
+        await page.click('[data-testid=appearance-mode-dark]');
+        await settle(80, 500);
+        const darkHtml = await page.evaluate(() => document.documentElement.classList.contains('dark'));
+        const savedDark = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.mode).catch(() => null));
+        const modeOk = lightHtml && savedLight === 'light' && darkHtml && savedDark === 'dark';
+        check('設定頁 外觀頁模式切換會保存(淺色→深色)', modeOk,
+            JSON.stringify({lightHtml, savedLight, darkHtml, savedDark}));
+
+        // 切換主題預設檔(#118):主題下拉只列當前生效那一邊;切換會寫進 dark.preset / light.preset
+        await page.click('[data-testid=appearance-preset-select]');
+        await waitSel('[data-testid=appearance-preset-opt-graphite]');
+        await page.click('[data-testid=appearance-preset-opt-graphite]');
+        await settle(80, 500);
+        const graphiteClass = await page.evaluate(() => document.documentElement.classList.contains('theme-graphite'));
+        const savedGraphite = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.preset).catch(() => null));
+        check('設定頁 外觀頁切換深色主題到深灰會寫入設定與套用 class', graphiteClass && savedGraphite === 'graphite',
+            JSON.stringify({graphiteClass, savedGraphite}));
+        // 換回深色夜間書房(進階的「重置為預設值」會更快):先進階展開 details,才能點到 reset
+        await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
 
         // 截圖:900×600 四頁(現況圖另由一次性腳本拍攝;這裡只在新版面下拍)
         if (hasNav) {
@@ -131,13 +144,13 @@ module.exports = {
             await waitSel('[data-testid=platform-list]');
             await shot('74-settings-platforms-900');
             await page.click('[data-testid=tab-appearance]');
-            await waitSel('[data-testid=appearance-theme]');
+            await waitSel('[data-testid=appearance-visual]');
             await shot('78-settings-appearance-900');
         }
 
-        // ===== 外觀頁(Issue #88):主題選擇卡、稿紙版面每項一列 =====
+        // ===== 外觀頁(Issue #118):視覺風格/進階/稿紙版面 =====
         await page.click('[data-testid=tab-appearance]');
-        const app900 = await waitSel('[data-testid=appearance-theme]');
+        const app900 = await waitSel('[data-testid=appearance-visual]');
         await settle(80, 700);
         g = await geoSettings();
         check('設定頁 900×600 外觀頁 捲軸在內容區(根節點不滾動)', app900 && !!g && !g.rootScrollable,
@@ -146,12 +159,99 @@ module.exports = {
         const paperControls = await page.evaluate(() => ['paper-width', 'paper-font-size', 'paper-gap']
             .map(t => { const el = document.querySelector(`[data-testid=${t}]`); return !!el; }));
         check('外觀頁 稿紙版面三項控制項齊全', paperControls.every(Boolean), JSON.stringify(paperControls));
-        // 淺色外觀頁截圖(拍完還原夜間書房)
-        await page.click('button:has-text("白紙")');
-        await settle(80, 700);
+        // 視覺風格區塊的所有控制項在位
+        const visualControls = await page.evaluate(() => ['appearance-mode-dark', 'appearance-mode-light', 'appearance-mode-system',
+            'appearance-preset-select', 'appearance-accent-picker', 'appearance-accent-hex',
+            'appearance-background-picker', 'appearance-background-hex', 'appearance-foreground-picker', 'appearance-foreground-hex']
+            .map(t => !!document.querySelector(`[data-testid=${t}]`)));
+        check('外觀頁 視覺風格區塊十個控制項齊全', visualControls.every(Boolean), JSON.stringify(visualControls));
+        // 淺色側:切到 light 模式、選「米白」主題、拍截圖,拍完還原
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(80, 500);
+        await page.click('[data-testid=appearance-preset-select]');
+        await waitSel('[data-testid=appearance-preset-opt-cream]');
+        await page.click('[data-testid=appearance-preset-opt-cream]');
+        await settle(80, 500);
+        const creamClass = await page.evaluate(() => document.documentElement.classList.contains('theme-cream'));
+        check('設定頁 淺色側切到米白主題(theme-cream class)', creamClass);
         await shot('79-settings-appearance-900-light');
-        await page.click('button:has-text("夜間書房")');
-        await settle(80, 700);
+        // 重置外觀回預設後回到深色夜間書房,後續步驟不受影響
+        await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+
+        // 自訂背景色(#118):html 的 --background 變數會跟著改變
+        const bgBefore = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+        await page.fill('[data-testid=appearance-background-hex]', '#123456');
+        await settle(80, 500);
+        const bgAfter = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+        const savedBg = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.background).catch(() => null));
+        check('設定頁 自訂背景色會改變 --background 並寫進設定', bgBefore !== bgAfter && savedBg === '#123456',
+            JSON.stringify({bgBefore, bgAfter, savedBg}));
+        // 清除按鈕回主題值
+        await page.click('[data-testid=appearance-background-clear]');
+        await settle(80, 500);
+        const bgCleared = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+        // Go 用 omitempty,空值會被從 JSON 拿掉 → 前端讀到 undefined
+        const savedCleared = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.background).catch(() => null));
+        check('設定頁 自訂背景色清除後回到主題值', bgCleared === bgBefore && (savedCleared === '' || savedCleared == null),
+            JSON.stringify({bgCleared, savedCleared}));
+
+        // 重置為預設值的兩步確認(#118):先進階展開 details
+        await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        const confirmVisible = await page.isVisible('[data-testid=appearance-reset-confirm]');
+        check('設定頁 重置為預設值第一次按下顯示確認鈕', confirmVisible);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+        const afterReset = await page.evaluate(async () => {
+            const s = await window.go.main.App.GetSettings();
+            const a = s.appearance;
+            return {
+                mode: a.mode, darkPreset: a.dark.preset, lightPreset: a.light.preset,
+                darkBg: a.dark.background, lightBg: a.light.background,
+                font: a.uiFontSize, motion: a.reduceMotion,
+            };
+        });
+        // Go 用 omitempty,空值不寫進 JSON → 前端讀到 undefined 也算「重置」成功
+        const resetOk = afterReset.mode === 'dark' && afterReset.darkPreset === 'study' && afterReset.lightPreset === 'paper'
+            && (afterReset.darkBg === '' || afterReset.darkBg == null)
+            && (afterReset.lightBg === '' || afterReset.lightBg == null)
+            && afterReset.font === 'standard' && afterReset.motion === 'system';
+        check('設定頁 重置為預設值後所有外觀項回到預設', resetOk, JSON.stringify(afterReset));
+
+        // 重開設定頁後保留(#118):這次關掉再打開,設定不丟
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-preset-select]');
+        await waitSel('[data-testid=appearance-preset-opt-cream]');
+        await page.click('[data-testid=appearance-preset-opt-cream]');
+        await settle(80, 500);
+        await page.click('[data-testid=close-settings]');
+        await settle(80, 500);
+        await page.click('[data-testid=open-settings]');
+        await waitSel('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-visual]');
+        // 預期:mode=light、淺色側 preset=cream
+        const reopened = await page.evaluate(async () => {
+            const s = await window.go.main.App.GetSettings();
+            return {mode: s.appearance.mode, lightPreset: s.appearance.light.preset};
+        });
+        const persisted = reopened.mode === 'light' && reopened.lightPreset === 'cream';
+        check('設定頁 重開設定後外觀保留', persisted, JSON.stringify(reopened));
+        // 還原預設,避免影響後面測試
+        await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
 
         // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
         await page.click('[data-testid=tab-models]');
@@ -325,7 +425,7 @@ module.exports = {
         check('設定頁 640×672 AI 模型頁無水平捲軸', stacked640.sw <= stacked640.cw + 1, JSON.stringify(stacked640.sw));
         await shot('76b-settings-profile-640');
         await page.click('[data-testid=tab-appearance]');
-        await waitSel('[data-testid=appearance-theme]');
+        await waitSel("[data-testid=appearance-visual]");
         await settle(80, 700); // 等 UI 更新
         const app640 = await page.evaluate(() => {
             const c = document.querySelector('[data-testid=settings-content]');
@@ -436,7 +536,7 @@ module.exports = {
                 await page.click('[data-testid=unsaved-discard]');
             }
             if (leave === 'nav') {
-                await waitSel('[data-testid=appearance-theme]');
+                await waitSel("[data-testid=appearance-visual]");
                 await page.click('[data-testid=tab-platforms]');
             }
             await waitSel(`[data-testid=platform-card-${pb.id}]`);
@@ -495,7 +595,7 @@ module.exports = {
         if (hasNav) await shot('75-settings-platforms-1280');
 
         await page.click('[data-testid=tab-appearance]');
-        const app1280 = await waitSel('[data-testid=appearance-theme]');
+        const app1280 = await waitSel("[data-testid=appearance-visual]");
         await settle(80, 700); // 等 UI 更新
         g = await geoSettings();
         check('設定頁 1280×800 外觀頁 捲軸在內容區(根節點不滾動)', app1280 && !!g && !g.rootScrollable,

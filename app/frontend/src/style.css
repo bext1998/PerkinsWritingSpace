@@ -61,6 +61,73 @@
         --selection: 36 72% 60%;
     }
 
+    /* Issue #118:新主題預設檔(graphite、cream)。
+       主題是 .theme-graphite/.theme-cream,搭配 .dark/.light 表示深/淺側;前端以
+       html.dark.theme-graphite / html.light.theme-cream 等組合套用。 */
+    .dark.theme-graphite {
+        --background: 0 0% 9%;
+        --foreground: 0 0% 88%;
+        --sidebar: 0 0% 7%;
+        --rail: 0 0% 5%;
+        --paper: 0 0% 11%;
+        --card: 0 0% 12%;
+        --card-foreground: 0 0% 88%;
+        --popover: 0 0% 12%;
+        --popover-foreground: 0 0% 88%;
+        --primary: 36 30% 65%;
+        --primary-foreground: 0 0% 8%;
+        --secondary: 0 0% 16%;
+        --secondary-foreground: 0 0% 88%;
+        --muted: 0 0% 14%;
+        --muted-foreground: 0 0% 62%;
+        --accent: 0 0% 18%;
+        --accent-foreground: 0 0% 90%;
+        --destructive: 0 62% 55%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 0 0% 18%;
+        --input: 0 0% 22%;
+        --ring: 36 30% 65%;
+        --success: 142 45% 55%;
+        --warning: 38 85% 62%;
+        --selection: 36 30% 65%;
+    }
+    .light.theme-cream {
+        --background: 38 35% 92%;
+        --foreground: 30 30% 18%;
+        --sidebar: 38 30% 88%;
+        --rail: 38 25% 82%;
+        --paper: 40 50% 95%;
+        --card: 40 60% 96%;
+        --card-foreground: 30 30% 18%;
+        --popover: 40 60% 96%;
+        --popover-foreground: 30 30% 18%;
+        --primary: 28 60% 38%;
+        --primary-foreground: 40 60% 96%;
+        --secondary: 38 20% 84%;
+        --secondary-foreground: 30 30% 20%;
+        --muted: 38 20% 86%;
+        --muted-foreground: 30 15% 38%;
+        --accent: 38 22% 84%;
+        --accent-foreground: 30 30% 20%;
+        --destructive: 0 62% 46%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 38 18% 78%;
+        --input: 38 18% 74%;
+        --ring: 28 60% 38%;
+        --success: 142 45% 34%;
+        --warning: 32 85% 38%;
+        --selection: 28 75% 55%;
+    }
+
+    /* 減少動態效果(Issue #118):html 加上 .reduce-motion 時,所有 transition/animation 歸零;
+       「系統」則跟 prefers-reduced-motion 媒體查詢。 */
+    .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+        animation-duration: 0s !important;
+        transition-duration: 0s !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+    }
+
     * {
         @apply border-border;
     }
@@ -74,6 +141,12 @@
         margin: 0;
         overflow: hidden;
     }
+
+    /* Issue #118 介面字級(html 根字級):稿紙字級用 rem 會一起等比縮放;
+       paperLayout.ts 的 --paper-font-size 仍以 rem 為單位。 */
+    html.ui-font-small  { font-size: 15px; }
+    html.ui-font-large  { font-size: 17px; }
+    /* standard = 16px,使用瀏覽器預設即可 */
 
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }

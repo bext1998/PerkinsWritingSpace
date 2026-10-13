@@ -24,6 +24,33 @@ const (
 	MaxRecent  = 24
 
 	DefaultContextTokens = 16384
+
+	// Appearance 模式(Issue #118):深色 / 淺色 / 跟隨系統
+	AppearanceModeDark   = "dark"
+	AppearanceModeLight  = "light"
+	AppearanceModeSystem = "system"
+
+	// 主題預設檔:深色側是「夜間書房」「深灰」;淺色側是「白紙」「米白」。
+	PresetStudy   = "study"   // 沿用既有 .dark(深藍墨色 + 琥珀金)
+	PresetGraphite = "graphite" // 中性深灰,無色調
+	PresetPaper   = "paper"   // 沿用既有 :root(暖白紙張)
+	PresetCream   = "cream"   // 米白,像舊紙
+
+	// 介面字體大小(以 html 根字級 15 / 16 / 17px 區分)
+	UIFontSizeSmall    = "small"
+	UIFontSizeStandard = "standard"
+	UIFontSizeLarge    = "large"
+
+	// 減少動態效果
+	ReduceMotionSystem = "system"
+	ReduceMotionOn     = "on"
+	ReduceMotionOff    = "off"
+)
+
+// DarkPresets / LightPresets 是各側可選的主題清單(供前端對應下拉顯示)。
+var (
+	DarkPresets  = []string{PresetStudy, PresetGraphite}
+	LightPresets = []string{PresetPaper, PresetCream}
 )
 
 // Profile 是一個模型端點設定(本機 LM Studio、OpenRouter、Anthropic…)。金鑰不在這裡。
@@ -78,7 +105,10 @@ type Settings struct {
 	Active    string             `json:"active"`
 	Recent    []Recent           `json:"recent"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string             `json:"theme"` // dark | light
+	// Appearance(Issue #118):外觀設定。Theme 是第一代欄位,舊設定檔只有 theme 時會在載入時轉成 Appearance。
+	// Theme 仍寫回磁碟是為了相容作者手動編輯或檔案備份,不應由前端讀取。
+	Theme     string     `json:"theme,omitempty"` // 已棄用:由 Appearance.Mode 取代;Save 時會清掉
+	Appearance Appearance `json:"appearance"`
 	// 定時自動存檔(SPEC §17.3)。指標用來區分「作者明確關閉」與「舊設定檔沒有這個欄位」,
 	// 後者視為開啟;用 bool 的話兩者都是 false,分不出來。
 	Autosave *bool `json:"autosave,omitempty"`
@@ -87,6 +117,35 @@ type Settings struct {
 	PaperWidth    string `json:"paperWidth"`    // 版心寬度(正文欄最大寬度)
 	PaperFontSize string `json:"paperFontSize"` // 字級(正文字體大小)
 	PaperParaGap  string `json:"paperParaGap"`  // 段距(段落之間的距離)
+}
+
+// SideAppearance 是單一側(深或淺)的外觀設定:主題預設檔、強調色、背景、文字顏色。
+// Accent/Background/Foreground 為空字串時表示「跟隨主題」(由前端 deriveTokens 推算其他 token)。
+type SideAppearance struct {
+	Preset     string `json:"preset"`               // 深:study/graphite;淺:paper/cream
+	Accent     string `json:"accent,omitempty"`     // #rrggbb;空 = 跟隨主題
+	Background string `json:"background,omitempty"` // #rrggbb;空 = 跟隨主題
+	Foreground string `json:"foreground,omitempty"` // #rrggbb;空 = 跟隨主題
+}
+
+// Appearance 是全域外觀設定(Issue #118):模式、各側主題與自訂色、介面字級、減少動態效果。
+type Appearance struct {
+	Mode         string          `json:"mode"`         // dark / light / system
+	Dark         SideAppearance  `json:"dark"`         // 深色側的設定(深色模式生效時用)
+	Light        SideAppearance  `json:"light"`        // 淺色側的設定(淺色模式生效時用)
+	UIFontSize   string          `json:"uiFontSize"`   // small / standard / large
+	ReduceMotion string          `json:"reduceMotion"` // system / on / off
+}
+
+// DefaultsAppearance 回傳預設外觀(深色夜間書房、無自訂色、標準字級、跟隨系統動態)。
+func DefaultsAppearance() Appearance {
+	return Appearance{
+		Mode: AppearanceModeDark,
+		Dark:  SideAppearance{Preset: PresetStudy},
+		Light: SideAppearance{Preset: PresetPaper},
+		UIFontSize:   UIFontSizeStandard,
+		ReduceMotion: ReduceMotionSystem,
+	}
 }
 
 // 稿紙版面只有少數幾個預設檔(不做任意數值輸入),值就是前端套用的 CSS 值;
@@ -129,6 +188,12 @@ func (v *Settings) SetPaperLayout(width, fontSize, paraGap string) error {
 	return nil
 }
 
+// SetAppearance 由前端的「外觀」設定呼叫;整體取代(設定檔裡也只放合法值)。
+// 載入/存回前 normalizeAppearance 會再做一次把關。
+func (v *Settings) SetAppearance(a Appearance) {
+	v.Appearance = a
+}
+
 // normalizeProfile 把載入的設定檔欄位正規化:未知的 Provider 視為 OpenAI 相容、
 // 不合法的思考強度視為不指定(#30,與稿紙版面同一種做法)。
 func normalizeProfile(p *Profile) {
@@ -145,13 +210,65 @@ func normalizeProfile(p *Profile) {
 	p.ReasoningEffort = ""
 }
 
+// normalizeAppearance 把載入的 Appearance 欄位正規化:未知值用預設,
+// 顏色欄位只接受 #rrggbb(7 字元),不合法的視為空(跟隨主題)。
+func normalizeAppearance(a *Appearance) {
+	switch a.Mode {
+	case AppearanceModeDark, AppearanceModeLight, AppearanceModeSystem:
+	default:
+		a.Mode = AppearanceModeDark
+	}
+	a.Dark.Preset = normalizePreset(a.Dark.Preset, DarkPresets, PresetStudy)
+	a.Light.Preset = normalizePreset(a.Light.Preset, LightPresets, PresetPaper)
+	a.Dark.Accent = normalizeHexColor(a.Dark.Accent)
+	a.Dark.Background = normalizeHexColor(a.Dark.Background)
+	a.Dark.Foreground = normalizeHexColor(a.Dark.Foreground)
+	a.Light.Accent = normalizeHexColor(a.Light.Accent)
+	a.Light.Background = normalizeHexColor(a.Light.Background)
+	a.Light.Foreground = normalizeHexColor(a.Light.Foreground)
+	switch a.UIFontSize {
+	case UIFontSizeSmall, UIFontSizeStandard, UIFontSizeLarge:
+	default:
+		a.UIFontSize = UIFontSizeStandard
+	}
+	switch a.ReduceMotion {
+	case ReduceMotionSystem, ReduceMotionOn, ReduceMotionOff:
+	default:
+		a.ReduceMotion = ReduceMotionSystem
+	}
+}
+
+func normalizePreset(v string, allowed []string, def string) string {
+	for _, a := range allowed {
+		if v == a {
+			return v
+		}
+	}
+	return def
+}
+
+// normalizeHexColor 只接受 7 字元的 #rrggbb(小寫);其餘(含 #RGB、空、隨意字串)視為空。
+func normalizeHexColor(v string) string {
+	if len(v) != 7 || v[0] != '#' {
+		return ""
+	}
+	for i := 1; i < 7; i++ {
+		c := v[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return ""
+		}
+	}
+	return v
+}
+
 func defaults() Settings {
 	return Settings{
 		Profiles:      []Profile{{ID: "default", Name: "本機 LM Studio", BaseURL: "http://localhost:1234/v1", ContextTokens: DefaultContextTokens}},
 		Active:        "default",
 		Recent:        []Recent{},
 		Platforms:     publish.Presets(),
-		Theme:         "dark",
+		Theme:         "", // 已棄用,Appearance.Mode 取代
+		Appearance:    DefaultsAppearance(),
 		PaperWidth:    PaperWidthDefault,
 		PaperFontSize: PaperFontSizeDefault,
 		PaperParaGap:  PaperParaGapDefault,
@@ -237,9 +354,24 @@ func (s *Store) Load() Settings {
 	if len(raw.Platforms) == 0 {
 		raw.Platforms = out.Platforms
 	}
-	if raw.Theme == "" {
-		raw.Theme = out.Theme
+	// Appearance:舊設定檔只有 theme 欄位時,把 mode 對應到 dark/light 並帶入對應預設檔(#118)。
+	// Theme 欄位不再依賴;Appearance.Mode 才是生效狀態,但 Theme 仍原樣保留供回溯,
+	// 直到 Save 時才清掉。
+	if raw.Theme == AppearanceModeDark {
+		if raw.Appearance.Mode == "" {
+			raw.Appearance.Mode = AppearanceModeDark
+			raw.Appearance.Dark.Preset = PresetStudy
+		}
+	} else if raw.Theme == AppearanceModeLight {
+		if raw.Appearance.Mode == "" {
+			raw.Appearance.Mode = AppearanceModeLight
+			raw.Appearance.Light.Preset = PresetPaper
+		}
 	}
+	if raw.Appearance.Mode == "" {
+		raw.Appearance = out.Appearance
+	}
+	normalizeAppearance(&raw.Appearance)
 	// 舊設定檔沒有這三個欄位(或值不是預設檔)時回到預設,其他欄位照原樣保留
 	raw.PaperWidth = paperPreset(raw.PaperWidth, PaperWidths, out.PaperWidth)
 	raw.PaperFontSize = paperPreset(raw.PaperFontSize, PaperFontSizes, out.PaperFontSize)
@@ -252,10 +384,14 @@ func (s *Store) Save(v Settings) error {
 		return err
 	}
 	v.BaseURL, v.Model = "", ""
+	// Theme 欄位已棄用;存回時清掉避免磁碟同時留著兩份狀態(#118)。
+	v.Theme = ""
 	// 存回時正規化設定檔欄位(同載入):未知 Provider / 不合法思考強度不進設定檔
 	for i := range v.Profiles {
 		normalizeProfile(&v.Profiles[i])
 	}
+	// 存回時正規化 Appearance:未知 mode/preset/字級/減少動態、非法顏色一律不進設定檔
+	normalizeAppearance(&v.Appearance)
 	// 存回時正規化稿紙版面:設定檔裡永遠是有效的預設檔(直接呼叫 Save 的測試與舊資料也一樣)
 	v.PaperWidth = paperPreset(v.PaperWidth, PaperWidths, PaperWidthDefault)
 	v.PaperFontSize = paperPreset(v.PaperFontSize, PaperFontSizes, PaperFontSizeDefault)

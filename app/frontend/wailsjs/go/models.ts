@@ -385,6 +385,7 @@ export namespace main {
 	    active: string;
 	    platforms: publish.Platform[];
 	    theme: string;
+	    appearance: settings.Appearance;
 	    autosave: boolean;
 	    paperWidth: string;
 	    paperFontSize: string;
@@ -400,6 +401,7 @@ export namespace main {
 	        this.active = source["active"];
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
 	        this.theme = source["theme"];
+	        this.appearance = this.convertValues(source["appearance"], settings.Appearance);
 	        this.autosave = source["autosave"];
 	        this.paperWidth = source["paperWidth"];
 	        this.paperFontSize = source["paperFontSize"];
@@ -921,6 +923,62 @@ export namespace sessions {
 
 export namespace settings {
 	
+	export class SideAppearance {
+	    preset: string;
+	    accent?: string;
+	    background?: string;
+	    foreground?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SideAppearance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.preset = source["preset"];
+	        this.accent = source["accent"];
+	        this.background = source["background"];
+	        this.foreground = source["foreground"];
+	    }
+	}
+	export class Appearance {
+	    mode: string;
+	    dark: SideAppearance;
+	    light: SideAppearance;
+	    uiFontSize: string;
+	    reduceMotion: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Appearance(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.mode = source["mode"];
+	        this.dark = this.convertValues(source["dark"], SideAppearance);
+	        this.light = this.convertValues(source["light"], SideAppearance);
+	        this.uiFontSize = source["uiFontSize"];
+	        this.reduceMotion = source["reduceMotion"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class Preset {
 	    id: string;
 	    name: string;

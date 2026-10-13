@@ -320,7 +320,8 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("白紙")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
         await page.click('[data-testid=close-settings]');
         await settle(120, 900);
         await shot('44-paper-light');
@@ -334,7 +335,8 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("夜間書房")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(120, 800);
 
@@ -469,15 +471,17 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
+        await page.waitForSelector('[data-testid=appearance-visual]');
         await shot('44-paper-layout-settings');
-        await page.click('button:has-text("白紙")');
+        await page.click('[data-testid=appearance-mode-light]');
         await page.click('[data-testid=close-settings]');
         await settle(120, 900);
         await shot('44-paper-layout-light-big');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("夜間書房")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(120, 800);
         // 還原預設(後面的組與量測不受影響)
@@ -775,14 +779,16 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("白紙")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);
         await shot('44-typewriter-focus-light');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("夜間書房")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);
         await page.keyboard.press('Control+Shift+T'); // 關掉兩個模式

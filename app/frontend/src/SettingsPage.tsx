@@ -2,9 +2,10 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowLeft, BookMarked, ChevronRight, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
-    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, SetTheme, WriteAgentsMd,
+    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAppearance, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, WriteAgentsMd,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
+import {ACCENT_PRESETS, contrastRatio, hexToHSL} from './appearance';
 import {Button} from '@/components/ui/button';
 import {Badge, Checkbox, Input, Label, Switch, Textarea} from '@/components/ui/basic';
 import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue, Tip} from '@/components/ui/overlay';
@@ -17,8 +18,9 @@ import {PAPER_FONT_SIZES, PAPER_PARA_GAPS, PAPER_WIDTHS, PaperLayout} from './pa
 interface Props {
     tree: project.Tree | null;
     setTree: (t: project.Tree) => void;
-    theme: string;
-    setTheme: (t: string) => void;
+    // 外觀(Issue #118):模式、各側主題與自訂色、字級、減少動態
+    appearance: settings.Appearance;
+    setAppearance: (a: settings.Appearance) => void;
     // 稿紙版面(版心寬度、字級、段距):與主題同一種保存方式(全域偏好,不是作品設定)
     paper: PaperLayout;
     setPaper: (p: PaperLayout) => void;
@@ -837,54 +839,234 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
     );
 }
 
-// ---- 外觀頁(Issue #88):主題與稿紙版面,重新排版為「左邊名稱+說明、右邊控制項」的列 ----
+// ---- 外觀頁(Issue #118):模式/主題/強調色/背景/文字 + 進階(字級、減少動效果、重置) + 稿紙版面 ----
 
-const THEME_CARDS = [
-    {id: 'dark', name: '夜間書房', desc: '深色底、暖色調光線;夜間或低光環境長時間寫作。', Icon: Moon},
-    {id: 'light', name: '白紙', desc: '白底黑字,接近紙張;白天或明亮環境。', Icon: Sun},
+// 主題預設檔在各側的顯示設定:名稱、說明與 icon。
+const DARK_PRESET_META: Record<string, {name: string; desc: string; Icon: typeof Moon}> = {
+    study: {name: '夜間書房', desc: '深藍墨色為底、琥珀金強調色;夜間或低光環境寫作。', Icon: Moon},
+    graphite: {name: '深灰', desc: '中性深灰、不帶色調;覺得夜間書房太藍時使用。', Icon: Monitor},
+};
+const LIGHT_PRESET_META: Record<string, {name: string; desc: string; Icon: typeof Sun}> = {
+    paper: {name: '白紙', desc: '暖白底、黑字;白天或明亮環境寫作。', Icon: Sun},
+    cream: {name: '米白', desc: '比白紙更黃、像舊紙;眼睛容易疲勞時使用。', Icon: BookMarked},
+};
+
+const MODE_OPTIONS: {id: string; label: string; desc: string; Icon: typeof Moon}[] = [
+    {id: 'dark', label: '深色', desc: '一律深色底;不受系統設定影響。', Icon: Moon},
+    {id: 'light', label: '淺色', desc: '一律淺色底;不受系統設定影響。', Icon: Sun},
+    {id: 'system', label: '跟隨系統', desc: '依作業系統目前偏好的主題自動切換;系統變更時即時生效。', Icon: Monitor},
 ];
 
-function AppearanceTab({theme, setTheme, paper, setPaper}: Pick<Props, 'theme' | 'setTheme' | 'paper' | 'setPaper'>) {
-    // 主題與稿紙版面都是作者的全域偏好:即按即存、立即套用,重開設定與重啟應用都保留
-    const changeTheme = (t: string) => { setTheme(t); SetTheme(t); };
+const UIFontSizeOptions: {id: string; label: string}[] = [
+    {id: 'small', label: '小'},
+    {id: 'standard', label: '標準'},
+    {id: 'large', label: '大'},
+];
+
+const ReduceMotionOptions: {id: string; label: string}[] = [
+    {id: 'system', label: '系統'},
+    {id: 'on', label: '開啟'},
+    {id: 'off', label: '關閉'},
+];
+
+// HEX 驗證:7 字元小寫 #rrggbb;不是合法值不動(表示驗證失敗,不為作者存進去)。
+const HEX_RE = /^#[0-9a-f]{6}$/;
+
+// 與 App.tsx 同樣的系統偏好判斷,避免設定頁與實際生效不一致。
+const systemPrefersDark = () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+// 「當前生效那一側」:mode=system 時以目前 matchMedia 為準。
+const effectiveSide = (mode: string): 'dark' | 'light' =>
+    mode === 'system' ? (systemPrefersDark() ? 'dark' : 'light') : mode === 'light' ? 'light' : 'dark';
+
+// 各側的預設背景/前景/強調色:不在使用者檔案裡的色時,給警告判斷有個可用的參考;
+// 與 App.tsx 的 deriveTokens fallback 一致。
+const SIDE_FALLBACK = {
+    dark:  {bg: '#161b22', fg: '#e7e2d4', accent: '#d99749'},
+    light: {bg: '#fdfaf3', fg: '#1f1d18', accent: '#8a5a2c'},
+};
+
+function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props, 'appearance' | 'setAppearance' | 'paper' | 'setPaper'>) {
+    // 作者全域偏好:即按即存、立即套用,重開設定與重啟應用都保留(#118)。
+    // setAppearance 是樂觀更新(前端立刻套用),SetAppearance 同步寫進後端;失敗由 React 不回滕。
+    // 以 createFrom 重建實例是為了符合 wails 自動生成型別的 class 形狀(物件字面值不帶 convertValues)。
+    const persist = (next: {mode: string; uiFontSize: string; reduceMotion: string; dark: settings.SideAppearance; light: settings.SideAppearance}) => {
+        const inst = settings.Appearance.createFrom({
+            mode: next.mode, uiFontSize: next.uiFontSize, reduceMotion: next.reduceMotion,
+            dark: {preset: next.dark.preset, accent: next.dark.accent, background: next.dark.background, foreground: next.dark.foreground},
+            light: {preset: next.light.preset, accent: next.light.accent, background: next.light.background, foreground: next.light.foreground},
+        }) as settings.Appearance;
+        setAppearance(inst);
+        SetAppearance(inst);
+    };
     const changePaper = (key: keyof PaperLayout, v: string) => {
         const next = {...paper, [key]: v};
         setPaper(next);
         SetPaperLayout(next.width, next.fontSize, next.gap);
     };
+
+    const side = effectiveSide(appearance.mode);
+    const sideCfg = side === 'dark' ? appearance.dark : appearance.light;
+    const presetList = side === 'dark' ? ['study', 'graphite'] : ['paper', 'cream'];
+    const presetMeta = side === 'dark' ? DARK_PRESET_META : LIGHT_PRESET_META;
+
+    // 背景/文字 對比低於 4.5:1 顯示警告(#118):但有自訂色才檢查(否則是預設主題,作者不需要警告)。
+    const bgForContrast = sideCfg.background || SIDE_FALLBACK[side].bg;
+    const fgForContrast = sideCfg.foreground || SIDE_FALLBACK[side].fg;
+    const ratio = contrastRatio(hexToHSL(bgForContrast), hexToHSL(fgForContrast));
+    const contrastWarn = (sideCfg.background || sideCfg.foreground) && ratio < 4.5;
+
+    // 重置為預設值(兩步確認):只重置外觀設定,稿紙版面另有自己重置位置(這裡不重置)。
+    const [resetArmed, setResetArmed] = useState(false);
+
     const paperRow = (key: keyof PaperLayout, testid: string, label: string, desc: string, opts: {value: string; label: string}[]) => (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-2">
-            <div className="min-w-[12rem] flex-1">
-                <Label className="text-sm">{label}</Label>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
-            </div>
+        <SettingRow title={label} desc={desc}>
             <Select value={paper[key]} onValueChange={v => changePaper(key, v)}>
                 <SelectTrigger data-testid={testid} className="h-8 w-[8.5rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
                 <SelectContent>
                     {opts.map(o => <SelectItem key={o.value} value={o.value} data-testid={`${testid}-opt-${o.value}`}>{o.label}</SelectItem>)}
                 </SelectContent>
             </Select>
-        </div>
+        </SettingRow>
     );
+
+    // ColorField:色塊 + hex 輸入,空 = 跟隨主題。每列有「清除」回主題值。
+    const ColorField = ({label, desc, fieldKey, testid}: {label: string; desc: string; fieldKey: 'accent' | 'background' | 'foreground'; testid: string}) => {
+        const value = sideCfg[fieldKey];
+        const update = (next: settings.SideAppearance) => {
+            const updated = side === 'dark'
+                ? {...appearance, dark: next}
+                : {...appearance, light: next};
+            persist(updated);
+        };
+        const onHex = (raw: string) => {
+            const v = raw.trim().toLowerCase();
+            // 不合法:不更新狀態(保留上一個有效值);空表示要重設。
+            if (v === '') { update({...sideCfg, [fieldKey]: ''}); return; }
+            if (HEX_RE.test(v)) update({...sideCfg, [fieldKey]: v});
+        };
+        const onColor = (raw: string) => {
+            const v = raw.toLowerCase();
+            if (HEX_RE.test(v)) update({...sideCfg, [fieldKey]: v});
+        };
+        const clear = () => update({...sideCfg, [fieldKey]: ''});
+        return (
+            <div className="px-4 py-3" data-testid={testid}>
+                <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+                    <div className="min-w-[12rem] flex-1">
+                        <div className="text-sm font-medium">{label}</div>
+                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <input type="color" value={value || (side === 'dark' ? '#161b22' : '#fdfaf3')}
+                               onChange={e => onColor(e.target.value)}
+                               data-testid={`${testid}-picker`}
+                               className="h-8 w-10 cursor-pointer rounded-md border bg-transparent p-0"/>
+                        <Input value={value} onChange={e => onHex(e.target.value)} placeholder="跟隨主題"
+                               data-testid={`${testid}-hex`}
+                               className="h-8 w-[8.5rem] font-mono text-xs"/>
+                        {value && <Button size="iconSm" variant="ghost" onClick={clear} aria-label="清除回主題" data-testid={`${testid}-clear`}><RotateCcw className="h-3.5 w-3.5"/></Button>}
+                    </div>
+                </div>
+                {fieldKey === 'foreground' && contrastWarn && (
+                    <p className="mt-2 text-xs text-warning" data-testid="contrast-warn">前景與背景對比 {ratio.toFixed(1)}:1,低於 4.5:1 可能看不清。</p>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="grid gap-8">
-            <Section title="主題" testid="appearance-theme" desc="即按即存並立即套用;重開設定與重啟應用都還是你選的主題。">
-                <div className="grid gap-3 sm:grid-cols-2">
-                    {THEME_CARDS.map(({id, name, desc, Icon}) => (
-                        <button key={id} onClick={() => changeTheme(id)} aria-pressed={theme === id}
-                                data-testid={`theme-${id}`}
-                                className={cn('flex items-start gap-3 rounded-lg border p-4 text-left',
-                                    theme === id ? 'border-primary bg-accent' : 'hover:bg-accent/60')}>
-                            <Icon className="mt-0.5 h-7 w-7 shrink-0"/>
-                            <span className="min-w-0">
-                                <span className="block text-sm font-medium">{name}</span>
-                                <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">{desc}</span>
-                            </span>
-                        </button>
-                    ))}
+            <Section title="視覺風格" testid="appearance-visual"
+                     desc="主題、主題預設檔與自訂色都會立即套用。深色與淺色各自記住選擇;切到另一邊再切回來不會丟。">
+                {/* 模式:深色 / 淺色 / 跟隨系統 */}
+                <div className="grid gap-3 rounded-lg border p-3" data-testid="appearance-mode">
+                    <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+                        <div className="min-w-[12rem] flex-1">
+                            <div className="text-sm font-medium">模式</div>
+                            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">選擇外觀的主要方向;跟隨系統時會依作業系統偏好自動切換。</p>
+                        </div>
+                        <div className="flex shrink-0 gap-1 rounded-md border bg-muted p-1">
+                            {MODE_OPTIONS.map(o => (
+                                <button key={o.id} type="button" aria-pressed={appearance.mode === o.id}
+                                        data-testid={`appearance-mode-${o.id}`}
+                                        title={o.desc}
+                                        onClick={() => persist({...appearance, mode: o.id})}
+                                        className={cn('flex items-center gap-1.5 rounded px-3 py-1 text-xs transition-colors',
+                                            appearance.mode === o.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                                    <o.Icon className="h-3.5 w-3.5"/>{o.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
                 </div>
+                {/* 主題:只列當前生效那一邊 */}
+                <RowCard testid="appearance-preset">
+                    <div className="flex flex-wrap items-start gap-x-4 gap-y-2 px-4 py-3">
+                        <div className="min-w-[12rem] flex-1">
+                            <div className="text-sm font-medium">主題</div>
+                            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{side === 'dark' ? '深色側' : '淺色側'}的主題預設檔;切換模式時會記住各側選擇。</p>
+                        </div>
+                        <Select value={sideCfg.preset}
+                                onValueChange={v => {
+                                    const next: settings.SideAppearance = {...sideCfg, preset: v};
+                                    const updated = side === 'dark'
+                                        ? {...appearance, dark: next}
+                                        : {...appearance, light: next};
+                                    persist(updated);
+                                }}>
+                            <SelectTrigger data-testid="appearance-preset-select" className="h-8 w-[10rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                {presetList.map(p => {
+                                    const m = presetMeta[p];
+                                    return <SelectItem key={p} value={p} data-testid={`appearance-preset-opt-${p}`}>{m.name}</SelectItem>;
+                                })}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                </RowCard>
+                {/* 強調色/背景/文字:跟隨主題為空;自訂會推算其他 token */}
+                <RowCard testid="appearance-colors">
+                    <ColorField label="強調色" desc="按鈕、選中態、焦點;選擇「跟隨主題」時用主題的強調色。" fieldKey="accent" testid="appearance-accent"/>
+                    <ColorField label="背景" desc="整個介面的主底色;其他顏色(側欄、欄位、文字…)會自動從這裡推算。" fieldKey="background" testid="appearance-background"/>
+                    <ColorField label="文字顏色" desc="介面主要文字色;與背景對比低於 4.5:1 時會顯示警告。" fieldKey="foreground" testid="appearance-foreground"/>
+                </RowCard>
             </Section>
+
+            {/* 進階區塊(可收合,預設收合):UI_GUIDE §12.4 */}
+            <details className="grid gap-3" data-testid="appearance-advanced">
+                <summary className="cursor-pointer text-sm font-semibold">進階</summary>
+                <RowCard testid="appearance-advanced-card">
+                    <SettingRow title="介面字體大小" desc="全介面字級(html 根字級 15 / 16 / 17px);稿紙字級會一起等比縮放。">
+                        <Select value={appearance.uiFontSize} onValueChange={v => persist({...appearance, uiFontSize: v})}>
+                            <SelectTrigger data-testid="appearance-font-size" className="h-8 w-[8.5rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                {UIFontSizeOptions.map(o => <SelectItem key={o.id} value={o.id} data-testid={`appearance-font-size-opt-${o.id}`}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <SettingRow title="減少動態效果" desc="「系統」跟隨作業系統的減少動態偏好;開啟時 transition 與 animation 歸零,包含打字機捲動的平滑捲動。">
+                        <Select value={appearance.reduceMotion} onValueChange={v => persist({...appearance, reduceMotion: v})}>
+                            <SelectTrigger data-testid="appearance-reduce-motion" className="h-8 w-[8.5rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
+                            <SelectContent>
+                                {ReduceMotionOptions.map(o => <SelectItem key={o.id} value={o.id} data-testid={`appearance-reduce-motion-opt-${o.id}`}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </SettingRow>
+                    <SettingRow title="重置為預設值" desc="把外觀設定(模式、主題、自訂色、字級、減少動態)回到預設;稿紙版面不受影響。">
+                        {!resetArmed ? (
+                            <Button size="sm" variant="ghost" onClick={() => setResetArmed(true)} data-testid="appearance-reset">重置為預設值</Button>
+                        ) : (
+                            <div className="flex items-center gap-2">
+                                <span className="text-xs text-warning">確定要重置嗎?</span>
+                                <Button size="sm" variant="destructive" onClick={() => { setResetArmed(false); persist(DEFAULTS_APPEARANCE); }} data-testid="appearance-reset-confirm">重置</Button>
+                                <Button size="sm" variant="ghost" onClick={() => setResetArmed(false)} data-testid="appearance-reset-cancel">取消</Button>
+                            </div>
+                        )}
+                    </SettingRow>
+                </RowCard>
+            </details>
+
             <Section title="稿紙版面" testid="paper-layout"
                      desc="編輯區的版心寬度、字級與段距(作者的全域偏好,不是作品設定)。只提供預設檔,即按即存並立即套用到開著的編輯器。">
                 <div className="grid divide-y rounded-lg border py-1">
@@ -897,10 +1079,16 @@ function AppearanceTab({theme, setTheme, paper, setPaper}: Pick<Props, 'theme' |
     );
 }
 
+// 重置後回到的預設值:與 App.tsx DEFAULT_APPEARANCE 與 Go 端 DefaultsAppearance 一致。
+const DEFAULTS_APPEARANCE = settings.Appearance.createFrom({
+    mode: 'dark', uiFontSize: 'standard', reduceMotion: 'system',
+    dark: {preset: 'study'}, light: {preset: 'paper'},
+}) as settings.Appearance;
+
 type Page = 'project' | 'models' | 'platforms' | 'appearance';
 const PAGE_LABEL: Record<Page, string> = {project: '作品', models: 'Perkins Bot', platforms: '平台輸出', appearance: '外觀'};
 
-export default function SettingsPage({tree, setTree, theme, setTheme, paper, setPaper, onClose}: Props) {
+export default function SettingsPage({tree, setTree, appearance, setAppearance, paper, setPaper, onClose}: Props) {
     const [cfg, setCfg] = useState<main.SettingsView | null>(null);
     const [page, setPage] = useState<Page>('models'); // 預設頁維持 Perkins Bot(SPEC §17.2)
     useEffect(() => { GetSettings().then(setCfg); }, []);
@@ -974,7 +1162,7 @@ export default function SettingsPage({tree, setTree, theme, setTheme, paper, set
                             {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}/>}
                             {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree} guard={guard} setDirty={setDirty}/>}
                             {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg} guard={guard} setDirty={setDirty}/>}
-                            {page === 'appearance' && <AppearanceTab theme={theme} setTheme={setTheme} paper={paper} setPaper={setPaper}/>}
+                            {page === 'appearance' && <AppearanceTab appearance={appearance} setAppearance={setAppearance} paper={paper} setPaper={setPaper}/>}
                         </div>
                     )}
                 </div>

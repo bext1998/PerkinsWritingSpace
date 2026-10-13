@@ -262,6 +262,10 @@ export function SetActiveModel(arg1, arg2) {
   return window['go']['main']['App']['SetActiveModel'](arg1, arg2);
 }
 
+export function SetAppearance(arg1) {
+  return window['go']['main']['App']['SetAppearance'](arg1);
+}
+
 export function SetAutosave(arg1) {
   return window['go']['main']['App']['SetAutosave'](arg1);
 }

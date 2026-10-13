@@ -1,5 +1,37 @@
 # PROGRESS.md
 
+## 2026-10-14 — 外觀頁可自訂主題(Issue #118)
+
+作者參考 Codex 桌面版設定頁後提出(Issue #118):不要再只是「深色 / 淺色」二選一,加上「深灰」「米白」兩個新主題,並開放強調色、背景、前景自訂,讓作者能依個人在寫作環境的偏好微調。依照 #0 第 9 條:不加任何新技術(取色器用原生 `<input type="color">`);不為「之後可能用到」加設定項(不做程式碼字型、差異標記樣式、半透明側欄、指標游標、匯入/匯出主題)。
+
+- **視覺風格區塊**:
+  - **模式**:深色 / 淺色 / 跟隨系統(分段按鈕);跟隨系統以 `matchMedia('(prefers-color-scheme: dark)')` 為準,訂閱變更即時切換。
+  - **主題**(下拉):深色兩款 — 「夜間書房」`study`(沿用 `.dark` 預設)、「深灰」`graphite`(中性深灰,完整 token 組寫在 `.dark.theme-graphite`,背景近 #181818);淺色兩款 — 「白紙」`paper`(沿用 `:root` 預設)、「米白」`cream`(比白紙明顯更黃,完整 token 組寫在 `.light.theme-cream`)。下拉只列出目前生效那一邊(深或淺);深色與淺色各自記住選擇(切換模式再切回不會丟)。
+  - **強調色**(下拉):「跟隨主題」+ 6 個具名顏色(琥珀/藍/綠/紅/紫/青,在深淺底都清楚的色值;作者提供語意,不照搬 Codex)。
+  - **背景**、**文字顏色**:色塊(`<input type="color">`)+ hex 文字;空值 = 跟隨主題,每列有「清除」回主題值。
+  - 自訂背景/文字/強調色時,其他 token(sidebar/rail/paper/card/popover/muted/secondary/accent/border/input/...)由前端純函式 `deriveTokens(bg, fg, accent, isDark)` 推算,以 inline style 寫到 `document.documentElement`;primary/ring/selection 用強調色,primary-foreground 依 luminance 自動選黑或白。前景與背景對比 < 4.5:1 在文字色列下方顯示警告(不阻止儲存)。
+- **進階區塊**(可收合,預設收合):
+  - **介面字體大小**:小 / 標準 / 大,html 根字級 15 / 16 / 17px;稿紙字級以 rem 表示會一起等比縮放。
+  - **減少動態效果**:系統 / 開啟 / 關閉;開啟時 html 加 `.reduce-motion`(CSS 讓 transition/animation 歸零,並設 `scroll-behavior: auto`),「系統」跟隨 `prefers-reduced-motion`。
+  - **重置為預設值**:回到深色夜間書房/淺色白紙、無自訂色、標準字級、跟隨系統動態,稿紙版面不受影響;兩步確認(同刪除端點的樣式)。
+- **稿紙版面區塊**:保留現狀,排在外觀頁底部。
+- **後端**(`app/internal/settings`):
+  - 新增 `Appearance` 型別與 `SideAppearance`(preset/accent/background/foreground);`Settings` 加 `appearance` 欄位,舊 `theme` 欄位標為已棄用(存回時清掉,讀取時遷移到 `Appearance.Mode`)。
+  - 設定檔只接受合法值:`normalizeAppearance` 過濾未知 mode/preset/字級/減少動態、非法色碼(#rgb、空、隨意字串),不為作者偷偷保存。
+  - 舊設定檔只有 `theme: "dark"|"light"` 時:`theme=dark` → `appearance.mode=dark`、`dark.preset=study`;`theme=light` → `appearance.mode=light`、`light.preset=paper`;作者現有設定不丟失。
+  - Go 測試:`TestAppearanceMigratesLegacyThemeField`、`TestAppearanceNormalizesUnknownAndBadValues`、`TestNormalizeHexColor`,加原有 `TestPaperLayoutDefaultsAndLegacyFile` 改成驗證「舊 theme 遷移到 appearance.mode」並移除原期望中的 `"theme"` 欄位檢查。
+  - 新綁定 `SetAppearance(appearance)` 寫入並儲存;`App.SetTheme("dark"|"light")` 保留為舊版相容(寫進 `Appearance.Mode`)。
+- **前端**(`app/frontend/src/`):
+  - `appearance.ts` 新檔:`hexToHSL` / `deriveTokens` / `applyDerivedTokens` / `clearDerivedTokens` / `contrastRatio` / `ACCENT_PRESETS`;HSL 是 H/S/L 結構,CSS 變數是 "H S% L%" 與 style.css 既有的格式一致。
+  - `App.tsx` 把單一 `theme` state 換成 `appearance`;啟動時 `GetSettings` 讀 `appearance` 寫進狀態;effect 依 `mode` 決定當前側、套用 `dark`/`light` + `theme-graphite`/`theme-cream` class、套用 `ui-font-*`、`reduce-motion`、自訂色時 inline style 覆寫 token;matchMedia 變更時(僅 system 模式)重新 render。
+  - `SettingsPage.tsx` 外觀頁改寫:視覺風格區塊(模式分段 / 主題下拉 / 三個色欄)+ 進階 details(字級 / 減少動態 / 重置)+ 稿紙版面。
+  - `style.css` 加 `.dark.theme-graphite`、`.light.theme-cream` 完整 token、`html.ui-font-small/large`、`reduce-motion` class(transition/animation/scroll-behavior 歸零)。
+- **Wails 綁定**:`SetAppearance` 與 `settings.Appearance` / `SideAppearance` 型別已在 `frontend/wailsjs/go/main/App.d.ts`、`models.ts` 中(早先版型預生成的)正好符合本次需要,不需要另動綁定。
+- **驗證**:
+  - `go test ./...` 全綠(12 個套件含新增的 3 個 settings 測試);`tsc --noEmit` 0 錯;`npm run build` 成功(38.99 kB CSS、1.10 MB JS)。
+  - Wails 綁定變動為後端新加 `SetAppearance`;前端已同步(物件字面值經 `settings.Appearance.createFrom` 轉成實例後送出)。
+- **不做**:程式碼字型、差異標記、半透明側欄、指標游標、匯入/匯出主題(作者明示不需要)。
+
 ## 2026-10-13 — 設定檔回到純 Markdown:移除分類,Perkins 只寫別名(作者回饋)
 
 作者實際使用新版後回饋:預設分類棘手、設定檔開頭的 frontmatter(`type/name/aliases`)對作者是負擔,每位作者整理設定的方式不同,Bot 也會自己查閱檔案。SPEC §12.2 改寫(取代 #100「分類只用內建清單」)。

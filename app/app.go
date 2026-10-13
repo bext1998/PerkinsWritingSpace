@@ -590,8 +590,11 @@ type SettingsView struct {
 	Profiles  []ProfileView      `json:"profiles"`
 	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string             `json:"theme"`
-	Autosave  bool               `json:"autosave"`
+	// Theme 是舊欄位的即時視圖(向後相容舊前端/E2E):對應 Appearance.Mode。
+	// 新前端只讀 Appearance;Theme 不再由前端讀取,也只在 Migration 期間有意義。
+	Theme      string             `json:"theme"`
+	Appearance settings.Appearance `json:"appearance"`
+	Autosave   bool               `json:"autosave"`
 	// 稿紙版面(SPEC §17.3):版心寬度、字級、段距的預設檔值
 	PaperWidth    string `json:"paperWidth"`
 	PaperFontSize string `json:"paperFontSize"`
@@ -600,8 +603,9 @@ type SettingsView struct {
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Autosave: s.AutosaveOn(), Profiles: []ProfileView{},
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Appearance: s.Appearance, Autosave: s.AutosaveOn(), Profiles: []ProfileView{},
 		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap}
+	v.Theme = v.Appearance.Mode // 舊欄位即時對應(舊 E2E 仍讀 GetSettings().theme)
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL), RemoteOk: p.RemoteConfirmed()})
@@ -693,12 +697,21 @@ func (a *App) SetActiveModel(profileID, model string) (SettingsView, error) {
 	return a.GetSettings(), nil
 }
 
+// SetTheme 舊版相容:把 dark/light 當成 Appearance.Mode 寫入。舊 E2E 與測試仍可能會呼叫。
 func (a *App) SetTheme(theme string) error {
-	if theme != "dark" && theme != "light" {
+	if theme != settings.AppearanceModeDark && theme != settings.AppearanceModeLight {
 		return fmt.Errorf("未知的主題")
 	}
 	s := a.store.Load()
-	s.Theme = theme
+	s.Appearance.Mode = theme
+	return a.store.Save(s)
+}
+
+// SetAppearance 寫入外觀設定(Issue #118):前端即按即存、立即套用。整體取代,
+// normalizeAppearance 在存回前會過濾列舉值與顏色格式,不合法值不進設定檔。
+func (a *App) SetAppearance(app settings.Appearance) error {
+	s := a.store.Load()
+	s.SetAppearance(app)
 	return a.store.Save(s)
 }
 

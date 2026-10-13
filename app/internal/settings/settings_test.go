@@ -224,6 +224,121 @@ func mustRead(t *testing.T, st *Store) string {
 	return string(b)
 }
 
+// 意圖(#118):舊設定檔只有 theme 欄位時必須遷移成 Appearance.mode 與對應預設檔,
+// 作者既有的深/淺偏好不能丟失。載入/存回都不會讓 theme 留回磁碟(已由 Appearance 取代)。
+func TestAppearanceMigratesLegacyThemeField(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st.Dir, 0o755)
+	os.WriteFile(filepath.Join(st.Dir, "settings.json"),
+		[]byte(`{"theme":"light","profiles":[{"id":"default","baseUrl":"http://localhost:1234/v1"}],"active":"default"}`), 0o600)
+
+	v := st.Load()
+	if v.Appearance.Mode != AppearanceModeLight || v.Appearance.Light.Preset != PresetPaper {
+		t.Fatalf("theme=light 應遷移為 light/paper: %+v", v.Appearance)
+	}
+	if v.Appearance.Dark.Preset != PresetStudy {
+		t.Fatalf("深色側預設仍為 study: %+v", v.Appearance.Dark)
+	}
+
+	st2 := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st2.Dir, 0o755)
+	os.WriteFile(filepath.Join(st2.Dir, "settings.json"),
+		[]byte(`{"theme":"dark","profiles":[{"id":"default","baseUrl":"http://localhost:1234/v1"}],"active":"default"}`), 0o600)
+	v2 := st2.Load()
+	if v2.Appearance.Mode != AppearanceModeDark || v2.Appearance.Dark.Preset != PresetStudy || v2.Appearance.Light.Preset != PresetPaper {
+		t.Fatalf("theme=dark 應遷移為 dark/study: %+v", v2.Appearance)
+	}
+
+	// 存回後舊 theme 欄位不應殘留
+	if err := st.Save(v); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(st.Dir, "settings.json"))
+	if strings.Contains(string(b), `"theme"`) {
+		t.Errorf("已棄用 theme 欄位不應存回磁碟:\n%s", b)
+	}
+	if !strings.Contains(string(b), `"mode": "light"`) {
+		t.Errorf("應寫入新 mode:\n%s", b)
+	}
+}
+
+// 意圖(#118):未知的 mode/preset/字級/減少動態、非法色碼,載入時全部回到預設值,
+// 不會讓作者的設定檔在不被允許的值上閘住。
+func TestAppearanceNormalizesUnknownAndBadValues(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st.Dir, 0o755)
+	// 舊欄位 theme 仍是合法深色值,但 Appearance 欄位有各種未知的值與非法色碼
+	bad := `{
+	  "appearance": {
+	    "mode": "auto",
+	    "dark":  {"preset": "ocean",   "accent": "#ff00ff", "background": "#181818", "foreground": "rgb(0,0,0)"},
+	    "light": {"preset": "neon",    "accent": "blue",    "background": "white",    "foreground": "#abc"},
+	    "uiFontSize": "huge",
+	    "reduceMotion": "always"
+	  }
+	}`
+	if err := os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(bad), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v := st.Load()
+	if v.Appearance.Mode != AppearanceModeDark {
+		t.Errorf("未知 mode 應為深色預設: %q", v.Appearance.Mode)
+	}
+	if v.Appearance.Dark.Preset != PresetStudy {
+		t.Errorf("未知深色 preset 應回到 study: %q", v.Appearance.Dark.Preset)
+	}
+	if v.Appearance.Light.Preset != PresetPaper {
+		t.Errorf("未知淺色 preset 應回到 paper: %q", v.Appearance.Light.Preset)
+	}
+	if v.Appearance.Dark.Accent != "#ff00ff" || v.Appearance.Dark.Background != "#181818" {
+		t.Errorf("合法色碼應原樣保留: %+v", v.Appearance.Dark)
+	}
+	if v.Appearance.Dark.Foreground != "" {
+		t.Errorf("非法色碼 (rgb) 應視為空: %q", v.Appearance.Dark.Foreground)
+	}
+	if v.Appearance.Light.Accent != "" || v.Appearance.Light.Background != "" || v.Appearance.Light.Foreground != "" {
+		t.Errorf("非法色碼應視為空: %+v", v.Appearance.Light)
+	}
+	if v.Appearance.UIFontSize != UIFontSizeStandard {
+		t.Errorf("未知字級應為 standard: %q", v.Appearance.UIFontSize)
+	}
+	if v.Appearance.ReduceMotion != ReduceMotionSystem {
+		t.Errorf("未知減少動態應為 system: %q", v.Appearance.ReduceMotion)
+	}
+
+	// 存回後設定檔裡不應殘留任何非法值
+	if err := st.Save(v); err != nil {
+		t.Fatal(err)
+	}
+	b := mustRead(t, st)
+	for _, bad := range []string{`"ocean"`, `"neon"`, `"rgb(`, `"blue"`, `white`, `"#abc"`, `"huge"`, `"always"`, `"auto"`} {
+		if strings.Contains(string(b), bad) {
+			t.Errorf("存回檔仍含非法值 %s:\n%s", bad, b)
+		}
+	}
+}
+
+// 意圖(#118):設定只接受小寫 #rrggbb 七字元;大寫、簡寫、其他格式一律視為空。
+func TestNormalizeHexColor(t *testing.T) {
+	cases := map[string]string{
+		"": "",
+		"#181818": "#181818",
+		"#abcdef": "#abcdef",
+		"#000000": "#000000",
+		"#ABCDEF": "", // 大寫不收
+		"#abc": "",    // 簡寫不收
+		"#abcdefg": "",
+		"181818": "",
+		"rgb(0,0,0)": "",
+		"#18 81 8": "",
+	}
+	for in, want := range cases {
+		if got := normalizeHexColor(in); got != want {
+			t.Errorf("normalizeHexColor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestValidProfileID(t *testing.T) {
 	for _, bad := range []string{"", "A", "a:b", "a/b", strings.Repeat("a", 41)} {
 		if ValidProfileID(bad) == nil {
@@ -254,7 +369,11 @@ func TestPaperLayoutDefaultsAndLegacyFile(t *testing.T) {
 	if v.PaperWidth != PaperWidthDefault || v.PaperFontSize != PaperFontSizeDefault || v.PaperParaGap != PaperParaGapDefault {
 		t.Fatalf("舊設定檔應載入稿紙版面預設值: %q %q %q", v.PaperWidth, v.PaperFontSize, v.PaperParaGap)
 	}
-	if v.Theme != "light" || len(v.Recent) != 1 || v.Recent[0].Path != "D:/novels/長夜" {
+	// 舊 theme 欄位已由 Appearance 取代(#118):載入後 mode 應為對應的 light,且 light 預設為 paper。
+	if v.Appearance.Mode != AppearanceModeLight || v.Appearance.Light.Preset != PresetPaper || v.Appearance.Dark.Preset != PresetStudy {
+		t.Fatalf("舊 theme 應遷移至 Appearance: %+v", v.Appearance)
+	}
+	if len(v.Recent) != 1 || v.Recent[0].Path != "D:/novels/長夜" {
 		t.Fatalf("其他欄位不得被清掉或改寫: %+v", v)
 	}
 
@@ -263,12 +382,15 @@ func TestPaperLayoutDefaultsAndLegacyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(st.Dir, "settings.json"))
-	for _, want := range []string{`"paperWidth": "44rem"`, `"paperFontSize": "1.08rem"`, `"paperParaGap": "0.7em"`, `"theme": "light"`, "D:/novels/長夜"} {
+	for _, want := range []string{`"paperWidth": "44rem"`, `"paperFontSize": "1.08rem"`, `"paperParaGap": "0.7em"`, `"mode": "light"`, `"preset": "paper"`, "D:/novels/長夜"} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("settings.json 應含 %s:\n%s", want, b)
 		}
 	}
-	if got := st.Load(); got.PaperWidth != PaperWidthDefault || got.Theme != "light" || len(got.Recent) != 1 {
+	if strings.Contains(string(b), `"theme"`) {
+		t.Errorf("已棄用的 theme 欄位不應寫進新設定檔:\n%s", b)
+	}
+	if got := st.Load(); got.PaperWidth != PaperWidthDefault || got.Appearance.Mode != AppearanceModeLight || len(got.Recent) != 1 {
 		t.Fatalf("存回後載入應一致: %+v", got)
 	}
 
