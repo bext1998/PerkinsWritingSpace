@@ -384,7 +384,6 @@ export namespace main {
 	    profiles: ProfileView[];
 	    active: string;
 	    platforms: publish.Platform[];
-	    theme: string;
 	    appearance: settings.Appearance;
 	    autosave: boolean;
 	    paperWidth: string;
@@ -400,7 +399,6 @@ export namespace main {
 	        this.profiles = this.convertValues(source["profiles"], ProfileView);
 	        this.active = source["active"];
 	        this.platforms = this.convertValues(source["platforms"], publish.Platform);
-	        this.theme = source["theme"];
 	        this.appearance = this.convertValues(source["appearance"], settings.Appearance);
 	        this.autosave = source["autosave"];
 	        this.paperWidth = source["paperWidth"];

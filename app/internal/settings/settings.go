@@ -194,6 +194,12 @@ func (v *Settings) SetAppearance(a Appearance) {
 	v.Appearance = a
 }
 
+// ValidateAppearance 給 App.SetAppearance 用(#118):嚴格版檢查,不合法回錯並拒絕寫入。
+// 載入舊檔用 normalizeAppearance(寬鬆)。
+func ValidateAppearance(a Appearance) error {
+	return validateAppearance(&a)
+}
+
 // normalizeProfile 把載入的設定檔欄位正規化:未知的 Provider 視為 OpenAI 相容、
 // 不合法的思考強度視為不指定(#30,與稿紙版面同一種做法)。
 func normalizeProfile(p *Profile) {
@@ -212,6 +218,8 @@ func normalizeProfile(p *Profile) {
 
 // normalizeAppearance 把載入的 Appearance 欄位正規化:未知值用預設,
 // 顏色欄位只接受 #rrggbb(7 字元),不合法的視為空(跟隨主題)。
+// 載入舊檔時才這麼寬鬆:作者手上的設定檔可能含手改壞的值,默默以預設取代
+// 比報錯中斷應用啟動更安全(#118);綁定邊界的寫入另有 validateAppearance 擋下。
 func normalizeAppearance(a *Appearance) {
 	switch a.Mode {
 	case AppearanceModeDark, AppearanceModeLight, AppearanceModeSystem:
@@ -238,6 +246,94 @@ func normalizeAppearance(a *Appearance) {
 	}
 }
 
+// validateAppearance 在寫入邊界檢查(#118):所有列舉值與色碼都必須合法,不合法的話
+// 一個欄位錯就整筆拒絕並回錯;大寫 hex 接受並轉小寫。呼叫端要確保這個檢查不被跳過,
+// 避免前端寫一個字串進來、設定檔裡卻是另一個值。順便把大寫 hex 轉小寫讓設定檔一致。
+func validateAppearance(a *Appearance) error {
+	switch a.Mode {
+	case AppearanceModeDark, AppearanceModeLight, AppearanceModeSystem:
+	default:
+		return fmt.Errorf("未知的模式: %q", a.Mode)
+	}
+	if !contains(DarkPresets, a.Dark.Preset) {
+		return fmt.Errorf("未知的深色主題: %q", a.Dark.Preset)
+	}
+	if !contains(LightPresets, a.Light.Preset) {
+		return fmt.Errorf("未知的淺色主題: %q", a.Light.Preset)
+	}
+	dark, err := validateSide("深色", a.Dark)
+	if err != nil {
+		return err
+	}
+	a.Dark = dark
+	light, err := validateSide("淺色", a.Light)
+	if err != nil {
+		return err
+	}
+	a.Light = light
+	switch a.UIFontSize {
+	case UIFontSizeSmall, UIFontSizeStandard, UIFontSizeLarge:
+	default:
+		return fmt.Errorf("未知的介面字級: %q", a.UIFontSize)
+	}
+	switch a.ReduceMotion {
+	case ReduceMotionSystem, ReduceMotionOn, ReduceMotionOff:
+	default:
+		return fmt.Errorf("未知的減少動態設定: %q", a.ReduceMotion)
+	}
+	return nil
+}
+
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// validateSide 檢查一側的三個顏色欄位,接受後轉小寫回寫。
+func validateSide(label string, s SideAppearance) (SideAppearance, error) {
+	v, err := strictHexColor(s.Accent)
+	if err != nil {
+		return s, fmt.Errorf("%s側強調色 %v", label, err)
+	}
+	s.Accent = v
+	if v, err = strictHexColor(s.Background); err != nil {
+		return s, fmt.Errorf("%s側背景 %v", label, err)
+	}
+	s.Background = v
+	if v, err = strictHexColor(s.Foreground); err != nil {
+		return s, fmt.Errorf("%s側文字顏色 %v", label, err)
+	}
+	s.Foreground = v
+	return s, nil
+}
+
+// strictHexColor 只接受小寫 7 字元 #rrggbb;大寫字母接受後轉小寫,其他字串(含空、簡寫、隨意字串)回錯。
+func strictHexColor(v string) (string, error) {
+	if v == "" {
+		return "", nil
+	}
+	if len(v) != 7 || v[0] != '#' {
+		return "", fmt.Errorf("不是合法 hex 顏色(需 #rrggbb): %q", v)
+	}
+	out := []byte(v)
+	for i := 1; i < 7; i++ {
+		c := out[i]
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+			out[i] = c + ('a' - 'A')
+		default:
+			return "", fmt.Errorf("不是合法 hex 顏色(需 #rrggbb): %q", v)
+		}
+	}
+	return string(out), nil
+}
+
 func normalizePreset(v string, allowed []string, def string) string {
 	for _, a := range allowed {
 		if v == a {
@@ -247,18 +343,14 @@ func normalizePreset(v string, allowed []string, def string) string {
 	return def
 }
 
-// normalizeHexColor 只接受 7 字元的 #rrggbb(小寫);其餘(含 #RGB、空、隨意字串)視為空。
+// normalizeHexColor 載入時用:接受 7 字元 #rrggbb(大小寫都收,轉小寫),
+// 其他(含簡寫、隨意字串)視為空。
 func normalizeHexColor(v string) string {
-	if len(v) != 7 || v[0] != '#' {
+	out, err := strictHexColor(v)
+	if err != nil {
 		return ""
 	}
-	for i := 1; i < 7; i++ {
-		c := v[i]
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return ""
-		}
-	}
-	return v
+	return out
 }
 
 func defaults() Settings {

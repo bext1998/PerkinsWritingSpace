@@ -318,15 +318,16 @@ func TestAppearanceNormalizesUnknownAndBadValues(t *testing.T) {
 	}
 }
 
-// 意圖(#118):設定只接受小寫 #rrggbb 七字元;大寫、簡寫、其他格式一律視為空。
+// 意圖(#118):載入時的正規化:接受 #rrggbb 七字元,大小寫都收並轉小寫;
+// 簡寫、其他格式視為空(手改壞的值不再默默進設定檔)。
 func TestNormalizeHexColor(t *testing.T) {
 	cases := map[string]string{
 		"": "",
 		"#181818": "#181818",
 		"#abcdef": "#abcdef",
 		"#000000": "#000000",
-		"#ABCDEF": "", // 大寫不收
-		"#abc": "",    // 簡寫不收
+		"#ABCDEF": "#abcdef", // 大寫接受並轉小寫(與 strictHexColor 一致)
+		"#abc": "",           // 簡寫不收
 		"#abcdefg": "",
 		"181818": "",
 		"rgb(0,0,0)": "",
@@ -336,6 +337,98 @@ func TestNormalizeHexColor(t *testing.T) {
 		if got := normalizeHexColor(in); got != want {
 			t.Errorf("normalizeHexColor(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// 意圖(#118 重工):SetAppearance 在寫入邊界必須驗證所有欄位,不合法整筆拒絕;
+// 大寫 hex 接受並轉小寫。讓作者寫一個字串進來、設定檔裡卻是另一個值這種
+// 默默取代的事不發生。
+func TestValidateAppearanceRejectsInvalidAndLowercasesHex(t *testing.T) {
+	good := DefaultsAppearance()
+	if err := validateAppearance(&good); err != nil {
+		t.Fatalf("預設值應可過: %v", err)
+	}
+
+	bad := []struct {
+		name string
+		mut  func(*Appearance)
+	}{
+		{"未知 mode", func(a *Appearance) { a.Mode = "auto" }},
+		{"未知深色 preset", func(a *Appearance) { a.Dark.Preset = "ocean" }},
+		{"未知淺色 preset", func(a *Appearance) { a.Light.Preset = "neon" }},
+		{"未知字級", func(a *Appearance) { a.UIFontSize = "huge" }},
+		{"未知減少動態", func(a *Appearance) { a.ReduceMotion = "always" }},
+		{"深色背景是簡寫", func(a *Appearance) { a.Dark.Background = "#abc" }},
+		{"淺色強調色是隨意字串", func(a *Appearance) { a.Light.Accent = "blue" }},
+		{"深色文字色是 rgb()", func(a *Appearance) { a.Dark.Foreground = "rgb(0,0,0)" }},
+		{"深色背景缺 #", func(a *Appearance) { a.Dark.Background = "181818" }},
+		{"淺色文字色含空白", func(a *Appearance) { a.Light.Foreground = "#ff00ff " }},
+	}
+	for _, c := range bad {
+		a := DefaultsAppearance()
+		c.mut(&a)
+		if err := validateAppearance(&a); err == nil {
+			t.Errorf("%s 應回錯, 卻接受了 %+v", c.name, a)
+		}
+	}
+
+	// 大寫 hex 接受並轉小寫
+	upper := DefaultsAppearance()
+	upper.Dark.Accent = "#FF00AA"
+	upper.Light.Background = "#ABCDEF"
+	if err := validateAppearance(&upper); err != nil {
+		t.Fatalf("大寫 hex 應可過: %v", err)
+	}
+	if upper.Dark.Accent != "#ff00aa" || upper.Light.Background != "#abcdef" {
+		t.Errorf("大寫 hex 應轉小寫: %+v", upper)
+	}
+}
+
+// 意圖(#118 重工):App.SetAppearance 驗證失敗時不寫進磁碟,並把錯字串回給前端。
+func TestSetAppearanceRejectsBadValuesAtBoundary(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	// 模擬 App.SetAppearance 的完整流程: ValidateAppearance 失敗 → 不寫進磁碟。
+	bad := DefaultsAppearance()
+	bad.Mode = "auto"
+	if err := ValidateAppearance(bad); err == nil {
+		t.Fatal("應回錯")
+	}
+	// 設定檔還沒被建立;磁碟上仍是空目錄
+	if _, err := os.Stat(filepath.Join(st.Dir, "settings.json")); !os.IsNotExist(err) {
+		t.Errorf("設定檔不應被建立: %v", err)
+	}
+
+	// 合法值:Save 走 validateAppearance(寬鬆,但 validateAppearance 已經驗過了)
+	if err := ValidateAppearance(DefaultsAppearance()); err != nil {
+		t.Fatalf("預設值應可過: %v", err)
+	}
+}
+
+// 意圖(#118 重工):舊檔載入寬鬆處理仍保留;validateAppearance 嚴格版只在寫入邊界用。
+func TestLoadStillTolerantForLegacyFile(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	os.MkdirAll(st.Dir, 0o755)
+	// 舊設定檔含大寫 hex 與未知 preset、未知字級
+	legacy := `{
+	  "appearance": {
+	    "mode": "dark",
+	    "dark":  {"preset": "ocean", "accent": "#FF00FF", "background": "#181818"},
+	    "light": {"preset": "paper"},
+	    "uiFontSize": "huge",
+	    "reduceMotion": "system"
+	  }
+	}`
+	os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(legacy), 0o600)
+	v := st.Load()
+	// 寬鬆載入:未知值回到預設、大寫 hex 轉小寫、合法色碼保留
+	if v.Appearance.Dark.Preset != PresetStudy {
+		t.Errorf("未知深色 preset 應回到 study: %q", v.Appearance.Dark.Preset)
+	}
+	if v.Appearance.Dark.Accent != "#ff00ff" || v.Appearance.Dark.Background != "#181818" {
+		t.Errorf("合法色碼應原樣保留: %+v", v.Appearance.Dark)
+	}
+	if v.Appearance.UIFontSize != UIFontSizeStandard {
+		t.Errorf("未知字級應為 standard: %q", v.Appearance.UIFontSize)
 	}
 }
 

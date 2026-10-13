@@ -8,19 +8,22 @@ import Bookshelf from './Bookshelf';
 import Workspace from './Workspace';
 import SettingsPage from './SettingsPage';
 import {applyPaperLayout, paperDefaults, PaperLayout} from './paperLayout';
-import {applyDerivedTokens, clearDerivedTokens, deriveTokens} from './appearance';
+import {applyCustomSide} from './appearance';
 
 // 外觀設定(Issue #118):預設值以中央設定為準,載入後由外觀頁即按即存取代。
 const DEFAULT_APPEARANCE: settingsModel.Appearance = settingsModel.Appearance.createFrom({
     mode: 'dark', uiFontSize: 'standard', reduceMotion: 'system',
     dark: {preset: 'study'}, light: {preset: 'paper'},
-});
+}) as settingsModel.Appearance;
 
-const systemPrefersDark = () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+// 系統偏好(Issue #118 重工):mode=system / reduceMotion=system 以這兩個為準;
+// 變更時要把值放進 state,讓套用 effect 的依賴包含它,OS 切換才會即時生效。
+const systemPrefersDarkNow = () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
+const systemPrefersReducedMotionNow = () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // 當前生效側(mode + 系統偏好):告訴前端要套用 dark.* 或 light.* 的設定。
-const effectiveSide = (mode: string): 'dark' | 'light' => {
-    if (mode === 'system') return systemPrefersDark() ? 'dark' : 'light';
+const effectiveSide = (mode: string, sysDark: boolean): 'dark' | 'light' => {
+    if (mode === 'system') return sysDark ? 'dark' : 'light';
     return mode === 'light' ? 'light' : 'dark';
 };
 
@@ -37,6 +40,9 @@ function App() {
     const [settingsVersion, setSettingsVersion] = useState(0);
     const [appearance, setAppearance] = useState<settingsModel.Appearance>(DEFAULT_APPEARANCE);
     const [paper, setPaper] = useState<PaperLayout>(paperDefaults);
+    // 系統偏好(變更時要重跑 effect):SSR 預設 false,Effect 內讀實際值
+    const [sysDark, setSysDark] = useState(false);
+    const [sysReducedMotion, setSysReducedMotion] = useState(false);
     const [, setTick] = useState(0);
 
     // 後端已開啟專案時(例如以 PERKINS_OPEN 啟動)直接載入
@@ -47,22 +53,29 @@ function App() {
             // 稿紙版面(版心寬度、字級、段距):舊設定檔沒有欄位時用預設值(= 第一階段的畫面)
             setPaper({width: s.paperWidth || paperDefaults.width, fontSize: s.paperFontSize || paperDefaults.fontSize, gap: s.paperParaGap || paperDefaults.gap});
         }).catch(() => {});
+        setSysDark(systemPrefersDarkNow());
+        setSysReducedMotion(systemPrefersReducedMotionNow());
     }, []);
 
-    // 跟隨系統:matchMedia 變更時,如果是 system 模式要重新套用(避免手動切 OS 主題不生效)
+    // 跟隨系統:matchMedia 變更時把值塞回 state,套用 effect 會跟著重跑(#118 重工)。
     useEffect(() => {
-        const mq = window.matchMedia('(prefers-color-scheme: dark)');
-        const onChange = () => { if (appearance.mode === 'system') setTick(t => t + 1); };
-        mq.addEventListener('change', onChange);
-        return () => mq.removeEventListener('change', onChange);
-    }, [appearance.mode]);
+        const mqColor = window.matchMedia('(prefers-color-scheme: dark)');
+        const mqMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+        const onColor = () => setSysDark(mqColor.matches);
+        const onMotion = () => setSysReducedMotion(mqMotion.matches);
+        mqColor.addEventListener('change', onColor);
+        mqMotion.addEventListener('change', onMotion);
+        return () => {
+            mqColor.removeEventListener('change', onColor);
+            mqMotion.removeEventListener('change', onMotion);
+        };
+    }, []);
 
     // 套用主題 class(深/淺 + 主題預設檔)、介面字級、減少動態效果、自訂色推算
     useEffect(() => {
         const html = document.documentElement;
-        const side = effectiveSide(appearance.mode);
+        const side = effectiveSide(appearance.mode, sysDark);
         const sideCfg = side === 'dark' ? appearance.dark : appearance.light;
-        // class:dark / light 決定走哪組 token;theme-graphite / theme-cream 蓋掉那組預設值
         html.classList.toggle('dark', side === 'dark');
         html.classList.toggle('light', side === 'light');
         for (const c of ['theme-graphite', 'theme-cream']) html.classList.remove(c);
@@ -72,21 +85,12 @@ function App() {
         html.classList.remove('ui-font-small', 'ui-font-large');
         if (appearance.uiFontSize === 'small') html.classList.add('ui-font-small');
         else if (appearance.uiFontSize === 'large') html.classList.add('ui-font-large');
-        // 減少動態效果:on 一律;off 從不;system 跟 media query
+        // 減少動態效果:on 一律;off 從不;system 跟 sysReducedMotion
         html.classList.remove('reduce-motion');
-        const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-        if (appearance.reduceMotion === 'on' || (appearance.reduceMotion === 'system' && mq.matches)) html.classList.add('reduce-motion');
-        // 自訂色推算:背景或文字或強調色 任一不為空 → 用 deriveTokens 覆寫
-        const hasCustom = !!(sideCfg.background || sideCfg.foreground || sideCfg.accent);
-        if (hasCustom) {
-            const bg = sideCfg.background || (side === 'dark' ? '#161b22' : '#fdfaf3');
-            const fg = sideCfg.foreground || (side === 'dark' ? '#e7e2d4' : '#1f1d18');
-            const accent = sideCfg.accent || (side === 'dark' ? '#d99749' : '#8a5a2c');
-            applyDerivedTokens(deriveTokens(bg, fg, accent, side === 'dark'));
-        } else {
-            clearDerivedTokens();
-        }
-    }, [appearance]);
+        if (appearance.reduceMotion === 'on' || (appearance.reduceMotion === 'system' && sysReducedMotion)) html.classList.add('reduce-motion');
+        // 自訂色套用:背景或文字自訂 → 推算整組;只改強調色 → 只覆寫 primary 系;都沒設 → 清掉。
+        applyCustomSide(sideCfg, side === 'dark');
+    }, [appearance, sysDark, sysReducedMotion]);
 
     // 稿紙版面以 CSS 變數套用到編輯器(style.css、paper.ts 以 var() 取用),變更立即生效
     useEffect(() => { applyPaperLayout(paper); }, [paper]);

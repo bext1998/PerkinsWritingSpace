@@ -5,7 +5,7 @@ import {
     ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAppearance, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, WriteAgentsMd,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
-import {ACCENT_PRESETS, contrastRatio, hexToHSL} from './appearance';
+import {ACCENT_PRESETS, HEX_RE, contrastRatio, hexToHSL, readThemeToken} from './appearance';
 import {Button} from '@/components/ui/button';
 import {Badge, Checkbox, Input, Label, Switch, Textarea} from '@/components/ui/basic';
 import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue, Tip} from '@/components/ui/overlay';
@@ -869,9 +869,6 @@ const ReduceMotionOptions: {id: string; label: string}[] = [
     {id: 'off', label: '關閉'},
 ];
 
-// HEX 驗證:7 字元小寫 #rrggbb;不是合法值不動(表示驗證失敗,不為作者存進去)。
-const HEX_RE = /^#[0-9a-f]{6}$/;
-
 // 與 App.tsx 同樣的系統偏好判斷,避免設定頁與實際生效不一致。
 const systemPrefersDark = () => typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches;
 
@@ -879,25 +876,119 @@ const systemPrefersDark = () => typeof window !== 'undefined' && window.matchMed
 const effectiveSide = (mode: string): 'dark' | 'light' =>
     mode === 'system' ? (systemPrefersDark() ? 'dark' : 'light') : mode === 'light' ? 'light' : 'dark';
 
-// 各側的預設背景/前景/強調色:不在使用者檔案裡的色時,給警告判斷有個可用的參考;
-// 與 App.tsx 的 deriveTokens fallback 一致。
-const SIDE_FALLBACK = {
-    dark:  {bg: '#161b22', fg: '#e7e2d4', accent: '#d99749'},
-    light: {bg: '#fdfaf3', fg: '#1f1d18', accent: '#8a5a2c'},
+// 給 hex 輸入框的「當主題沒被自訂時的預設色塊」:讀主題預設檔的實際值(深灰/米白/夜間書房/白紙)。
+// 在 picker 顯示時必須是合法 hex,不能是 "H S% L%" 字串。
+const fallbackHexForPicker = (side: 'dark' | 'light', kind: 'background' | 'foreground'): string => {
+    // 以 readThemeToken 拿到主題的 "H S% L%";Hue/Light 直接讀出來當 picker 值可能會
+    // 看起來不一樣(背景應是 hex)。改以 --background 的色調用 HSL→Hex 換回來。
+    const name = kind === 'background' ? 'background' : 'foreground';
+    const s = readThemeToken(name);
+    const parts = s.trim().split(/\s+/);
+    if (parts.length !== 3) return side === 'dark' ? '#161b22' : '#fdfaf3';
+    const [h, sat, l] = parts;
+    return hslToHexFromParts(parseFloat(h), parseFloat(sat) / 100, parseFloat(l) / 100);
 };
+
+// 小工具:HSL → Hex(只給 fallbackHexForPicker 用,不用通用 precision)。
+function hslToHexFromParts(h: number, s: number, l: number): string {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (hp < 1) {r = c; g = x;} else if (hp < 2) {r = x; g = c;}
+    else if (hp < 3) {g = c; b = x;} else if (hp < 4) {g = x; b = c;}
+    else if (hp < 5) {r = x; b = c;} else {r = c; b = x;}
+    const m = l - c / 2;
+    const to255 = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+    return '#' + [to255(r), to255(g), to255(b)].map(n => n.toString(16).padStart(2, '0')).join('');
+}
+
+// ColorField:色塊 + hex 輸入(獨立元件,不會因父層重 render 而重掛失焦;
+// 文字框用本地草稿,允許打到一半,合法 #rrggbb 才保存)。空 = 跟隨主題;每列有「清除」回主題值。
+function ColorField({label, desc, fieldKey, testid, side, savedValue, onSave}: {
+    label: string; desc: string; fieldKey: 'background' | 'foreground'; testid: string;
+    side: 'dark' | 'light'; savedValue: string; onSave: (next: string) => void;
+}) {
+    // 草稿在 savedValue 變動時同步(儲存成功或父層重置)。
+    const [draft, setDraft] = useState(savedValue);
+    useEffect(() => { setDraft(savedValue); }, [savedValue]);
+    // picker 預設值:沒自訂時顯示主題預設檔實際色,讓作者看到「目前是什麼顏色」。
+    const pickerFallback = fallbackHexForPicker(side, fieldKey);
+    const commit = () => {
+        const raw = draft.trim();
+        if (raw === '') { onSave(''); return; }
+        const v = raw.toLowerCase(); // 大寫接受後存小寫(後端 strictHexColor 也會轉)
+        if (HEX_RE.test(v)) { onSave(v); return; }
+        // 不合法:還原成已存值(不要悄悄存錯值)
+        setDraft(savedValue);
+    };
+    return (
+        <div className="px-4 py-3" data-testid={testid}>
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+                <div className="min-w-[12rem] flex-1">
+                    <div className="text-sm font-medium">{label}</div>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                    <input type="color" value={savedValue || pickerFallback}
+                           onChange={e => onSave(e.target.value.toLowerCase())}
+                           data-testid={`${testid}-picker`}
+                           className="h-8 w-10 cursor-pointer rounded-md border bg-transparent p-0"/>
+                    <Input value={draft} onChange={e => setDraft(e.target.value)} onBlur={commit}
+                           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                           placeholder="跟隨主題"
+                           data-testid={`${testid}-hex`}
+                           className="h-8 w-[8.5rem] font-mono text-xs"/>
+                    {savedValue && <Button size="iconSm" variant="ghost" onClick={() => { setDraft(''); onSave(''); }}
+                                            aria-label="清除回主題" data-testid={`${testid}-clear`}><RotateCcw className="h-3.5 w-3.5"/></Button>}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// AccentSelect:強調色下拉(跟隨主題 + 6 個具名顏色,每項顯示色點與名稱)。
+function AccentSelect({side, savedValue, onSave}: {side: 'dark' | 'light'; savedValue: string; onSave: (next: string) => void}) {
+    const current = savedValue || '';
+    return (
+        <Select value={current} onValueChange={onSave}>
+            <SelectTrigger data-testid="appearance-accent-select" className="h-8 w-[10rem] shrink-0 text-xs">
+                <SelectValue placeholder="跟隨主題"/>
+            </SelectTrigger>
+            <SelectContent>
+                <SelectItem value="" data-testid="appearance-accent-opt-theme">
+                    <span className="flex items-center gap-2">
+                        <span className="inline-block h-3 w-3 rounded-full border" style={{background: 'var(--primary, hsl(var(--primary)))'}}/>
+                        跟隨主題
+                    </span>
+                </SelectItem>
+                {ACCENT_PRESETS.map(p => (
+                    <SelectItem key={p.id} value={p.hex} data-testid={`appearance-accent-opt-${p.id}`}>
+                        <span className="flex items-center gap-2">
+                            <span className="inline-block h-3 w-3 rounded-full border" style={{background: p.hex}}/>
+                            {p.label}
+                        </span>
+                    </SelectItem>
+                ))}
+            </SelectContent>
+        </Select>
+    );
+}
 
 function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props, 'appearance' | 'setAppearance' | 'paper' | 'setPaper'>) {
     // 作者全域偏好:即按即存、立即套用,重開設定與重啟應用都保留(#118)。
-    // setAppearance 是樂觀更新(前端立刻套用),SetAppearance 同步寫進後端;失敗由 React 不回滕。
-    // 以 createFrom 重建實例是為了符合 wails 自動生成型別的 class 形狀(物件字面值不帶 convertValues)。
+    // 先呼叫 SetAppearance,成功才更新 state;後端驗證失敗時(不合法 #rrggbb、未知列舉等)
+    // 顯示錯誤並保留原 state,不會出現「以為存了、重開不見」的狀況。
+    const [saveError, setSaveError] = useState('');
     const persist = (next: {mode: string; uiFontSize: string; reduceMotion: string; dark: settings.SideAppearance; light: settings.SideAppearance}) => {
         const inst = settings.Appearance.createFrom({
             mode: next.mode, uiFontSize: next.uiFontSize, reduceMotion: next.reduceMotion,
             dark: {preset: next.dark.preset, accent: next.dark.accent, background: next.dark.background, foreground: next.dark.foreground},
             light: {preset: next.light.preset, accent: next.light.accent, background: next.light.background, foreground: next.light.foreground},
         }) as settings.Appearance;
-        setAppearance(inst);
-        SetAppearance(inst);
+        SetAppearance(inst)
+            .then(() => { setAppearance(inst); setSaveError(''); })
+            .catch(e => { setSaveError(errText(e)); });
     };
     const changePaper = (key: keyof PaperLayout, v: string) => {
         const next = {...paper, [key]: v};
@@ -910,9 +1001,10 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
     const presetList = side === 'dark' ? ['study', 'graphite'] : ['paper', 'cream'];
     const presetMeta = side === 'dark' ? DARK_PRESET_META : LIGHT_PRESET_META;
 
-    // 背景/文字 對比低於 4.5:1 顯示警告(#118):但有自訂色才檢查(否則是預設主題,作者不需要警告)。
-    const bgForContrast = sideCfg.background || SIDE_FALLBACK[side].bg;
-    const fgForContrast = sideCfg.foreground || SIDE_FALLBACK[side].fg;
+    // 背景/文字 對比低於 4.5:1 顯示警告(#118):背景或文字任一為自訂時檢查;只改強調色不警告。
+    // 沒自訂的側用主題實際值(讀 html 的 CSS 變數),深灰/米白不會誤判。
+    const bgForContrast = sideCfg.background || hslToHexFromParts(...parseHSLString(readThemeToken('background')));
+    const fgForContrast = sideCfg.foreground || hslToHexFromParts(...parseHSLString(readThemeToken('foreground')));
     const ratio = contrastRatio(hexToHSL(bgForContrast), hexToHSL(fgForContrast));
     const contrastWarn = (sideCfg.background || sideCfg.foreground) && ratio < 4.5;
 
@@ -930,55 +1022,21 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
         </SettingRow>
     );
 
-    // ColorField:色塊 + hex 輸入,空 = 跟隨主題。每列有「清除」回主題值。
-    const ColorField = ({label, desc, fieldKey, testid}: {label: string; desc: string; fieldKey: 'accent' | 'background' | 'foreground'; testid: string}) => {
-        const value = sideCfg[fieldKey];
-        const update = (next: settings.SideAppearance) => {
-            const updated = side === 'dark'
-                ? {...appearance, dark: next}
-                : {...appearance, light: next};
-            persist(updated);
-        };
-        const onHex = (raw: string) => {
-            const v = raw.trim().toLowerCase();
-            // 不合法:不更新狀態(保留上一個有效值);空表示要重設。
-            if (v === '') { update({...sideCfg, [fieldKey]: ''}); return; }
-            if (HEX_RE.test(v)) update({...sideCfg, [fieldKey]: v});
-        };
-        const onColor = (raw: string) => {
-            const v = raw.toLowerCase();
-            if (HEX_RE.test(v)) update({...sideCfg, [fieldKey]: v});
-        };
-        const clear = () => update({...sideCfg, [fieldKey]: ''});
-        return (
-            <div className="px-4 py-3" data-testid={testid}>
-                <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-                    <div className="min-w-[12rem] flex-1">
-                        <div className="text-sm font-medium">{label}</div>
-                        <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                        <input type="color" value={value || (side === 'dark' ? '#161b22' : '#fdfaf3')}
-                               onChange={e => onColor(e.target.value)}
-                               data-testid={`${testid}-picker`}
-                               className="h-8 w-10 cursor-pointer rounded-md border bg-transparent p-0"/>
-                        <Input value={value} onChange={e => onHex(e.target.value)} placeholder="跟隨主題"
-                               data-testid={`${testid}-hex`}
-                               className="h-8 w-[8.5rem] font-mono text-xs"/>
-                        {value && <Button size="iconSm" variant="ghost" onClick={clear} aria-label="清除回主題" data-testid={`${testid}-clear`}><RotateCcw className="h-3.5 w-3.5"/></Button>}
-                    </div>
-                </div>
-                {fieldKey === 'foreground' && contrastWarn && (
-                    <p className="mt-2 text-xs text-warning" data-testid="contrast-warn">前景與背景對比 {ratio.toFixed(1)}:1,低於 4.5:1 可能看不清。</p>
-                )}
-            </div>
-        );
+    // 儲存一側的自訂色:同時更新另一側(不被改)的部分。
+    const updateSideField = (fieldKey: 'accent' | 'background' | 'foreground', next: string) => {
+        const nextSide: settings.SideAppearance = {...sideCfg, [fieldKey]: next};
+        const updated = side === 'dark'
+            ? {...appearance, dark: nextSide}
+            : {...appearance, light: nextSide};
+        persist(updated);
     };
 
     return (
         <div className="grid gap-8">
             <Section title="視覺風格" testid="appearance-visual"
                      desc="主題、主題預設檔與自訂色都會立即套用。深色與淺色各自記住選擇;切到另一邊再切回來不會丟。">
+                {/* 儲存錯誤(設定頁既有警告樣式) */}
+                {saveError && <p className="rounded-md bg-destructive/10 p-2 text-xs text-destructive" data-testid="appearance-save-error">{saveError}</p>}
                 {/* 模式:深色 / 淺色 / 跟隨系統 */}
                 <div className="grid gap-3 rounded-lg border p-3" data-testid="appearance-mode">
                     <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
@@ -1025,12 +1083,23 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                         </Select>
                     </div>
                 </RowCard>
-                {/* 強調色/背景/文字:跟隨主題為空;自訂會推算其他 token */}
+                {/* 強調色 / 背景 / 文字顏色:強調色改成下拉;背景/文字保留色塊 + hex 輸入 */}
                 <RowCard testid="appearance-colors">
-                    <ColorField label="強調色" desc="按鈕、選中態、焦點;選擇「跟隨主題」時用主題的強調色。" fieldKey="accent" testid="appearance-accent"/>
-                    <ColorField label="背景" desc="整個介面的主底色;其他顏色(側欄、欄位、文字…)會自動從這裡推算。" fieldKey="background" testid="appearance-background"/>
-                    <ColorField label="文字顏色" desc="介面主要文字色;與背景對比低於 4.5:1 時會顯示警告。" fieldKey="foreground" testid="appearance-foreground"/>
+                    <SettingRow title="強調色" desc="按鈕、選中態、焦點;選擇「跟隨主題」時用主題的強調色。只改這個不會蓋掉主題預設檔的色調。">
+                        <AccentSelect side={side} savedValue={sideCfg.accent || ''} onSave={v => updateSideField('accent', v)}/>
+                    </SettingRow>
+                    <ColorField label="背景" desc="整個介面的主底色;其他顏色(側欄、欄位、文字…)會自動從這裡推算。"
+                                 fieldKey="background" testid="appearance-background"
+                                 side={side} savedValue={sideCfg.background || ''}
+                                 onSave={v => updateSideField('background', v)}/>
+                    <ColorField label="文字顏色" desc="介面主要文字色;與背景對比低於 4.5:1 時會顯示警告。"
+                                 fieldKey="foreground" testid="appearance-foreground"
+                                 side={side} savedValue={sideCfg.foreground || ''}
+                                 onSave={v => updateSideField('foreground', v)}/>
                 </RowCard>
+                {contrastWarn && (
+                    <p className="text-xs text-warning" data-testid="contrast-warn">前景與背景對比 {ratio.toFixed(1)}:1,低於 4.5:1 可能看不清。</p>
+                )}
             </Section>
 
             {/* 進階區塊(可收合,預設收合):UI_GUIDE §12.4 */}
@@ -1084,6 +1153,12 @@ const DEFAULTS_APPEARANCE = settings.Appearance.createFrom({
     mode: 'dark', uiFontSize: 'standard', reduceMotion: 'system',
     dark: {preset: 'study'}, light: {preset: 'paper'},
 }) as settings.Appearance;
+
+function parseHSLString(s: string): [number, number, number] {
+    const parts = s.trim().split(/\s+/);
+    if (parts.length !== 3) return [0, 0, 0];
+    return [parseFloat(parts[0]) || 0, (parseFloat(parts[1]) || 0) / 100, (parseFloat(parts[2]) || 0) / 100];
+}
 
 type Page = 'project' | 'models' | 'platforms' | 'appearance';
 const PAGE_LABEL: Record<Page, string> = {project: '作品', models: 'Perkins Bot', platforms: '平台輸出', appearance: '外觀'};

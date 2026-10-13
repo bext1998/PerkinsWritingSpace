@@ -286,10 +286,6 @@ export function SetResearch(arg1) {
   return window['go']['main']['App']['SetResearch'](arg1);
 }
 
-export function SetTheme(arg1) {
-  return window['go']['main']['App']['SetTheme'](arg1);
-}
-
 export function SetVolumes(arg1) {
   return window['go']['main']['App']['SetVolumes'](arg1);
 }

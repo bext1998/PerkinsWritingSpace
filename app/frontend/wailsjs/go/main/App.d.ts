@@ -155,8 +155,6 @@ export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void
 
 export function SetResearch(arg1:boolean):Promise<void>;
 
-export function SetTheme(arg1:string):Promise<void>;
-
 export function SetVolumes(arg1:Array<project.Volume>):Promise<project.Tree>;
 
 export function SnapshotDiff(arg1:string,arg2:string):Promise<Array<snapshot.DiffLine>>;

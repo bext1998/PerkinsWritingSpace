@@ -161,10 +161,10 @@ module.exports = {
         check('外觀頁 稿紙版面三項控制項齊全', paperControls.every(Boolean), JSON.stringify(paperControls));
         // 視覺風格區塊的所有控制項在位
         const visualControls = await page.evaluate(() => ['appearance-mode-dark', 'appearance-mode-light', 'appearance-mode-system',
-            'appearance-preset-select', 'appearance-accent-picker', 'appearance-accent-hex',
+            'appearance-preset-select', 'appearance-accent-select',
             'appearance-background-picker', 'appearance-background-hex', 'appearance-foreground-picker', 'appearance-foreground-hex']
             .map(t => !!document.querySelector(`[data-testid=${t}]`)));
-        check('外觀頁 視覺風格區塊十個控制項齊全', visualControls.every(Boolean), JSON.stringify(visualControls));
+        check('外觀頁 視覺風格區塊九個控制項齊全', visualControls.every(Boolean), JSON.stringify(visualControls));
         // 淺色側:切到 light 模式、選「米白」主題、拍截圖,拍完還原
         await page.click('[data-testid=appearance-mode-light]');
         await settle(80, 500);
@@ -186,6 +186,8 @@ module.exports = {
         // 自訂背景色(#118):html 的 --background 變數會跟著改變
         const bgBefore = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
         await page.fill('[data-testid=appearance-background-hex]', '#123456');
+        // ColorField 用本地 draft,輸入後要失焦(Enter 或 Tab)才會提交到設定
+        await page.keyboard.press('Tab');
         await settle(80, 500);
         const bgAfter = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
         const savedBg = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.background).catch(() => null));
@@ -247,6 +249,99 @@ module.exports = {
         check('設定頁 重開設定後外觀保留', persisted, JSON.stringify(reopened));
         // 還原預設,避免影響後面測試
         await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+
+        // ===== #118 重工(第 1 輪):只改強調色不蓋掉深灰背景、手動逐字輸入 hex、系統模式隨 emulateMedia 切換、不合法值回錯 =====
+
+        // 重工#1:深灰主題下,只改強調色為藍,背景仍是 theme-graphite 的「H S% L%」(不是夜間書房的)。
+        await page.click('[data-testid=appearance-mode-dark]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-preset-select]');
+        await waitSel('[data-testid=appearance-preset-opt-graphite]');
+        await page.click('[data-testid=appearance-preset-opt-graphite]');
+        await settle(80, 500);
+        const bgGraphite = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+        const fgGraphite = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim());
+        // 設強調色為藍(選第三個「藍」預設 = #4f8bcb)
+        await page.click('[data-testid=appearance-accent-select]');
+        await waitSel('[data-testid=appearance-accent-opt-blue]');
+        await page.click('[data-testid=appearance-accent-opt-blue]');
+        await settle(80, 500);
+        const bgAfterAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--background').trim());
+        const fgAfterAccent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim());
+        const primaryAfter = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--primary').trim());
+        check('#118 重工 深灰主題下只改強調色,背景/文字保留主題預設檔色調',
+            bgAfterAccent === bgGraphite && fgAfterAccent === fgGraphite,
+            JSON.stringify({bgGraphite, fgGraphite, bgAfterAccent, fgAfterAccent}));
+        // primary 應該是藍色的 HSL(藍色的 hue ≈ 210;琥珀是 36)。
+        check('#118 重工 只改強調色後 --primary 變成藍色', /^\s*2[0-9]{2}|^\s*21[0-9]/.test(primaryAfter) || primaryAfter.startsWith('209') || primaryAfter.startsWith('210') || primaryAfter.startsWith('207'),
+            `primary=${primaryAfter}`);
+
+        // 重工#3:手動逐字輸入 hex:可逐個字打進來不被打回去,合法 #rrggbb 才儲存。
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+        const hexInput = await page.$('[data-testid=appearance-background-hex]');
+        await hexInput.focus();
+        await page.keyboard.type('#1', true); // 用 page.keyboard.type 逐字輸入(不是 fill)
+        await settle(80, 200);
+        await page.keyboard.type('23', true);
+        await settle(80, 200);
+        await page.keyboard.type('456', true);
+        await settle(80, 200);
+        // 到這裡已經合法(#123456),但還沒失焦不會儲存。Tab 出去推 onBlur:
+        await page.keyboard.press('Tab');
+        await settle(80, 500);
+        const inputValue = await page.inputValue('[data-testid=appearance-background-hex]');
+        const savedManual = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.background).catch(() => null));
+        check('#118 重工 手動逐字輸入合法 hex 後保存', inputValue === '#123456' && savedManual === '#123456',
+            JSON.stringify({inputValue, savedManual}));
+        // 大寫:輸入大寫 hex 也接受並存小寫
+        await page.fill('[data-testid=appearance-background-hex]', '#FFAABB');
+        await page.keyboard.press('Tab');
+        await settle(80, 500);
+        const upperSaved = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.dark && s.appearance.dark.background).catch(() => null));
+        check('#118 重工 大寫 hex 接受並存小寫', upperSaved === '#ffaabb', `saved=${upperSaved}`);
+
+        // 重工#5:不合法值回錯 — 用 window.go.main.App.SetAppearance 直接送一個壞的(mode=auto),預期 Promise reject。
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+        const badRes = await page.evaluate(() => window.go.main.App.SetAppearance({
+            mode: 'auto', uiFontSize: 'standard', reduceMotion: 'system',
+            dark: {preset: 'study'}, light: {preset: 'paper'},
+        }).then(() => ({ok: true})).catch(e => ({ok: false, msg: String(e)})));
+        check('#118 重工 不合法 mode 回錯(不是默默接受)', badRes.ok === false && /未知的模式|未知/.test(badRes.msg || ''),
+            JSON.stringify(badRes));
+        // 設定檔沒有被改寫
+        const stillDefault = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.mode));
+        check('#118 重工 不合法值被拒絕後設定不變', stillDefault === 'dark', `mode=${stillDefault}`);
+
+        // 重工#2:system 模式隨 emulateMedia 切換。先設為 system,emulateMedia dark 應變深色、light 變淺色。
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+        await page.click('[data-testid=appearance-mode-system]');
+        await settle(80, 300);
+        // 模擬 OS = 深色 → html 應有 .dark class
+        await page.emulateMedia({colorScheme: 'dark'});
+        await settle(80, 700);
+        const onDark = await page.evaluate(() => document.documentElement.classList.contains('dark') && !document.documentElement.classList.contains('light'));
+        await page.emulateMedia({colorScheme: 'light'});
+        await settle(80, 700);
+        const onLight = await page.evaluate(() => document.documentElement.classList.contains('light') && !document.documentElement.classList.contains('dark'));
+        check('#118 重工 system 模式隨 emulateMedia 切換(dark→light)', onDark && onLight,
+            JSON.stringify({onDark, onLight}));
+        // 還原
+        await page.emulateMedia({colorScheme: 'light'});
+        await page.click('[data-testid=appearance-mode-dark]');
         await settle(80, 300);
         await page.click('[data-testid=appearance-reset]');
         await settle(80, 300);

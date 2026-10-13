@@ -1,9 +1,11 @@
 // Issue #118(SPEC §17.2 外觀頁):自訂主題的工具函式。
 // deriveTokens(bg, fg, accent, isDark) 是純函式:給背景/前景/強調色,
-// 以 HSL 微調推算 sidebar、rail、paper、card、popover、muted、border 等 token;
-// style.css 的 :root 與 .dark/.theme-* 提供預設值,前端只覆寫自訂色的部分 token。
+// 以 HSL 微調推算 sidebar、rail、paper、card、popover、muted、border 等 token。
 // CSS 自訂屬性值是「H S% L%」(與 :root/.dark 內既有的格式一致),不是完整 hsl(),
 // 否則 tailwind 的 hsl(var(--xxx)) 套不出來。
+//
+// (#118 重工)背景或文字自訂時推算整組 token;只改強調色時只覆寫 primary 系屬性,
+// 其他保留主題預設檔原值 — 不能再用寫死的 fallback(會覆蓋深灰/米白)。
 
 export type AccentName = 'amber' | 'blue' | 'green' | 'red' | 'purple' | 'cyan';
 export const ACCENT_PRESETS: {id: AccentName; label: string; hex: string}[] = [
@@ -15,7 +17,9 @@ export const ACCENT_PRESETS: {id: AccentName; label: string; hex: string}[] = [
     {id: 'cyan', label: '青', hex: '#4ea0a0'},
 ];
 
-// HEX(#rrggbb)→HSL(H S% L%);L 限制 0~1,S 限制 0~1。HSL 用空間平均調整亮度,
+// Hex 正則:7 字元小寫 #rrggbb(輸入允許大寫,存進設定檔一律小寫)。
+export const HEX_RE = /^#[0-9a-f]{6}$/;
+
 export interface HSL {h: number; s: number; l: number}
 
 export function hexToHSL(hex: string): HSL {
@@ -39,14 +43,18 @@ export function hexToHSL(hex: string): HSL {
     return {h, s, l};
 }
 
-// 「同一色相,亮度偏移 δ」:L 上下浮動、保留原色調與飽和度。
-function shift(hsl: HSL, dL: number, dS = 0): HSL {
-    return {h: hsl.h, s: Math.max(0, Math.min(1, hsl.s + dS)), l: Math.max(0, Math.min(1, hsl.l + dL))};
-}
-
-// 「中性化」:降低飽和度,深色面常用於 sidebar/rail(不想偏色)。
-function desaturate(hsl: HSL, factor: number): HSL {
-    return {h: hsl.h, s: hsl.s * factor, l: hsl.l};
+// HSL→Hex:以 sRGB 線性近似,不要求高精度(只是要讀主題原色作 fallback,後面會 round-trip)。
+export function hslToHex({h, s, l}: HSL): string {
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    let r = 0, g = 0, b = 0;
+    if (hp < 1) {r = c; g = x;} else if (hp < 2) {r = x; g = c;}
+    else if (hp < 3) {g = c; b = x;} else if (hp < 4) {g = x; b = c;}
+    else if (hp < 5) {r = x; b = c;} else {r = c; b = x;}
+    const m = l - c / 2;
+    const to255 = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+    return '#' + [to255(r), to255(g), to255(b)].map(n => n.toString(16).padStart(2, '0')).join('');
 }
 
 // 「對比前景」:依 luminance 選黑或白,給 primary-foreground 與強調色按鈕的文字用。
@@ -56,7 +64,6 @@ function contrastFG(hsl: HSL): string {
 
 // 相對亮度(0~1),WCAG 用。
 function relLuminance({h, s, l}: HSL): number {
-    // 簡化版 HSL→RGB(用 sRGB 線性近似):不需要絕對精確,只要能比較誰深誰淺。
     const c = (1 - Math.abs(2 * l - 1)) * s;
     const hp = h / 60;
     const x = c * (1 - Math.abs((hp % 2) - 1));
@@ -86,18 +93,18 @@ export function deriveTokens(bg: string, fg: string, accent: string, isDark: boo
 
     // 深色:往更暗;淺色:往更亮。位移幅度取決於 token 的「凹陷」程度。
     const d = isDark ? -1 : 1;
-    const sidebarL = bgHSL.l + d * 0.025; // 比背景再深/淺 2.5%
-    const railL = bgHSL.l + d * 0.045;    // 比背景再深/淺 4.5%
-    const paperL = bgHSL.l + d * 0.018;   // 比背景再淺/深一點,正文區
+    const sidebarL = bgHSL.l + d * 0.025;
+    const railL = bgHSL.l + d * 0.045;
+    const paperL = bgHSL.l + d * 0.018;
     const cardL = bgHSL.l + d * 0.012;
     const popoverL = bgHSL.l + d * 0.022;
     const secondaryL = bgHSL.l + d * 0.06;
     const accentL = bgHSL.l + d * 0.06;
     const mutedL = bgHSL.l + d * 0.04;
-    const mutedFgL = fgHSL.l;             // 與前景同色調,只降飽和度
+    const mutedFgL = fgHSL.l;
     const borderL = bgHSL.l + d * 0.08;
     const inputL = bgHSL.l + d * 0.10;
-    const destructiveL = isDark ? 0.55 : 0.50; // 紅色在深淺底都用同一飽和度,只調亮度
+    const destructiveL = isDark ? 0.55 : 0.50;
 
     return {
         background: `${bgHSL.h} ${Math.round(bgHSL.s * 100)}% ${Math.round(bgHSL.l * 100)}%`,
@@ -109,7 +116,6 @@ export function deriveTokens(bg: string, fg: string, accent: string, isDark: boo
         cardForeground: `${fgHSL.h} ${Math.round(fgHSL.s * 100)}% ${Math.round(fgHSL.l * 100)}%`,
         popover: `${bgHSL.h} ${Math.round(bgHSL.s * 80)}% ${Math.round(popoverL * 100)}%`,
         popoverForeground: `${fgHSL.h} ${Math.round(fgHSL.s * 100)}% ${Math.round(fgHSL.l * 100)}%`,
-        // primary / ring / selection 直接用強調色;accent 是 hover/focus 用的低調背景。
         primary: `${accHSL.h} ${Math.round(accHSL.s * 100)}% ${Math.round(accHSL.l * 100)}%`,
         primaryForeground: `${hexToHSL(contrastFG(accHSL)).h} ${Math.round(hexToHSL(contrastFG(accHSL)).s * 100)}% ${Math.round(hexToHSL(contrastFG(accHSL)).l * 100)}%`,
         secondary: `${bgHSL.h} ${Math.round(bgHSL.s * 60)}% ${Math.round(secondaryL * 100)}%`,
@@ -128,20 +134,64 @@ export function deriveTokens(bg: string, fg: string, accent: string, isDark: boo
 }
 
 // 把 deriveTokens 的結果套到 document.documentElement 的 CSS 自訂屬性上(inline style)。
-// style.css 已用 var(--background) 等;只要覆寫有變動的屬性就好,沒給的就 fallback 到 class。
 export function applyDerivedTokens(tokens: Record<string, string>) {
     const root = document.documentElement;
-    for (const [k, v] of Object.entries(tokens)) {
-        root.style.setProperty('--' + k, v);
-    }
+    for (const [k, v] of Object.entries(tokens)) root.style.setProperty('--' + k, v);
 }
 
-// 還原 inline style 的所有 token(讓 class 重新生效)
+// 還原 inline style 的所有 token(讓 class 重新生效)。
+const TOKEN_KEYS = ['background', 'foreground', 'sidebar', 'rail', 'paper', 'card', 'card-foreground',
+    'popover', 'popover-foreground', 'primary', 'primary-foreground', 'secondary', 'secondary-foreground',
+    'muted', 'muted-foreground', 'accent', 'accent-foreground', 'destructive', 'destructive-foreground',
+    'border', 'input', 'ring', 'selection'];
 export function clearDerivedTokens() {
     const root = document.documentElement;
-    const keys = ['background', 'foreground', 'sidebar', 'rail', 'paper', 'card', 'card-foreground',
-        'popover', 'popover-foreground', 'primary', 'primary-foreground', 'secondary', 'secondary-foreground',
-        'muted', 'muted-foreground', 'accent', 'accent-foreground', 'destructive', 'destructive-foreground',
-        'border', 'input', 'ring', 'selection'];
-    for (const k of keys) root.style.removeProperty('--' + k);
+    for (const k of TOKEN_KEYS) root.style.removeProperty('--' + k);
+}
+
+// 從目前 html 的 class(.dark/.light + .theme-*)讀主題預設檔實際生效的 token 值。
+// 主題預設檔是 style.css 寫死的;作者沒自訂某個屬性時,這個值就是「主題原值」,
+// 讓我們推算其他屬性時可以拿到準確的色調與亮度,不會把深灰/米白蓋掉。
+export function readThemeToken(name: string): string {
+    return getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim();
+}
+
+// HSL 物件的 toHex 方法,給 readThemeToken 回傳的 "H S% L%" 字串做 fallback 用。
+function hslFromString(s: string): HSL {
+    const parts = s.trim().split(/\s+/);
+    if (parts.length !== 3) return {h: 0, s: 0, l: 0};
+    return {h: parseFloat(parts[0]) || 0, s: (parseFloat(parts[1]) || 0) / 100, l: (parseFloat(parts[2]) || 0) / 100};
+}
+
+// 給定一側的自訂色設定,套到 html(背景/文字自訂 → 整組 token;只改強調色 → 只覆寫 primary 系)。
+// 沒自訂 → 清掉所有 inline style,讓 class 的預設值重新生效。
+export function applyCustomSide(sideCfg: {accent?: string; background?: string; foreground?: string}, isDark: boolean) {
+    const accent = sideCfg.accent || '';
+    const background = sideCfg.background || '';
+    const foreground = sideCfg.foreground || '';
+    const hasAny = !!(background || foreground || accent);
+    if (!hasAny) {
+        clearDerivedTokens();
+        return;
+    }
+
+    // 沒自訂的欄位:讀主題預設檔的實際值(不寫死,才不會把深灰/米白蓋掉)。
+    const fallbackBgHex = background || hslToHex(hslFromString(readThemeToken('background')));
+    const fallbackFgHex = foreground || hslToHex(hslFromString(readThemeToken('foreground')));
+    const fallbackAccentHex = accent || hslToHex(hslFromString(readThemeToken('primary')));
+
+    const tokens = deriveTokens(fallbackBgHex, fallbackFgHex, fallbackAccentHex, isDark);
+
+    if (!background && !foreground) {
+        // 只改強調色:只覆寫 primary/primary-foreground/ring/selection,
+        // 其他屬性保留主題預設檔原值(深灰、米白的色調不會被蓋掉)。
+        const root = document.documentElement;
+        root.style.setProperty('--primary', tokens.primary);
+        root.style.setProperty('--primary-foreground', tokens.primaryForeground);
+        root.style.setProperty('--ring', tokens.ring);
+        root.style.setProperty('--selection', tokens.selection);
+    } else {
+        // 背景或文字自訂:推算整組覆蓋掉主題預設檔。
+        applyDerivedTokens(tokens);
+    }
 }

@@ -128,7 +128,7 @@ module.exports = {
         await settle(80, 600);
 
         // 截圖:深/淺主題含子資料夾的設定集側欄(結束還原原主題)
-        const theme0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => 'dark'));
+        const theme0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.mode).catch(() => 'dark'));
         const setTheme = async mode => {
             await page.click('[data-testid=open-settings]');
             await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
