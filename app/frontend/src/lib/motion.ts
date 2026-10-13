@@ -6,5 +6,4 @@ export const enter = {
     rise: `${base} slide-in-from-bottom-2`,
     fromLeft: `${base} slide-in-from-left-3`,
     fromRight: `${base} slide-in-from-right-3`,
-    pop: `${base} zoom-in-95`,
 };
