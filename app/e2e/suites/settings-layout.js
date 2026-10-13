@@ -624,6 +624,19 @@ module.exports = {
             (await page.textContent('[data-testid=agents-row-global]') || '').includes('AGENTS.md'));
         fs.rmSync(agFile, {force: true}); // 清理:不留給後面的組
 
+        // PR #122 審查:清單 ↔ 作者指示子頁要換掉整個容器,進場動畫才會重播(同一個 div 沿用時不會)
+        const markRoot = () => page.evaluate(() => { document.querySelector('[data-testid=settings-page-body]').lastElementChild.__m = 1; });
+        const rootMarked = () => page.evaluate(() => document.querySelector('[data-testid=settings-page-body]').lastElementChild.__m === 1);
+        await markRoot();
+        await page.click('[data-testid=agents-row-global]');
+        await waitSel('[data-testid=agents-page]');
+        const subNew = !(await rootMarked());
+        await markRoot();
+        await page.click('[data-testid=subpage-back]');
+        await waitSel('[data-testid=profile-list]');
+        const listNew = !(await rootMarked());
+        check('#122 進出作者指示子頁會換掉容器(轉場重播)', subNew && listNew, JSON.stringify({subNew, listNew}));
+
         // ===== 設定頁 640×672(半螢幕,SPEC §16 第 7 項 (c) + 返工):堆疊版面 =====
         // 三欄並排(導覽+清單+表單)會把表單壓到約 148px、模型輸入框剩 24px——
         // 無水平捲軸 ≠ 可用;lg 以下清單與表單必須上下堆疊,表單控制項可用寬度 ≥ 200px
