@@ -377,10 +377,52 @@ module.exports = {
         const nums = s => s.split(/\s+/).map(parseFloat);
         const near = (a, b) => nums(a).every((v, i) => Math.abs(v - nums(b)[i]) <= 2);
         check('外觀 文字仍自訂時清除背景,背景回到主題原值', near(bgBack, bgPreset), JSON.stringify({bgPreset, bgBack}));
-        await page.click('[data-testid=appearance-reset]');
-        await settle(80, 300);
-        await page.click('[data-testid=appearance-reset-confirm]');
+        const resetAppearance = async () => {
+            await page.click('[data-testid=appearance-reset]');
+            await settle(80, 300);
+            await page.click('[data-testid=appearance-reset-confirm]');
+            await settle(80, 500);
+        };
+        await resetAppearance();
+
+        // PR #121 審查 1:上一筆還沒存完就改別的欄位,兩筆都要保留(後一筆不得以舊物件蓋掉前一筆)。
+        // 綁定在呼叫時才讀 window.go,包一層延遲模擬後端慢回應
+        await page.evaluate(() => {
+            const app = window.go.main.App;
+            window.__origSetAppearance = app.SetAppearance;
+            app.SetAppearance = a => new Promise(r => setTimeout(r, 800)).then(() => window.__origSetAppearance(a));
+        });
+        await page.fill('[data-testid=appearance-background-hex]', '#203040');
+        await page.click('[data-testid=appearance-mode-light]'); // 點擊讓 hex 框失焦觸發第一筆,緊接第二筆
+        await settle(80, 2500);
+        await page.evaluate(() => { window.go.main.App.SetAppearance = window.__origSetAppearance; });
+        const both = await page.evaluate(() => window.go.main.App.GetSettings().then(s => ({mode: s.appearance.mode, darkBg: s.appearance.dark.background})));
+        check('#121 存檔未完成就切模式:背景與模式都保留', both.mode === 'light' && both.darkBg === '#203040', JSON.stringify(both));
+        await resetAppearance();
+
+        // PR #121 審查 3:內建綠色強調色的按鈕文字要選深色(白字對比不到 3:1)
+        await page.click('[data-testid=appearance-accent-select]');
+        await waitSel('[data-testid=appearance-accent-opt-green]');
+        await page.click('[data-testid=appearance-accent-opt-green]');
         await settle(80, 500);
+        const pfg = nums(await cssVar('--primary-foreground'));
+        check('#121 綠色強調色的按鈕文字為深色', pfg[2] < 30, pfg.join(' '));
+        await resetAppearance();
+
+        // PR #121 審查 4:換主題後對比警告依新主題的背景重新判斷(白紙 4.54:1 不警告,米白 4.11:1 警告)
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(80, 300);
+        await typeHex('foreground', '#727272');
+        const warnPaper = await page.isVisible('[data-testid=contrast-warn]');
+        await page.click('[data-testid=appearance-preset-select]');
+        await waitSel('[data-testid=appearance-preset-opt-cream]');
+        await page.click('[data-testid=appearance-preset-opt-cream]');
+        await settle(80, 500);
+        const warnCream = await page.isVisible('[data-testid=contrast-warn]');
+        check('#121 換成米白後對比警告依新背景出現', !warnPaper && warnCream, JSON.stringify({warnPaper, warnCream}));
+        await page.click('[data-testid=appearance-mode-dark]');
+        await settle(80, 300);
+        await resetAppearance();
 
         // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
         await page.click('[data-testid=tab-models]');

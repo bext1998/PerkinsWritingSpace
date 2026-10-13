@@ -951,12 +951,12 @@ function ColorField({label, desc, fieldKey, testid, side, savedValue, onSave}: {
 function AccentSelect({side, savedValue, onSave}: {side: 'dark' | 'light'; savedValue: string; onSave: (next: string) => void}) {
     const current = savedValue || '';
     return (
-        <Select value={current} onValueChange={onSave}>
+        <Select value={current || 'theme'} onValueChange={v => onSave(v === 'theme' ? '' : v)}>
             <SelectTrigger data-testid="appearance-accent-select" className="h-8 w-[10rem] shrink-0 text-xs">
                 <SelectValue placeholder="跟隨主題"/>
             </SelectTrigger>
             <SelectContent>
-                <SelectItem value="" data-testid="appearance-accent-opt-theme">
+                <SelectItem value="theme" data-testid="appearance-accent-opt-theme">
                     <span className="flex items-center gap-2">
                         <span className="inline-block h-3 w-3 rounded-full border" style={{background: 'var(--primary, hsl(var(--primary)))'}}/>
                         跟隨主題
@@ -980,15 +980,24 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
     // 先呼叫 SetAppearance,成功才更新 state;後端驗證失敗時(不合法 #rrggbb、未知列舉等)
     // 顯示錯誤並保留原 state,不會出現「以為存了、重開不見」的狀況。
     const [saveError, setSaveError] = useState('');
-    const persist = (next: {mode: string; uiFontSize: string; reduceMotion: string; dark: settings.SideAppearance; light: settings.SideAppearance}) => {
-        const inst = settings.Appearance.createFrom({
-            mode: next.mode, uiFontSize: next.uiFontSize, reduceMotion: next.reduceMotion,
-            dark: {preset: next.dark.preset, accent: next.dark.accent, background: next.dark.background, foreground: next.dark.foreground},
-            light: {preset: next.light.preset, accent: next.light.accent, background: next.light.background, foreground: next.light.foreground},
-        }) as settings.Appearance;
-        SetAppearance(inst)
-            .then(() => { setAppearance(inst); setSaveError(''); })
-            .catch(e => { setSaveError(errText(e)); });
+    // 每次變更都以「最新的待存設定」為基礎(PR #121 審查):上一筆還沒存完就改別的欄位時,
+    // 不能用 render 時的舊 appearance 組完整物件,否則後一筆會蓋掉前一筆。寫入依序排隊;
+    // 畫面先套用,失敗時顯示錯誤並回到最後一次存成功的設定,不冒充已儲存。
+    const pending = useRef(appearance);
+    const saved = useRef(appearance);
+    const queue = useRef<Promise<void>>(Promise.resolve());
+    type Ap = settings.Appearance;
+    const persist = (change: (a: Ap) => Omit<Ap, 'convertValues'>) => {
+        const next = settings.Appearance.createFrom(change(pending.current)) as Ap;
+        pending.current = next;
+        setAppearance(next);
+        queue.current = queue.current.then(() => SetAppearance(next)
+            .then(() => { saved.current = next; setSaveError(''); })
+            .catch(e => {
+                setSaveError(errText(e));
+                pending.current = saved.current;
+                setAppearance(saved.current);
+            }));
     };
     const changePaper = (key: keyof PaperLayout, v: string) => {
         const next = {...paper, [key]: v};
@@ -1000,6 +1009,14 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
     const sideCfg = side === 'dark' ? appearance.dark : appearance.light;
     const presetList = side === 'dark' ? ['study', 'graphite'] : ['paper', 'cream'];
     const presetMeta = side === 'dark' ? DARK_PRESET_META : LIGHT_PRESET_META;
+
+    // 對比警告與色塊預設值讀 html 上的主題 token;App 的 effect 在本元件 render 之後才套用新主題,
+    // 下一個 frame 再 render 一次才會讀到新值(PR #121 審查:換主題後警告沿用舊背景)
+    const [, setTokenTick] = useState(0);
+    useEffect(() => {
+        const id = requestAnimationFrame(() => setTokenTick(t => t + 1));
+        return () => cancelAnimationFrame(id);
+    }, [appearance, side]);
 
     // 背景/文字 對比低於 4.5:1 顯示警告(#118):背景或文字任一為自訂時檢查;只改強調色不警告。
     // 沒自訂的側用主題實際值(讀 html 的 CSS 變數),深灰/米白不會誤判。
@@ -1023,12 +1040,10 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
     );
 
     // 儲存一側的自訂色:同時更新另一側(不被改)的部分。
-    const updateSideField = (fieldKey: 'accent' | 'background' | 'foreground', next: string) => {
-        const nextSide: settings.SideAppearance = {...sideCfg, [fieldKey]: next};
-        const updated = side === 'dark'
-            ? {...appearance, dark: nextSide}
-            : {...appearance, light: nextSide};
-        persist(updated);
+    const updateSideField = (fieldKey: 'accent' | 'background' | 'foreground' | 'preset', next: string) => {
+        persist(a => side === 'dark'
+            ? {...a, dark: {...a.dark, [fieldKey]: next}}
+            : {...a, light: {...a.light, [fieldKey]: next}});
     };
 
     return (
@@ -1049,7 +1064,7 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                                 <button key={o.id} type="button" aria-pressed={appearance.mode === o.id}
                                         data-testid={`appearance-mode-${o.id}`}
                                         title={o.desc}
-                                        onClick={() => persist({...appearance, mode: o.id})}
+                                        onClick={() => persist(a => ({...a, mode: o.id}))}
                                         className={cn('flex items-center gap-1.5 rounded px-3 py-1 text-xs transition-colors',
                                             appearance.mode === o.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
                                     <o.Icon className="h-3.5 w-3.5"/>{o.label}
@@ -1066,13 +1081,7 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                             <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{side === 'dark' ? '深色側' : '淺色側'}的主題預設檔;切換模式時會記住各側選擇。</p>
                         </div>
                         <Select value={sideCfg.preset}
-                                onValueChange={v => {
-                                    const next: settings.SideAppearance = {...sideCfg, preset: v};
-                                    const updated = side === 'dark'
-                                        ? {...appearance, dark: next}
-                                        : {...appearance, light: next};
-                                    persist(updated);
-                                }}>
+                                onValueChange={v => updateSideField('preset', v)}>
                             <SelectTrigger data-testid="appearance-preset-select" className="h-8 w-[10rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
                             <SelectContent>
                                 {presetList.map(p => {
@@ -1088,11 +1097,11 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                     <SettingRow title="強調色" desc="按鈕、選中態、焦點;選擇「跟隨主題」時用主題的強調色。只改這個不會蓋掉主題預設檔的色調。">
                         <AccentSelect side={side} savedValue={sideCfg.accent || ''} onSave={v => updateSideField('accent', v)}/>
                     </SettingRow>
-                    <ColorField label="背景" desc="整個介面的主底色;其他顏色(側欄、欄位、文字…)會自動從這裡推算。"
+                    <ColorField key={`${side}-background`} label="背景" desc="整個介面的主底色;其他顏色(側欄、欄位、文字…)會自動從這裡推算。"
                                  fieldKey="background" testid="appearance-background"
                                  side={side} savedValue={sideCfg.background || ''}
                                  onSave={v => updateSideField('background', v)}/>
-                    <ColorField label="文字顏色" desc="介面主要文字色;與背景對比低於 4.5:1 時會顯示警告。"
+                    <ColorField key={`${side}-foreground`} label="文字顏色" desc="介面主要文字色;與背景對比低於 4.5:1 時會顯示警告。"
                                  fieldKey="foreground" testid="appearance-foreground"
                                  side={side} savedValue={sideCfg.foreground || ''}
                                  onSave={v => updateSideField('foreground', v)}/>
@@ -1107,7 +1116,7 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                 <summary className="cursor-pointer text-sm font-semibold">進階</summary>
                 <RowCard testid="appearance-advanced-card">
                     <SettingRow title="介面字體大小" desc="全介面字級(html 根字級 15 / 16 / 17px);稿紙字級會一起等比縮放。">
-                        <Select value={appearance.uiFontSize} onValueChange={v => persist({...appearance, uiFontSize: v})}>
+                        <Select value={appearance.uiFontSize} onValueChange={v => persist(a => ({...a, uiFontSize: v}))}>
                             <SelectTrigger data-testid="appearance-font-size" className="h-8 w-[8.5rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
                             <SelectContent>
                                 {UIFontSizeOptions.map(o => <SelectItem key={o.id} value={o.id} data-testid={`appearance-font-size-opt-${o.id}`}>{o.label}</SelectItem>)}
@@ -1115,7 +1124,7 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                         </Select>
                     </SettingRow>
                     <SettingRow title="減少動態效果" desc="「系統」跟隨作業系統的減少動態偏好;開啟時 transition 與 animation 歸零,包含打字機捲動的平滑捲動。">
-                        <Select value={appearance.reduceMotion} onValueChange={v => persist({...appearance, reduceMotion: v})}>
+                        <Select value={appearance.reduceMotion} onValueChange={v => persist(a => ({...a, reduceMotion: v}))}>
                             <SelectTrigger data-testid="appearance-reduce-motion" className="h-8 w-[8.5rem] shrink-0 text-xs"><SelectValue/></SelectTrigger>
                             <SelectContent>
                                 {ReduceMotionOptions.map(o => <SelectItem key={o.id} value={o.id} data-testid={`appearance-reduce-motion-opt-${o.id}`}>{o.label}</SelectItem>)}
@@ -1128,7 +1137,7 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                         ) : (
                             <div className="flex items-center gap-2">
                                 <span className="text-xs text-warning">確定要重置嗎?</span>
-                                <Button size="sm" variant="destructive" onClick={() => { setResetArmed(false); persist(DEFAULTS_APPEARANCE); }} data-testid="appearance-reset-confirm">重置</Button>
+                                <Button size="sm" variant="destructive" onClick={() => { setResetArmed(false); persist(() => DEFAULTS_APPEARANCE); }} data-testid="appearance-reset-confirm">重置</Button>
                                 <Button size="sm" variant="ghost" onClick={() => setResetArmed(false)} data-testid="appearance-reset-cancel">取消</Button>
                             </div>
                         )}

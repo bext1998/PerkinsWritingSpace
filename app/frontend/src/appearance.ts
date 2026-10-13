@@ -58,8 +58,10 @@ export function hslToHex({h, s, l}: HSL): string {
 }
 
 // 「對比前景」:依 luminance 選黑或白,給 primary-foreground 與強調色按鈕的文字用。
+// 依實際對比選較清楚的一個(PR #121 審查:只看 HSL 亮度時綠、青會選到白字,對比不到 3:1)
 function contrastFG(hsl: HSL): string {
-    return hsl.l > 0.55 ? '#181818' : '#f8f5ee';
+    const dark = '#181818', light = '#f8f5ee';
+    return contrastRatio(hsl, hexToHSL(dark)) >= contrastRatio(hsl, hexToHSL(light)) ? dark : light;
 }
 
 // 相對亮度(0~1),WCAG 用。
