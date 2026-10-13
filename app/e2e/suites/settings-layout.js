@@ -394,7 +394,7 @@ module.exports = {
         });
         await page.fill('[data-testid=appearance-background-hex]', '#203040');
         await page.click('[data-testid=appearance-mode-light]'); // 點擊讓 hex 框失焦觸發第一筆,緊接第二筆
-        await settle(80, 2500);
+        await page.waitForTimeout(2500); // 兩筆各延遲 800ms、依序寫入
         await page.evaluate(() => { window.go.main.App.SetAppearance = window.__origSetAppearance; });
         const both = await page.evaluate(() => window.go.main.App.GetSettings().then(s => ({mode: s.appearance.mode, darkBg: s.appearance.dark.background})));
         check('#121 存檔未完成就切模式:背景與模式都保留', both.mode === 'light' && both.darkBg === '#203040', JSON.stringify(both));
