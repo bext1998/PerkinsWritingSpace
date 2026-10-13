@@ -312,8 +312,9 @@ module.exports = {
         await appear('canon/點了才發現.md');
         xdel('canon/點了才發現.md');
         await page.click(rowSel('canon/點了才發現.md'));
-        const goneMsg = await page.waitForSelector('[data-testid=toast]', {timeout: 5000})
-            .then(() => page.textContent('[data-testid=toast]')).catch(() => '');
+        // 等提示文字本身(前面步驟可能還留著「已儲存」提示)
+        await page.waitForFunction(() => (document.querySelector('[data-testid=toast]')?.textContent || '').includes('已不存在'), null, {timeout: 5000}).catch(() => {});
+        const goneMsg = await page.textContent('[data-testid=toast]').catch(() => '');
         check('#117 點到已刪除的檔案:提示已不存在並從清單移除',
             goneMsg.includes('已不存在') && await vanish('canon/點了才發現.md'), goneMsg);
 
