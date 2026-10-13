@@ -11,6 +11,7 @@
 - **相容性**:舊檔的 `type`、`name` 與其他欄位原樣保留,Perkins 不改寫。
 - **驗證**:`go test ./...` 通過;`tsc --noEmit`、`npm run build` 通過;E2E(`E2E_SKIP_AI=1`)bible、titlebar-zen 58/58,notion、search-editor 通過;`--all` 605/607,兩項失敗與本次無關:`bot-chat` #32 依作者實際的目前端點是否為未確認雲端端點;`shelf` 停在平台輸出預覽(#110 改為清單+子頁後該組未更新,main 既有問題)、`--all` 時另因前組留下的狀態找不到 chat-fab。
 - **E2E 教訓**:EntityHeader 由 `ParseEntity`(防抖 200ms)跟上套用後的內容;連續操作要等「套用」按鈕消失再輸入,否則輸入會被同步蓋回。
+- **重新編譯**(合併後):以 `main` d554d50 `wails build`,放在 `app/build/bin/perkins.exe`(上一版備份 `D:\AgentCoding\.codex\perkins-exe-before-20261013b.exe`);啟動 8 秒正常、`settings.json` 未變動。#94 作者實測不再閃爍。
 
 ## 2026-10-13(夜) — 設定資料夾搬到 ~/.perkins、本段提到的設定、平台輸出頁改版、下拉閃爍(#104、#108、#94)
 
