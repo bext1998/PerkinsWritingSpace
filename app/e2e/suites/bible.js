@@ -185,7 +185,7 @@ module.exports = {
         const horse = read('canon/測試賽馬.md');
         // EntityHeader 由 ParseEntity(防抖 200ms)跟上新內容後「套用」才會消失;先等它同步,免得下一步的輸入被同步蓋回
         await page.waitForSelector('[data-testid=entity-apply]', {state: 'detached', timeout: 5000});
-        check('別名只寫一行 aliases', horse === '---\naliases: [小賽, 賽賽]\n---\n\n# 測試賽馬\n', JSON.stringify(horse));
+        check('別名只寫一行 aliases', horse === '---\naliases: [小賽, 賽賽]\n---\n# 測試賽馬\n', JSON.stringify(horse));
         await page.fill('[data-testid=entity-aliases]', '');
         await page.click('[data-testid=entity-apply]');
         await page.waitForFunction(() => !document.querySelector('.cm-content')?.textContent.includes('aliases'), null, {timeout: 5000}).catch(() => {});
