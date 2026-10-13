@@ -5,6 +5,7 @@
 作者發現介面幾乎沒有轉場,外觀頁(#118)的「減少動態效果」等於沒作用,決定補上輕量轉場並可關閉。規則寫在 SPEC §17.3「轉場」與 UI_GUIDE §15。
 
 - **轉場**(`src/lib/motion.ts`,tailwindcss-animate 的 `animate-in`,200ms ease-out,只做進場):書櫃與作品畫面淡入;設定頁淡入加上移、切換導覽頁內容淡入、清單 → 子頁(端點、作者指示、平台)由右滑入、返回清單淡入;側欄由左滑入、切換面板內容淡入;資訊欄由右滑入;Perkins Bot 浮窗與圓鈕只淡入(不縮放:浮窗拖曳與「回到畫面內」依實際尺寸計算,縮放中量到的尺寸會偏小);專注模式 E2E 量測透明度前等漸變結束;離開禪模式時圖示列、側欄、工具列、資訊欄重新顯示即播放進場;專注模式段落淡化加 200ms 透明度漸變。
+- **教訓**:tailwind 的 `duration-200` 同時設定 `transition-duration`,而 `transition-property` 預設是 `all`,掛上它的元素所有樣式變化(浮窗的 left/top)都會跟著漸變;`--all` 時 #55「縮窄後浮窗回到畫面內」因此失敗。動畫時長改用 `[animation-duration:200ms]`。
 - **不做離場動畫**:關閉時立即移除,不為離場延後卸載元件。
 - **減少動態效果**:沿用 #118 的 `.reduce-motion` 歸零規則;另加例外,`.cm-ai-flash`(接受提案後改動標示 3 秒)與 `.cm-flash`(跳行閃爍 1.2 秒)維持原時長、改 `steps(1, end)`,不漸變、時間到直接消失。
 - **驗證**:`tsc --noEmit`、`npm run build` 通過;E2E(`E2E_SKIP_AI=1`)`settings-layout` + `titlebar-zen` + `--smoke` 118/118,新增 4 項 #120 檢查;破壞驗證以改動前的 `SettingsPage.tsx`、`style.css` 執行 → 3 項 FAIL,還原後通過。
