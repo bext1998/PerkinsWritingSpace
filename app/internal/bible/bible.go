@@ -136,17 +136,15 @@ func SetAliases(content string, aliases []string) (string, error) {
 	default:
 		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "aliases"}, seq)
 	}
+	// 本文一律原樣接在 frontmatter 後(不插入、不刪除空行),加了又清掉別名才會回到原內容
 	if len(m.Content) == 0 {
-		return strings.TrimPrefix(body, "\n"), nil
+		return body, nil
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
 		return "", err
-	}
-	if y == "" && !strings.HasPrefix(body, "\n") {
-		body = "\n" + body
 	}
 	return "---\n" + buf.String() + "---\n" + body, nil
 }

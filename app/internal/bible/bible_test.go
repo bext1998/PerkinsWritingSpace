@@ -63,19 +63,26 @@ func TestSetAliasesPreservesOtherFieldsAndBody(t *testing.T) {
 
 // 意圖(SPEC §12.2):純 Markdown 設定檔加別名只多一行 aliases;清空別名就回到原本的純 Markdown,不留痕跡。
 func TestSetAliasesOnPlainFileRoundTrips(t *testing.T) {
-	plain := "# 艾莉絲\n十七歲。\n"
-	if out, _ := SetAliases(plain, nil); out != plain {
-		t.Fatalf("沒有別名時不應加 frontmatter: %q", out)
+	// 本文開頭有作者自己的空行時也要逐字回到原內容(PR #112 審查)
+	for _, plain := range []string{"# 艾莉絲\n十七歲。\n", "\n# 艾莉絲\n", "\n\n# 艾莉絲\r\n"} {
+		if out, _ := SetAliases(plain, nil); out != plain {
+			t.Fatalf("沒有別名時不應加 frontmatter: %q", out)
+		}
+		out, err := SetAliases(plain, []string{"艾莉"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		y, body := SplitFrontmatter(out)
+		if strings.TrimSpace(y) != "aliases: [艾莉]" || body != plain {
+			t.Fatalf("frontmatter 應只有 aliases、本文原樣: y=%q body=%q", y, body)
+		}
+		if back, _ := SetAliases(out, nil); back != plain {
+			t.Fatalf("清空別名應回到原本內容: %q → %q", plain, back)
+		}
 	}
-	out, err := SetAliases(plain, []string{"艾莉"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if y, _ := SplitFrontmatter(out); strings.TrimSpace(y) != "aliases: [艾莉]" {
-		t.Fatalf("frontmatter 應只有 aliases: %q", y)
-	}
-	if back, _ := SetAliases(out, nil); back != plain {
-		t.Fatalf("清空別名應回到原本內容: %q", back)
+	// 既有檔案只有 aliases 一欄:清空後只拿掉 frontmatter,本文(含開頭空行)不動
+	if got, _ := SetAliases("---\naliases: [艾莉]\n---\n\n# 艾莉絲\n", nil); got != "\n# 艾莉絲\n" {
+		t.Fatalf("本文開頭空行被刪: %q", got)
 	}
 }
 
