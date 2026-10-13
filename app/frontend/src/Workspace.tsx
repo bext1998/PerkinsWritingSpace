@@ -112,6 +112,9 @@ function acceptedRange(text: string, p: proposal.Proposal): {from: number; to: n
     return editorRange(text, p.start, p.authorEdited ? p.final ?? '' : chosen ?? '');
 }
 
+// 檔案樹上所有可開啟的檔案(稿件、設定、大綱、筆記)
+const treeFiles = (t: project.Tree) => [...t.manuscript, ...t.canon, ...t.outline, ...t.notes];
+
 // 待審提案的原文位置(#45 方案 A「在稿件中顯示」):先用提案記錄的位置;作者在前面打過字而位移時,
 // 改用原文在檔案中唯一的出現處(與後端接受時的放寬規則一致);找不到或不唯一就回 null,不猜位置
 // 退回搜尋時以編輯器的換行表示比對:作者一編輯,編輯器回傳的全文就把 \r\n 換成 \n,
@@ -161,6 +164,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const [summaryTick, setSummaryTick] = useState(0);
     const editor = useRef<EditorHandle>(null);
     const loaded = useRef<string | null>(null);
+    // 目前檔案在 Perkins 外被刪除、編輯器裡還有未存的字(#117):不關閉編輯器,存檔會重新建立檔案
+    const keepMissing = useRef<string | null>(null);
     // 開檔世代(#56):每次開檔遞增;重載讀檔期間若開過檔(含 A→B→A 回到原檔),該次重載作廢
     const navGen = useRef(0);
     // 重載世代(#56):同一章的重載重疊時(連續接受、接受與還原重疊),只套用最後發起的那次,較舊讀取晚回來不得覆蓋
@@ -234,6 +239,29 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     const refreshCounts = useCallback(() => ChapterWordCounts().then(setCounts).catch(() => {}), []);
     const refreshIndex = useCallback(() => BibleIndex().then(setIndex).catch(() => {}), []);
     useEffect(() => { refreshCounts(); refreshIndex(); }, [refreshCounts, refreshIndex]);
+
+    // 作者可能在 Perkins 外(檔案總管、其他編輯器)增刪作品檔案(#117):視窗回到前景時重讀檔案樹、索引與字數。
+    // 目前檔案已不存在時由下方 tree effect 處理:沒有未存內容就關閉,有未存內容則保留在編輯器
+    const syncExternal = useCallback(async () => {
+        const t = await GetTree();
+        const cur = latest.current.current;
+        if (cur && !cur.startsWith('summaries/') && !latest.current.dirty
+            && !treeFiles(t).some(e => e.path === cur)) {
+            notify({text: '目前開著的檔案已在 Perkins 外被刪除,已關閉。', kind: 'info'});
+        }
+        setTree(t);
+        refreshIndex();
+        refreshCounts();
+    }, [setTree, refreshIndex, refreshCounts, notify]);
+    useEffect(() => {
+        const onFocus = () => { if (document.visibilityState === 'visible') syncExternal().catch(fail); };
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onFocus);
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onFocus);
+        };
+    }, [syncExternal, fail]);
     useEffect(() => {
         GetSettings().then(setCfg).catch(() => {});
         // 設定頁可能匯入了 Notion 設定或改了作品名稱
@@ -242,13 +270,22 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     // 目前開啟的檔案被移到回收區(或被撤銷匯入)後關閉編輯器,避免存檔時又把它寫回來;
     // 位置記憶只留還存在的檔案:刪除後建立同名檔案要從預設位置開始,不能套用已刪文件的位置
+    // 例外(#117):編輯器裡還有未存的字時不關閉(任何更新清單的路徑都經過這裡),存檔會重新建立該檔;
+    // App 內刪除目前檔案前會先存檔(BiblePanel/DocsPanel),所以這裡只會碰到外部刪除或刪除途中又打的字
     useEffect(() => {
-        const all = [...tree.manuscript, ...tree.canon, ...tree.outline, ...tree.notes];
+        const all = treeFiles(tree);
         for (const k of [...posMemo.current.keys()]) if (!all.some(e => e.path === k)) posMemo.current.delete(k);
         if (!current) return;
         // 摘要檔(summaries/)不在樹上,但作品健康檢查會從問題清單點開它們:不當成已被刪除
         if (current.startsWith('summaries/')) return;
         if (!all.some(e => e.path === current)) {
+            if (latest.current.dirty) {
+                if (keepMissing.current !== current) {
+                    keepMissing.current = current;
+                    notify({text: '目前的檔案已不在作品資料夾中。未儲存的內容還在編輯器,儲存會重新建立這個檔案。', kind: 'error'});
+                }
+                return;
+            }
             loaded.current = null;
             setCurrent(null);
             setText('');
@@ -296,7 +333,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     }
                     refreshCounts();
                     refreshIndex();
-                    if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
+                    // 在外部被刪除的檔案存檔後重新建立,清單要列回來
+                    if (keepMissing.current === current) { keepMissing.current = null; refreshTree(); }
+                    else if (current.startsWith('manuscript/')) refreshTree(); // 場景標題可能改變
                 }
             } finally {
                 saveAll.current = false;
@@ -373,7 +412,18 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             await save(); // 切換前自動存檔,避免遺失
             if (stale()) return;
             if (import.meta.env.DEV && devReadDelay.ms > 0) await new Promise(r => setTimeout(r, devReadDelay.ms));
-            const content = await ReadFile(rel);
+            let content: string;
+            try {
+                content = await ReadFile(rel);
+            } catch (e) {
+                // 清單上的檔案可能已在 Perkins 外被刪除或改名(#117):重讀清單,確認不在了就說明,不丟原始錯誤
+                const t = await GetTree();
+                setTree(t);
+                refreshIndex();
+                if (treeFiles(t).some(x => x.path === rel)) throw e;
+                notify({text: '這個檔案已不存在(可能在 Perkins 外被刪除或改名),清單已更新。', kind: 'info'});
+                return;
+            }
             if (stale()) return;
             // ReadFile 等待期間若又有打字(dirty 變 true),先存完才切換,避免丟字
             if (latest.current.dirty) await save();
@@ -388,7 +438,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             ResearchOpenFile(rel); // 研究記錄(§12.8):open_file 事件,後端只接受專案內既有路徑
             if (line) setTimeout(() => editor.current?.scrollToLine(line), 60);
         } catch (e) { fail(e); }
-    }, [save, fail]);
+    }, [save, fail, notify, setTree, refreshIndex]);
 
     // 審查視窗「在稿件中顯示」(#45 方案 A):目前章節直接捲到原文並短暫標示;別章先開啟,
     // 由 Editor 掛載時套用(開發模式的 StrictMode 會建立兩次編輯器,見 .agent/memory/editor-strictmode-remount.md)
