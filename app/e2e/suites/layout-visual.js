@@ -73,18 +73,20 @@ module.exports = {
         // 還原覆寫;書櫃仍 render 受控清單(含真實卡)— 點真實卡重開作品進編輯器
         await page.evaluate(() => { window.go.main.App.ListRecent = window.__perkinsListRecentOrig; });
         await settle(80, 600); // 等 UI 更新(原固定等 200ms)
-        // 淺色書櫃:切白紙 → 書櫃 → 切回
+        // 淺色書櫃:切淺色 → 書櫃 → 切回
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("白紙")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
         await page.click('[data-testid=close-settings]');
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
         await shot('33-1b-bookshelf-light');
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("夜間書房")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         // 從書櫃重新開啟作品(受控清單中的真實卡路徑 = 當輪 PROJ)

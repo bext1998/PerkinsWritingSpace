@@ -128,18 +128,19 @@ module.exports = {
         await settle(80, 600);
 
         // 截圖:深/淺主題含子資料夾的設定集側欄(結束還原原主題)
-        const theme0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.theme).catch(() => 'dark'));
-        const setTheme = async label => {
+        const theme0 = await page.evaluate(() => window.go.main.App.GetSettings().then(s => s.appearance && s.appearance.mode).catch(() => 'dark'));
+        const setTheme = async mode => {
             await page.click('[data-testid=open-settings]');
             await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
             await page.click('[data-testid=tab-appearance]');
-            await page.click(`button:has-text("${label}")`);
+            await page.waitForSelector('[data-testid=appearance-visual]');
+            await page.click(`[data-testid=appearance-mode-${mode}]`);
             await page.click('[data-testid=close-settings]');
             await settle(80, 700);
         };
-        await setTheme('夜間書房');
+        await setTheme('dark');
         await shot('32-canon-tree-dark');
-        await setTheme('白紙');
+        await setTheme('light');
         // 舊檔的 type 等欄位(Perkins 已不使用)開檔不改寫,別名照常顯示(SPEC §12.2)
         await page.click('[data-testid=entity-row][data-file="canon/組織/夜鶯團.md"]');
         const legacyAlias = await page.waitForFunction(() =>
@@ -150,7 +151,7 @@ module.exports = {
         check('舊檔 type 開檔不改寫、別名照常顯示', legacyAlias && fs.readFileSync(P('canon/組織/白塔會.md'), 'utf8') === LEGACY);
 
         await shot('33-canon-tree-light');
-        await setTheme(theme0 === 'light' ? '白紙' : '夜間書房');
+        await setTheme(theme0 === 'light' ? 'light' : 'dark');
 
         // 清掉專用檔(不留痕跡給後面的測試組),並用設定頁開關讓前端重讀 tree 與索引
         tdel('canon/人物/主要角色.md');

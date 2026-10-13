@@ -262,6 +262,10 @@ export function SetActiveModel(arg1, arg2) {
   return window['go']['main']['App']['SetActiveModel'](arg1, arg2);
 }
 
+export function SetAppearance(arg1) {
+  return window['go']['main']['App']['SetAppearance'](arg1);
+}
+
 export function SetAutosave(arg1) {
   return window['go']['main']['App']['SetAutosave'](arg1);
 }
@@ -280,10 +284,6 @@ export function SetPaperLayout(arg1, arg2, arg3) {
 
 export function SetResearch(arg1) {
   return window['go']['main']['App']['SetResearch'](arg1);
-}
-
-export function SetTheme(arg1) {
-  return window['go']['main']['App']['SetTheme'](arg1);
 }
 
 export function SetVolumes(arg1) {

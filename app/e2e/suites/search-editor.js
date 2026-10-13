@@ -236,7 +236,8 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("白紙")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
         await page.click('[data-testid=close-settings]');
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
         try {
@@ -248,7 +249,8 @@ module.exports = {
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-appearance]');
-        await page.click('button:has-text("夜間書房")');
+        await page.waitForSelector('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
 

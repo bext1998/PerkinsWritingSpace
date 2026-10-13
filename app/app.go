@@ -590,8 +590,9 @@ type SettingsView struct {
 	Profiles  []ProfileView      `json:"profiles"`
 	Active    string             `json:"active"`
 	Platforms []publish.Platform `json:"platforms"`
-	Theme     string             `json:"theme"`
-	Autosave  bool               `json:"autosave"`
+	// 外觀設定(Issue #118):由 Appearance 取代舊的 Theme 欄位;前端只讀 Appearance。
+	Appearance    settings.Appearance `json:"appearance"`
+	Autosave      bool               `json:"autosave"`
 	// 稿紙版面(SPEC §17.3):版心寬度、字級、段距的預設檔值
 	PaperWidth    string `json:"paperWidth"`
 	PaperFontSize string `json:"paperFontSize"`
@@ -600,7 +601,7 @@ type SettingsView struct {
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
-	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Theme: s.Theme, Autosave: s.AutosaveOn(), Profiles: []ProfileView{},
+	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Appearance: s.Appearance, Autosave: s.AutosaveOn(), Profiles: []ProfileView{},
 		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
@@ -693,12 +694,16 @@ func (a *App) SetActiveModel(profileID, model string) (SettingsView, error) {
 	return a.GetSettings(), nil
 }
 
-func (a *App) SetTheme(theme string) error {
-	if theme != "dark" && theme != "light" {
-		return fmt.Errorf("未知的主題")
+// SetAppearance 寫入外觀設定(Issue #118):前端即按即存、立即套用。整體取代,
+// validateAppearance 在存回前檢查所有欄位,不合法的整筆拒絕並回錯(#118 重工);大寫 hex
+// 接受並轉小寫。載入舊檔的正規化寬鬆處理仍保留(舊檔可能有手改壞的值,
+// 默默以預設取代比報錯中斷應用啟動更安全)。
+func (a *App) SetAppearance(app settings.Appearance) error {
+	if err := settings.ValidateAppearance(app); err != nil {
+		return err
 	}
 	s := a.store.Load()
-	s.Theme = theme
+	s.SetAppearance(app)
 	return a.store.Save(s)
 }
 

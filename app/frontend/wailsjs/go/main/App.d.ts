@@ -143,6 +143,8 @@ export function SaveSummary(arg1:string,arg2:string):Promise<summary.Summary>;
 
 export function SetActiveModel(arg1:string,arg2:string):Promise<main.SettingsView>;
 
+export function SetAppearance(arg1:settings.Appearance):Promise<void>;
+
 export function SetAutosave(arg1:boolean):Promise<void>;
 
 export function SetBotRead(arg1:string,arg2:boolean):Promise<void>;
@@ -152,8 +154,6 @@ export function SetChapterStatus(arg1:string,arg2:string):Promise<void>;
 export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function SetResearch(arg1:boolean):Promise<void>;
-
-export function SetTheme(arg1:string):Promise<void>;
 
 export function SetVolumes(arg1:Array<project.Volume>):Promise<project.Tree>;
 
