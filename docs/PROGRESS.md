@@ -1,5 +1,19 @@
 # PROGRESS.md
 
+## 2026-10-14(晚) — 外觀頁 #118 重工(第 1 輪):修 Orchestrator 審查 5 Major + 1 Minor
+
+Major
+- **自訂色不再覆蓋主題預設檔**:`applyCustomSide(sideCfg, isDark)` 以讀主題實際的 `--background` / `--foreground` / `--primary` 作為 fallback;只改強調色時只覆寫 `primary` / `primary-foreground` / `ring` / `selection`,背景與文字保留主題預設檔色調(深灰/米白不會被變成夜間書房/白紙)。App.tsx 改用 `applyCustomSide` 取代之前的 `applyDerivedTokens(deriveTokens(...))` 寫法。
+- **跟隨系統即時切換**:matchMedia 變更時把 `sysDark` / `sysReducedMotion` 寫進 state,套用 effect 的依賴包含它們;OS 主題變更與作業系統減少動態偏好變更都會即時套用。原本只用 `setTick` 推 render、但 effect 依賴只有 `[appearance]`,不會重跑。
+- **hex 文字框不再重掛**:`ColorField` 從父層 render 內定義搬到外面;內部用本地 `draft` state;`onBlur` 才提交合法 `#rrggbb`,打未完成(例如「#」或「#1」)不提交、失焦時不合法就還原為已存值;允許大寫輸入並存小寫。`<input type="color">` 挑色器仍即時生效(本來就是合法 hex)。
+- **強調色改成下拉**:跟隨主題 + 6 個具名顏色(色點 + 名稱);選項值存 hex;`ACCENT_PRESETS` 真正拿來用、不再只是 unused import。
+- **後端嚴格驗證**:`SetAppearance` 對未知 `mode` / preset / 字級 / 減少動態、非法色碼回錯並拒絕寫進磁碟;大寫 hex 接受並轉小寫。`normalizeAppearance`(舊檔載入用)寬鬆保留、`validateAppearance`(寫入邊界用)嚴格。前端改為「先等 `SetAppearance` 成功才 `setAppearance`」,失敗顯示設定頁錯誤列、不在畫面上吹作者已儲存。新增 `TestValidateAppearanceRejectsInvalidAndLowercasesHex` / `TestSetAppearanceRejectsBadValuesAtBoundary` / `TestLoadStillTolerantForLegacyFile` 三個測試。
+
+Minor
+- 移除 `SetTheme` 線定與 `SettingsView.Theme` 欄位(已無前端使用者);`Settings.Theme` 只在讀舊檔時保留。`bible.js` 改讀 `appearance.mode`。
+
+驗證:go test ./... 全綠、tsc --noEmit 0 錯、npm run build 成功;E2E settings-layout 72/72(含 4 個 #118 重工檢查:深灰+藍、米白+自訂背景手動輸入 hex、SetAppearance 拒絕不合法值、system 模式隨 emulateMedia 切換)、bible 38/38、--smoke 9/9。破壞驗證:反向斷言三個新檢查都會 FAIL → 改回後 72/72。截圖:81-appearance-graphite-blue.png(深灰+藍)、82-appearance-cream-custom-bg.png(米白+自訂背景)。
+
 ## 2026-10-14 — 外觀頁可自訂主題(Issue #118)
 
 作者參考 Codex 桌面版設定頁後提出(Issue #118):不要再只是「深色 / 淺色」二選一,加上「深灰」「米白」兩個新主題,並開放強調色、背景、前景自訂,讓作者能依個人在寫作環境的偏好微調。依照 #0 第 9 條:不加任何新技術(取色器用原生 `<input type="color">`);不為「之後可能用到」加設定項(不做程式碼字型、差異標記樣式、半透明側欄、指標游標、匯入/匯出主題)。

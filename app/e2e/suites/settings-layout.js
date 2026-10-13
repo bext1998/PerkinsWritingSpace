@@ -175,6 +175,13 @@ module.exports = {
         const creamClass = await page.evaluate(() => document.documentElement.classList.contains('theme-cream'));
         check('設定頁 淺色側切到米白主題(theme-cream class)', creamClass);
         await shot('79-settings-appearance-900-light');
+        // 順手加一張米白+自訂背景(#118 重工截圖需求)
+        await page.fill('[data-testid=appearance-background-hex]', '#f4e4bc');
+        await page.keyboard.press('Tab');
+        await settle(80, 500);
+        await shot('82-appearance-cream-custom-bg');
+        await page.click('[data-testid=appearance-background-clear]');
+        await settle(80, 500);
         // 重置外觀回預設後回到深色夜間書房,後續步驟不受影響
         await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
         await settle(80, 300);
@@ -280,19 +287,21 @@ module.exports = {
         // primary 應該是藍色的 HSL(藍色的 hue ≈ 210;琥珀是 36)。
         check('#118 重工 只改強調色後 --primary 變成藍色', /^\s*2[0-9]{2}|^\s*21[0-9]/.test(primaryAfter) || primaryAfter.startsWith('209') || primaryAfter.startsWith('210') || primaryAfter.startsWith('207'),
             `primary=${primaryAfter}`);
+        await shot('81-appearance-graphite-blue');
 
         // 重工#3:手動逐字輸入 hex:可逐個字打進來不被打回去,合法 #rrggbb 才儲存。
         await page.click('[data-testid=appearance-reset]');
         await settle(80, 300);
         await page.click('[data-testid=appearance-reset-confirm]');
         await settle(80, 500);
-        const hexInput = await page.$('[data-testid=appearance-background-hex]');
-        await hexInput.focus();
-        await page.keyboard.type('#1', true); // 用 page.keyboard.type 逐字輸入(不是 fill)
+        // 用 page.keyboard.type 逐字輸入(不是 fill);delay 讓每字間一點。先點擊確保焦點在輸入框。
+        await page.click('[data-testid=appearance-background-hex]');
+        await settle(80, 100);
+        await page.keyboard.type('#1', {delay: 50});
         await settle(80, 200);
-        await page.keyboard.type('23', true);
+        await page.keyboard.type('23', {delay: 50});
         await settle(80, 200);
-        await page.keyboard.type('456', true);
+        await page.keyboard.type('456', {delay: 50});
         await settle(80, 200);
         // 到這裡已經合法(#123456),但還沒失焦不會儲存。Tab 出去推 onBlur:
         await page.keyboard.press('Tab');
