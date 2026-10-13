@@ -62,7 +62,7 @@ func TestApplyNeverOverwritesAndCanUndo(t *testing.T) {
 	p, _ := project.Create(dir, "n")
 	p.WriteFile("canon/雷恩.md", "作者原本寫的雷恩")
 
-	res, err := Apply(p, src, map[string]string{"角色": "角色", "": TargetNotes}, nil, bible.Types)
+	res, err := Apply(p, src, map[string]string{"角色": TargetCanon, "": TargetNotes}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestApplyNeverOverwritesAndCanUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := bible.Parse("canon/艾莉絲.md", c)
-	if e.Type != "角色" || e.Name != "艾莉絲" || !strings.Contains(c, "- 年齡:17") || !strings.Contains(c, "才不是呢") {
+	if strings.HasPrefix(c, "---") || e.Name != "艾莉絲" || !strings.Contains(c, "- 年齡:17") || !strings.Contains(c, "才不是呢") {
 		t.Fatalf("匯入內容錯誤: %+v\n%s", e, c)
 	}
 	if n, _ := p.ReadFile("notes/世界觀.md"); !strings.Contains(n, "魔法以艾莉絲為中心") {
@@ -101,7 +101,7 @@ func TestApplyNeverOverwritesAndCanUndo(t *testing.T) {
 
 func TestSkipTargetImportsNothing(t *testing.T) {
 	p, _ := project.Create(t.TempDir(), "n")
-	res, err := Apply(p, fixture(t), map[string]string{"角色": TargetSkip}, nil, bible.Types)
+	res, err := Apply(p, fixture(t), map[string]string{"角色": TargetSkip}, nil)
 	if err != nil || len(res.Created) != 0 {
 		t.Fatalf("created=%v err=%v", res.Created, err)
 	}
@@ -154,32 +154,23 @@ func TestApplyPerPageOverrides(t *testing.T) {
 		t.Fatalf("fixture 缺頁面: %+v", plan)
 	}
 	pages := map[string]string{
-		aliceSrc: "角色",
-		rainSrc:  "地點",
+		aliceSrc: TargetCanon,
+		rainSrc:  TargetOutline,
 		"世界觀 " + hexID + ".md": TargetSkip,
-		"不存在的頁.md":    "角色", // key 不在掃描結果中:忽略,不報錯
+		"不存在的頁.md":    TargetCanon, // key 不在掃描結果中:忽略,不報錯
 	}
-	res, err := Apply(p, src, map[string]string{"角色": TargetSkip, "": TargetSkip}, pages, bible.Types)
+	res, err := Apply(p, src, map[string]string{"角色": TargetSkip, "": TargetSkip}, pages)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Created) != 2 {
 		t.Fatalf("created=%v", res.Created)
 	}
-	cAlice, err := p.ReadFile("canon/艾莉絲.md")
-	if err != nil {
-		t.Fatalf("角色頁應匯入: %v", err)
+	if !p.Exists("canon/艾莉絲.md") {
+		t.Fatal("覆寫為設定未生效")
 	}
-	e := bible.Parse("canon/艾莉絲.md", cAlice)
-	if e.Type != "角色" {
-		t.Fatalf("覆寫為角色未生效: %+v", e)
-	}
-	cRain, err := p.ReadFile("canon/雷恩.md")
-	if err != nil {
-		t.Fatalf("地點頁應匯入: %v", err)
-	}
-	if e := bible.Parse("canon/雷恩.md", cRain); e.Type != "地點" {
-		t.Fatalf("覆寫為地點未生效: %+v", e)
+	if !p.Exists("outline/雷恩.md") {
+		t.Fatal("覆寫為大綱未生效")
 	}
 	if p.Exists("notes/世界觀.md") {
 		t.Fatal("略過的頁面不應匯入")
@@ -187,7 +178,7 @@ func TestApplyPerPageOverrides(t *testing.T) {
 	if _, err := Undo(p, res.ID); err != nil || len(res.Created) != 2 {
 		t.Fatalf("undo err=%v", err)
 	}
-	if p.Exists("canon/艾莉絲.md") || p.Exists("canon/雷恩.md") {
+	if p.Exists("canon/艾莉絲.md") || p.Exists("outline/雷恩.md") {
 		t.Fatal("撤銷後應移除")
 	}
 }
@@ -206,13 +197,13 @@ func TestApplyPerPageAgainstGroup(t *testing.T) {
 	}
 
 	p1, _ := project.Create(t.TempDir(), "n1")
-	res, err := Apply(p1, src, map[string]string{"角色": TargetSkip, "": TargetNotes}, map[string]string{aliceSrc: "道具"}, bible.Types)
+	res, err := Apply(p1, src, map[string]string{"角色": TargetSkip, "": TargetNotes}, map[string]string{aliceSrc: TargetCanon})
 	if err != nil || len(res.Created) != 2 {
 		t.Fatalf("群組略過但單頁指定: created=%v err=%v", res.Created, err)
 	}
 	c, _ := p1.ReadFile("canon/艾莉絲.md")
-	if e := bible.Parse("canon/艾莉絲.md", c); e.Type != "道具" {
-		t.Fatalf("單頁覆寫未生效: %+v", e)
+	if !strings.Contains(c, "才不是呢") {
+		t.Fatalf("單頁覆寫未生效: %q", c)
 	}
 	if _, err := p1.ReadFile("canon/雷恩.md"); !os.IsNotExist(err) {
 		t.Fatal("群組略過的雷恩不應匯入")
@@ -222,7 +213,7 @@ func TestApplyPerPageAgainstGroup(t *testing.T) {
 	}
 
 	p2, _ := project.Create(t.TempDir(), "n2")
-	res2, err := Apply(p2, src, map[string]string{"角色": "角色", "": TargetNotes}, map[string]string{aliceSrc: TargetSkip}, bible.Types)
+	res2, err := Apply(p2, src, map[string]string{"角色": TargetCanon, "": TargetNotes}, map[string]string{aliceSrc: TargetSkip})
 	if err != nil || len(res2.Created) != 2 {
 		t.Fatalf("群組有類型但單頁略過: created=%v err=%v", res2.Created, err)
 	}
@@ -234,46 +225,11 @@ func TestApplyPerPageAgainstGroup(t *testing.T) {
 	}
 }
 
-// 意圖:自訂分類(SPEC §12.2)要能作為匯入去處 — targetDir 依呼叫者給的清單驗證,
-// 不在清單的值仍然被拒絕(§16-9:Go 端 Target 驗證一併放行自訂分類)。
-func TestTargetDirAcceptsCustomCategory(t *testing.T) {
-	dir, typ, ok := targetDir("組織", []string{"角色", "組織"})
-	if !ok || dir != project.CanonDir || typ != "組織" {
-		t.Fatalf("自訂分類應匯入 canon/ 且 type=組織: dir=%q typ=%q ok=%v", dir, typ, ok)
-	}
-	if _, _, ok := targetDir("亂寫的分類", []string{"角色", "組織"}); ok {
-		t.Fatal("不在允許清單的去處要被拒絕")
-	}
-	// 特殊去處不依賴 types 清單
-	if d, _, ok := targetDir(TargetSkip, nil); ok || d != "" {
-		t.Fatalf("略過仍應不匯入: d=%q ok=%v", d, ok)
-	}
-}
-
-// 意圖:實際以自訂分類匯入 — 檔案落在 canon/ 且 frontmatter type 為該自訂分類。
-func TestApplyWithCustomCategoryTarget(t *testing.T) {
-	p, _ := project.Create(t.TempDir(), "n")
-	res, err := Apply(p, fixture(t), map[string]string{"角色": "組織", "": TargetNotes}, nil, []string{"角色", "組織"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Created) == 0 {
-		t.Fatalf("應有匯入檔案: %+v", res)
-	}
-	c, err := p.ReadFile("canon/艾莉絲.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if e := bible.Parse("canon/艾莉絲.md", c); e.Type != "組織" {
-		t.Fatalf("匯入 type 應為自訂分類「組織」, got %q", e.Type)
-	}
-}
-
 // 意圖(第二輪 #2 附帶):target 不在可匯入分類清單時不得靜默 continue,
 // 要列入略過報告並附原因,作者才知道那頁為何沒匯入。
 func TestApplyReportsUnknownTargetInSkipped(t *testing.T) {
 	p, _ := project.Create(t.TempDir(), "n")
-	res, err := Apply(p, fixture(t), map[string]string{"角色": "不存在的分類", "": TargetSkip}, nil, bible.Types)
+	res, err := Apply(p, fixture(t), map[string]string{"角色": "不存在的分類", "": TargetSkip}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

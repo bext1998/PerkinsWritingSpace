@@ -161,17 +161,17 @@ module.exports = {
         // 設定集文件:欄位表單也要隱藏,且未套用的輸入在退出後保留
         await page.click('[data-testid=rail-bible]');
         await page.click('[data-testid=entity-row] >> nth=0');
-        await page.waitForSelector('[data-testid=entity-name]');
-        const nameBefore = await page.inputValue('[data-testid=entity-name]');
-        await page.fill('[data-testid=entity-name]', nameBefore + '禪');
+        await page.waitForSelector('[data-testid=entity-aliases]');
+        const nameBefore = await page.inputValue('[data-testid=entity-aliases]');
+        await page.fill('[data-testid=entity-aliases]', nameBefore + '禪');
         await page.keyboard.press('Control+Shift+F');
         await page.waitForSelector('[data-testid=zen-exit]');
-        const nameHidden = await page.evaluate(() => document.querySelector('[data-testid=entity-name]')?.getClientRects().length === 0);
+        const nameHidden = await page.evaluate(() => document.querySelector('[data-testid=entity-aliases]')?.getClientRects().length === 0);
         await page.keyboard.press('Control+Shift+F');
         await page.waitForSelector('[data-testid=rail]:visible');
         check('禪模式 設定集欄位表單一併隱藏,退出後未套用的輸入仍在',
-            nameHidden && (await page.inputValue('[data-testid=entity-name]')) === nameBefore + '禪');
-        await page.fill('[data-testid=entity-name]', nameBefore);
+            nameHidden && (await page.inputValue('[data-testid=entity-aliases]')) === nameBefore + '禪');
+        await page.fill('[data-testid=entity-aliases]', nameBefore);
         await page.click('[data-testid=rail-manuscript]');
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
         await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');

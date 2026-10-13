@@ -17,6 +17,3 @@ export interface PanelProps {
     save: () => Promise<void>;
 }
 
-// 內建分類與其順序(SPEC §12.2)。自訂分類與「管理分類」已移除(#100):
-// frontmatter 裡既有的非內建 type 照常保留與顯示,只是不再出現在新增時的選單裡。
-export const BUILTIN_TYPES = ['角色', '地點', '勢力', '道具', '名詞', '其他'];

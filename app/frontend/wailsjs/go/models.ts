@@ -95,7 +95,6 @@ export namespace bible {
 	}
 	export class Entity {
 	    path: string;
-	    type: string;
 	    name: string;
 	    aliases: string[];
 	
@@ -106,7 +105,6 @@ export namespace bible {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.path = source["path"];
-	        this.type = source["type"];
 	        this.name = source["name"];
 	        this.aliases = source["aliases"];
 	    }

@@ -20,7 +20,7 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
         setInput('');
         if (!t) return;
         try {
-            const rel = await NewDoc(dir, t, '');
+            const rel = await NewDoc(dir, t);
             await refreshTree();
             await openFile(rel);
         } catch (e) { fail(e); }

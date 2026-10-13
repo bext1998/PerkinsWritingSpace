@@ -1,5 +1,17 @@
 # PROGRESS.md
 
+## 2026-10-13 — 設定檔回到純 Markdown:移除分類,Perkins 只寫別名(作者回饋)
+
+作者實際使用新版後回饋:預設分類棘手、設定檔開頭的 frontmatter(`type/name/aliases`)對作者是負擔,每位作者整理設定的方式不同,Bot 也會自己查閱檔案。SPEC §12.2 改寫(取代 #100「分類只用內建清單」)。
+
+- **移除分類**:新增設定對話框、EntityHeader、Notion 匯入「匯入為」不再有分類;資訊欄「本章提及的設定」不再顯示類型。`bible.Entity` 去掉 `Type`、`bible.Types`/`TypeOther` 移除。作者以 `canon/` 資料夾自行分類。
+- **新增設定**:`NewDoc(dir, title)`(綁定少一個參數)建立只有 `# 名稱` 的 Markdown,不寫 frontmatter、不預設「外貌/個性…」欄位。
+- **EntityHeader 只剩別名**:`ApplyEntityHeader(content, aliases)` → `bible.SetAliases`:只改 `aliases`;清空時移除該欄,frontmatter 因此變空就整段移除(純 Markdown 加了又清掉別名回到原內容);其他欄位與本文不動。名稱 = 檔名,舊檔的 `name` 仍讀取。
+- **Notion 匯入**:去處 設定/大綱/筆記/略過,匯入 `canon/` 不加 frontmatter;依資料夾名猜「設定/大綱/筆記」。
+- **相容性**:舊檔的 `type`、`name` 與其他欄位原樣保留,Perkins 不改寫。
+- **驗證**:`go test ./...` 通過;`tsc --noEmit`、`npm run build` 通過;E2E(`E2E_SKIP_AI=1`)bible、titlebar-zen 58/58,notion、search-editor 通過;`--all` 605/607,兩項失敗與本次無關:`bot-chat` #32 依作者實際的目前端點是否為未確認雲端端點;`shelf` 停在平台輸出預覽(#110 改為清單+子頁後該組未更新,main 既有問題)、`--all` 時另因前組留下的狀態找不到 chat-fab。
+- **E2E 教訓**:EntityHeader 由 `ParseEntity`(防抖 200ms)跟上套用後的內容;連續操作要等「套用」按鈕消失再輸入,否則輸入會被同步蓋回。
+
 ## 2026-10-13(夜) — 設定資料夾搬到 ~/.perkins、本段提到的設定、平台輸出頁改版、下拉閃爍(#104、#108、#94)
 
 作者決定(#104 留言)後由 Orchestrator 推進;各 PR 均經 Hemingway(Codex)審查通過後合併。

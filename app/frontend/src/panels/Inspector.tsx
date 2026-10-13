@@ -85,8 +85,6 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                                     const e = entityOf(c.path);
                                     return (
                                         <li key={c.path} className="group flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
-                                            {/* 以類型文字區分(設計審查 18),不用圖示 */}
-                                            <span className="shrink-0 text-xs text-muted-foreground">{e?.type ?? '其他'}</span>
                                             <span className="flex-1 cursor-pointer truncate" onClick={() => openFile(c.path)}>{e?.name ?? baseName(c.path)}</span>
                                             <span className="text-xs tabular-nums text-muted-foreground">×{c.count}</span>
                                             <Tip label="附加到對話" side="left">
