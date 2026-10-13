@@ -6,6 +6,7 @@ import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
 import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Tip} from '@/components/ui/overlay';
 import {cn, errText} from '@/lib/utils';
+import {enter} from '@/lib/motion';
 
 interface Props {
     onOpen: (t: project.Tree) => void;
@@ -66,7 +67,7 @@ export default function Bookshelf({onOpen, onSettings}: Props) {
     for (let i = 0; i < recent.length; i += 6) rows.push(recent.slice(i, i + 6));
 
     return (
-        <div className="flex h-full flex-col overflow-y-auto">
+        <div data-testid="bookshelf" className={cn('flex h-full flex-col overflow-y-auto', enter.fade)}>
             {/* 左對齊小標題列:主動作(開作品)與按鈕同列,最近作品在首屏上方(設計審查 16) */}
             <header className="flex shrink-0 items-center gap-3 border-b px-8 py-4">
                 <h1 className="font-serif text-xl font-semibold" data-testid="bookshelf-title">我的書櫃</h1>

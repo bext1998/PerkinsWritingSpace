@@ -125,6 +125,8 @@ const focusPlugin = ViewPlugin.fromClass(FocusView, {decorations: v => v.deco});
 
 const focusTheme = EditorView.theme({
     '.cm-paper-dim': {opacity: '0.35'},
+    // 段落淡化時透明度漸變(#120);只有透明度,不位移。減少動態效果時由 .reduce-motion 歸零
+    '.cm-line': {transition: 'opacity .2s ease-out'},
 });
 
 export const typewriterExtensions = (): Extension => typewriterPlugin;

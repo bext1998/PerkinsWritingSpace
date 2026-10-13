@@ -172,6 +172,12 @@
 .cm-ai-flash { animation: cm-ai-flash 3s ease-out forwards; }
 @keyframes cm-ai-flash { from { background: hsl(var(--primary) / .25); } to { background: transparent; } }
 @keyframes cm-flash { from { background: hsl(var(--selection) / .35); } to { background: transparent; } }
+/* 減少動態效果時(#120,UI_GUIDE §15):資訊性標示不歸零,維持原時長但不漸變,時間到直接消失,
+   作者仍看得到 AI 改了哪裡、跳到了哪一行(蓋過 .reduce-motion * 的 animation-duration: 0s) */
+.reduce-motion .cm-flash { animation-duration: 1.2s !important; animation-timing-function: steps(1, end) !important; }
+.reduce-motion .cm-ai-flash { animation-duration: 3s !important; animation-timing-function: steps(1, end) !important; }
+/* 載入中的轉圈同樣是資訊(還在處理):照常轉,停住會讓人以為當掉 */
+.reduce-motion .animate-spin { animation-duration: 1s !important; animation-iteration-count: infinite !important; }
 
 /* 生成的書封:單色底 + 書脊線,不再疊漸層/陰影(設計審查 17;書架層板改低對比分隔線) */
 

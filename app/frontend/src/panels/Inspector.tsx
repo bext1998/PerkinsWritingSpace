@@ -5,7 +5,8 @@ import {project, summary} from '../../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Badge} from '@/components/ui/basic';
 import {Tip} from '@/components/ui/overlay';
-import {baseName} from '@/lib/utils';
+import {baseName, cn} from '@/lib/utils';
+import {enter} from '@/lib/motion';
 import {PanelProps} from './types';
 
 interface Props extends PanelProps {
@@ -41,7 +42,7 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
     const appearances = current?.startsWith('canon/') ? index?.appearances?.[current] ?? [] : [];
 
     return (
-        <aside className="w-[280px] shrink-0 overflow-y-auto border-l bg-sidebar" data-testid="inspector">
+        <aside className={cn('w-[280px] shrink-0 overflow-y-auto border-l bg-sidebar', enter.fromRight)} data-testid="inspector">
             {chapter && (
                 <>
                     <Section title="章節摘要" icon={ScrollText}>
