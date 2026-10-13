@@ -11,6 +11,7 @@ import {Badge, Checkbox, Input, Label, Switch, Textarea} from '@/components/ui/b
 import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue, Tip} from '@/components/ui/overlay';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
+import {enter} from '@/lib/motion';
 import {GeneratedCover} from './Bookshelf';
 import NotionImport from './NotionImport';
 import {PAPER_FONT_SIZES, PAPER_PARA_GAPS, PAPER_WIDTHS, PaperLayout} from './paperLayout';
@@ -323,7 +324,7 @@ function ProfilePage({cfg, setCfg, view, notice, onBack, onDeleted, setDirty}: {
     const onlyOne = cfg.profiles.length <= 1;
 
     return (
-        <div className="grid gap-8" data-testid="profile-page">
+        <div className={cn('grid gap-8', enter.fromRight)} data-testid="profile-page">
             <div className="grid gap-3">
                 <SubpageHeader title={view.name} onBack={onBack}>
                     {onlyOne ? (
@@ -475,7 +476,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
     if (sub?.kind === 'agents') {
         const pg = AGENTS_PAGES[sub.scope];
         return (
-            <div className="grid gap-6">
+            <div className={cn('grid gap-6', enter.fromRight)} data-testid="agents-page">
                 <SubpageHeader title={pg.title} onBack={back}/>
                 <AgentsEditor key={sub.scope} scope={sub.scope} hint={pg.hint} setDirty={setDirty}/>
             </div>
@@ -483,7 +484,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
     }
 
     return (
-        <div className="grid gap-8">
+        <div className={cn('grid gap-8', enter.fade)}>
             <Section title="模型端點" desc="每個端點是一個模型服務(本機 LM Studio、雲端服務商…)。點選端點編輯設定;金鑰存 Windows 憑證管理員,不會寫進任何專案或設定檔。">
                 <div className="flex flex-wrap items-center gap-2">
                     {/* 從預設新增(#43):依「本機/服務商」分組,國際站/中國站與 Anthropic 原生在選項上標示 */}
@@ -617,7 +618,7 @@ function PlatformPage({cfg, write, initial, opts, onBack, onDeleted, setDirty}: 
     };
 
     return (
-        <div className="grid gap-8" data-testid="platform-page">
+        <div className={cn('grid gap-8', enter.fromRight)} data-testid="platform-page">
             <div className="grid gap-3">
                 <SubpageHeader title={form.name} onBack={onBack}>
                     <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDel(true)}
@@ -720,7 +721,7 @@ function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; s
     }
 
     return (
-        <div className="grid gap-8">
+        <div className={cn('grid gap-8', enter.fade)}>
             <Section title="平台" testid="platforms-section"
                      desc="複製到平台時套用的格式規則。內建規則是推測值,實際貼上確認後打開「已驗證」。">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1230,7 +1231,7 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
 
     return (
         <div style={{top: TITLEBAR_HEIGHT}}
-             className="fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden bg-background" data-testid="settings-page">
+             className={cn('fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden bg-background', enter.rise)} data-testid="settings-page">
             {/* 頁首:返回 + 標題 */}
             <div className="flex shrink-0 items-center gap-3 border-b px-6 py-3">
                 <Button variant="ghost" size="icon" onClick={() => guard(onClose)} data-testid="close-settings"><ArrowLeft/></Button>
@@ -1247,7 +1248,7 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
                 {/* 內容區:獨立捲動、單一 max-w-5xl 置中(SPEC §17.2) */}
                 <div data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
                     {cfg && (
-                        <div className="mx-auto w-full max-w-5xl px-6 py-6">
+                        <div key={page} data-testid="settings-page-body" className={cn('mx-auto w-full max-w-5xl px-6 py-6', enter.fade)}>
                             {pendingLeave && (
                                 <div className="sticky top-0 z-10 bg-background pb-3">
                                     <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning" data-testid="unsaved-leave">

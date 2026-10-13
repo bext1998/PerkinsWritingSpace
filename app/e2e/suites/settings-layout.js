@@ -452,6 +452,39 @@ module.exports = {
         await settle(80, 300);
         await resetAppearance();
 
+        // ===== #120 轉場:減少動態效果關閉時有進場動畫;開啟時轉場歸零,但 AI 改動標示維持時長、改為不漸變 =====
+        const setMotion = async v => {
+            await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+            await page.click('[data-testid=appearance-reduce-motion]');
+            await waitSel(`[data-testid=appearance-reduce-motion-opt-${v}]`);
+            await page.click(`[data-testid=appearance-reduce-motion-opt-${v}]`);
+            await settle(80, 500);
+        };
+        // 轉場元素與資訊性標示的 computed animation(標示用臨時元素量測,與編輯器同一組 CSS 規則)
+        const motionState = () => page.evaluate(() => {
+            const dur = sel => { const el = document.querySelector(sel); return el ? getComputedStyle(el).animationDuration : null; };
+            const probe = cls => {
+                const el = document.createElement('span'); el.className = cls; document.body.appendChild(el);
+                const cs = getComputedStyle(el); const r = {dur: cs.animationDuration, fn: cs.animationTimingFunction};
+                el.remove(); return r;
+            };
+            return {settings: dur('[data-testid=settings-page]'), body: dur('[data-testid=settings-page-body]'),
+                ai: probe('cm-ai-flash'), jump: probe('cm-flash')};
+        });
+        await setMotion('off');
+        const mOff = await motionState();
+        check('#120 減少動態效果關閉:設定頁與頁面內容有進場動畫(約 200ms)', mOff.settings === '0.2s' && mOff.body === '0.2s', JSON.stringify(mOff));
+        check('#120 減少動態效果關閉:AI 改動標示照常 3 秒漸變', mOff.ai.dur === '3s' && !mOff.ai.fn.startsWith('steps'), JSON.stringify(mOff.ai));
+        await setMotion('on');
+        const mOn = await motionState();
+        check('#120 減少動態效果開啟:轉場歸零', mOn.settings === '0s' && mOn.body === '0s', JSON.stringify(mOn));
+        check('#120 減少動態效果開啟:AI 改動標示與跳行閃爍維持原時長、不漸變',
+            mOn.ai.dur === '3s' && mOn.ai.fn.startsWith('steps') && mOn.jump.dur === '1.2s' && mOn.jump.fn.startsWith('steps'), JSON.stringify(mOn));
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+
         // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
         await page.click('[data-testid=tab-models]');
         await waitSel('[data-testid=profile-list]');
