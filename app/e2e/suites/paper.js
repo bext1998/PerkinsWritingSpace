@@ -498,8 +498,12 @@ module.exports = {
             return s ? {y: Math.round(s.y), h: Math.round(s.h), ratio: s.y / s.h} : null;
         });
         const stTop = () => page.evaluate(() => document.querySelector('.cm-scroller').scrollTop);
-        const ops = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')]
-            .map(l => ({t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)})));
+        // 專注模式淡化有 200ms 透明度漸變(#120):量測前等進行中的漸變結束,讀到的是最終值
+        const ops = () => page.evaluate(async () => {
+            const ls = [...document.querySelectorAll('.cm-content .cm-line')];
+            await Promise.all(ls.flatMap(l => l.getAnimations().map(a => a.finished.catch(() => {}))));
+            return ls.map(l => ({t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)}));
+        });
         const openAppMenu = async () => {
             await page.click('[data-testid=app-menu]');
             await page.waitForSelector('[data-testid=app-menu-content]', {timeout: 5000});
@@ -623,8 +627,9 @@ module.exports = {
 
         // 專注模式:游標所在段落不淡化,其他(含標題、場景分隔)淡化;換段跟著換。
         // 畫面只渲染可見的行,一律用行文字找目標行(不靠行序),量測前先捲到該區
-        const rowOf = t => page.evaluate(s => {
+        const rowOf = t => page.evaluate(async s => {
             const l = [...document.querySelectorAll('.cm-content .cm-line')].find(x => x.innerText.trim().startsWith(s));
+            if (l) await Promise.all(l.getAnimations().map(a => a.finished.catch(() => {})));
             return l ? {t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)} : null;
         }, t);
         await setDoc(TDOC);

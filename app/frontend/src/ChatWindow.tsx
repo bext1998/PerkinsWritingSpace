@@ -496,7 +496,7 @@ export default function ChatWindow(props: Props) {
         <>
             {!open && (
                 <button data-testid="chat-fab"
-                        className={cn('fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-105', enter.pop)}
+                        className={cn('fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-105', enter.fade)}
                         onClick={() => { onPickSelection?.(); setOpen(true); }} title="Perkins Bot">
                     <MessageCircle className="h-6 w-6"/>
                     {(pending > 0 || busy) && (
@@ -508,7 +508,7 @@ export default function ChatWindow(props: Props) {
             )}
 
             <div ref={box} data-testid="chat-window"
-                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg', enter.pop, !open && 'hidden')}
+                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg', enter.fade, !open && 'hidden')}
                  style={{...style, width: 440, height: 620, minWidth: 340, minHeight: 360, maxWidth: '90vw', maxHeight: '90vh', resize: 'both'}}>
                 {/* 標題列(可拖曳) */}
                 <div className="flex h-11 shrink-0 cursor-move select-none items-center gap-2 border-b px-3" onMouseDown={startDrag}>
