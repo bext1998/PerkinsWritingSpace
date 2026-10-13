@@ -42,7 +42,7 @@ function buildTree(files: FileNode[]): DirNode {
     return root;
 }
 
-export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, notify, fail}: PanelProps) {
+export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, notify, fail, save}: PanelProps) {
     const [q, setQ] = useState('');
     const [creating, setCreating] = useState(false);
     const [name, setName] = useState('');
@@ -72,6 +72,8 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
     const trash = async (rel: string) => {
         setConfirming(null);
         try {
+            // 刪的是目前檔案:先存檔,回收區才有作者最新的字;存檔失敗就不刪(#119 審查)
+            if (rel === current) await save();
             await TrashFile(rel);
             await refreshTree();
             refreshIndex();

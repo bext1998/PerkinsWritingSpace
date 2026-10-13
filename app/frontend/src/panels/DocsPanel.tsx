@@ -10,7 +10,7 @@ import {PanelProps} from './types';
 
 type Dir = 'outline' | 'notes';
 
-export default function DocsPanel({tree, current, openFile, refreshTree, notify, fail}: PanelProps) {
+export default function DocsPanel({tree, current, openFile, refreshTree, notify, fail, save}: PanelProps) {
     const [adding, setAdding] = useState<Dir | null>(null);
     const [input, setInput] = useState('');
 
@@ -28,6 +28,7 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
 
     const trash = async (rel: string) => {
         try {
+            if (rel === current) await save(); // 先存檔,回收區才有最新的字;存檔失敗就不刪
             await TrashFile(rel);
             await refreshTree();
             notify({text: '已移到回收區(.perkins/trash)', kind: 'info'});

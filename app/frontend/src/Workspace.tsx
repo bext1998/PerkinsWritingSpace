@@ -241,18 +241,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     useEffect(() => { refreshCounts(); refreshIndex(); }, [refreshCounts, refreshIndex]);
 
     // 作者可能在 Perkins 外(檔案總管、其他編輯器)增刪作品檔案(#117):視窗回到前景時重讀檔案樹、索引與字數。
-    // 目前檔案已不存在時,沒有未存內容就關閉(下方 tree effect);有未存內容則保留在編輯器,存檔會重新建立
+    // 目前檔案已不存在時由下方 tree effect 處理:沒有未存內容就關閉,有未存內容則保留在編輯器
     const syncExternal = useCallback(async () => {
         const t = await GetTree();
         const cur = latest.current.current;
-        if (cur && !cur.startsWith('summaries/') && cur !== keepMissing.current
+        if (cur && !cur.startsWith('summaries/') && !latest.current.dirty
             && !treeFiles(t).some(e => e.path === cur)) {
-            if (latest.current.dirty) {
-                keepMissing.current = cur;
-                notify({text: '目前的檔案已在 Perkins 外被刪除。未儲存的內容還在編輯器,儲存會重新建立這個檔案。', kind: 'error'});
-            } else {
-                notify({text: '目前開著的檔案已在 Perkins 外被刪除,已關閉。', kind: 'info'});
-            }
+            notify({text: '目前開著的檔案已在 Perkins 外被刪除,已關閉。', kind: 'info'});
         }
         setTree(t);
         refreshIndex();
@@ -275,6 +270,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     // 目前開啟的檔案被移到回收區(或被撤銷匯入)後關閉編輯器,避免存檔時又把它寫回來;
     // 位置記憶只留還存在的檔案:刪除後建立同名檔案要從預設位置開始,不能套用已刪文件的位置
+    // 例外(#117):編輯器裡還有未存的字時不關閉(任何更新清單的路徑都經過這裡),存檔會重新建立該檔;
+    // App 內刪除目前檔案前會先存檔(BiblePanel/DocsPanel),所以這裡只會碰到外部刪除或刪除途中又打的字
     useEffect(() => {
         const all = treeFiles(tree);
         for (const k of [...posMemo.current.keys()]) if (!all.some(e => e.path === k)) posMemo.current.delete(k);
@@ -282,7 +279,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         // 摘要檔(summaries/)不在樹上,但作品健康檢查會從問題清單點開它們:不當成已被刪除
         if (current.startsWith('summaries/')) return;
         if (!all.some(e => e.path === current)) {
-            if (keepMissing.current === current && latest.current.dirty) return;
+            if (latest.current.dirty) {
+                if (keepMissing.current !== current) {
+                    keepMissing.current = current;
+                    notify({text: '目前的檔案已不在作品資料夾中。未儲存的內容還在編輯器,儲存會重新建立這個檔案。', kind: 'error'});
+                }
+                return;
+            }
             loaded.current = null;
             setCurrent(null);
             setText('');

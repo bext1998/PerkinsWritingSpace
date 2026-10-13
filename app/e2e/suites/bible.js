@@ -361,5 +361,51 @@ module.exports = {
         xdel('canon/編輯中.md');
         await refocus();
         await vanish('canon/編輯中.md');
+
+        // PR #119 審查 1:在 App 內刪除開著且有未存內容的設定,要先存檔,回收區才有最新的字
+        const openCanon = async (rel, title) => {
+            await page.click(rowSel(rel));
+            await page.waitForFunction(t => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes(t), title, {timeout: 5000}).catch(() => {});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+        };
+        xw('canon/刪前未存.md', '# 刪前未存\n');
+        await refocus();
+        await appear('canon/刪前未存.md');
+        await openCanon('canon/刪前未存.md', '刪前未存');
+        await page.keyboard.type('刪前的字');
+        await page.hover(rowSel('canon/刪前未存.md'));
+        await page.click(`${rowSel('canon/刪前未存.md')} [data-testid=entity-delete]`);
+        await page.click(`${rowSel('canon/刪前未存.md')} [data-testid=entity-delete-confirm]`);
+        await vanish('canon/刪前未存.md');
+        const trashed = fs.existsSync(trashDir) ? fs.readdirSync(trashDir).map(s => path.join(trashDir, s, 'canon', '刪前未存.md')).filter(f => fs.existsSync(f)) : [];
+        check('#119 刪除開著且未存的設定:回收區保留刪除前打的字',
+            trashed.length === 1 && fs.readFileSync(trashed[0], 'utf8').includes('刪前的字'), trashed.join(','));
+
+        // PR #119 審查 2:點到已被外部刪除的檔案、讀檔等待期間又在目前檔案打字,且目前檔案也被外部刪除:
+        // 讀檔失敗後更新清單不得關閉編輯器丟字
+        xw('canon/等待中.md', '# 等待中\n');
+        xw('canon/幽靈.md', '# 幽靈\n');
+        await refocus();
+        await appear('canon/幽靈.md');
+        await openCanon('canon/等待中.md', '等待中');
+        xdel('canon/幽靈.md');
+        await page.evaluate(() => window.__perkinsReadDelay(1500));
+        await page.click(rowSel('canon/幽靈.md'));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('讀檔時打的字');
+        xdel('canon/等待中.md');
+        await page.waitForTimeout(2500);
+        await page.evaluate(() => window.__perkinsReadDelay(0));
+        const kept = (await page.textContent('.cm-content').catch(() => '')).includes('讀檔時打的字');
+        check('#119 讀檔失敗更新清單時保留目前檔案的未存內容', kept);
+        await page.keyboard.press('Control+s');
+        let back = false;
+        for (let i = 0; i < 30 && !back; i++) { await page.waitForTimeout(100); back = fs.existsSync(P('canon/等待中.md')); }
+        check('#119 存檔後重新建立目前檔案', back && read('canon/等待中.md').includes('讀檔時打的字'));
+        xdel('canon/等待中.md');
+        await refocus();
+        await vanish('canon/等待中.md');
     },
 };
