@@ -136,7 +136,8 @@ export function deriveTokens(bg: string, fg: string, accent: string, isDark: boo
 // 把 deriveTokens 的結果套到 document.documentElement 的 CSS 自訂屬性上(inline style)。
 export function applyDerivedTokens(tokens: Record<string, string>) {
     const root = document.documentElement;
-    for (const [k, v] of Object.entries(tokens)) root.style.setProperty('--' + k, v);
+    // deriveTokens 的鍵是 camelCase(cardForeground),CSS 變數是 kebab-case(--card-foreground)
+    for (const [k, v] of Object.entries(tokens)) root.style.setProperty('--' + k.replace(/[A-Z]/g, c => '-' + c.toLowerCase()), v);
 }
 
 // 還原 inline style 的所有 token(讓 class 重新生效)。
@@ -169,11 +170,9 @@ export function applyCustomSide(sideCfg: {accent?: string; background?: string; 
     const accent = sideCfg.accent || '';
     const background = sideCfg.background || '';
     const foreground = sideCfg.foreground || '';
-    const hasAny = !!(background || foreground || accent);
-    if (!hasAny) {
-        clearDerivedTokens();
-        return;
-    }
+    // 先清掉上一次的覆寫,下面讀到的才是主題預設檔原值,而不是自己之前蓋上去的自訂色
+    clearDerivedTokens();
+    if (!(background || foreground || accent)) return;
 
     // 沒自訂的欄位:讀主題預設檔的實際值(不寫死,才不會把深灰/米白蓋掉)。
     const fallbackBgHex = background || hslToHex(hslFromString(readThemeToken('background')));

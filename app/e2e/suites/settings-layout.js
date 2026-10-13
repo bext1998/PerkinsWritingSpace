@@ -357,6 +357,31 @@ module.exports = {
         await page.click('[data-testid=appearance-reset-confirm]');
         await settle(80, 500);
 
+        // Orchestrator 審查:自訂文字色時,卡片/選單/次要文字等衍生 token 要真的套上;
+        // 文字與背景都自訂後只清掉背景,背景要回到主題原值(不能沿用上一次自己蓋上的自訂色)
+        const cssVar = name => page.evaluate(n => getComputedStyle(document.documentElement).getPropertyValue(n).trim(), name);
+        const bgPreset = await cssVar('--background');
+        const typeHex = async (field, v) => {
+            await page.fill(`[data-testid=appearance-${field}-hex]`, v);
+            await page.keyboard.press('Tab');
+            await settle(80, 500);
+        };
+        await typeHex('foreground', '#ffeecc');
+        await typeHex('background', '#203040');
+        const derived = {fg: await cssVar('--foreground'), cardFg: await cssVar('--card-foreground'), popFg: await cssVar('--popover-foreground')};
+        check('外觀 自訂文字色會套到卡片與選單的文字色', derived.cardFg === derived.fg && derived.popFg === derived.fg, JSON.stringify(derived));
+        await page.click('[data-testid=appearance-background-clear]');
+        await settle(80, 500);
+        const bgBack = await cssVar('--background');
+        // 背景經 hex 來回換算後重新推算,允許取整誤差
+        const nums = s => s.split(/\s+/).map(parseFloat);
+        const near = (a, b) => nums(a).every((v, i) => Math.abs(v - nums(b)[i]) <= 2);
+        check('外觀 文字仍自訂時清除背景,背景回到主題原值', near(bgBack, bgPreset), JSON.stringify({bgPreset, bgBack}));
+        await page.click('[data-testid=appearance-reset]');
+        await settle(80, 300);
+        await page.click('[data-testid=appearance-reset-confirm]');
+        await settle(80, 500);
+
         // ===== Perkins Bot 頁(Issue #38):從預設新增端點、思考強度、作者指示 AGENTS.md =====
         await page.click('[data-testid=tab-models]');
         await waitSel('[data-testid=profile-list]');
