@@ -400,6 +400,34 @@ module.exports = {
         check('#121 存檔未完成就切模式:背景與模式都保留', both.mode === 'light' && both.darkBg === '#203040', JSON.stringify(both));
         await resetAppearance();
 
+        // PR #121 重審:第一筆寫入失敗時,之後的變更不得讓畫面與設定檔錯開(再改第三欄也不能蓋掉已存的值)
+        await page.evaluate(() => {
+            const app = window.go.main.App;
+            let n = 0;
+            app.SetAppearance = a => new Promise(r => setTimeout(r, 800))
+                .then(() => (n++ === 0 ? Promise.reject('模擬寫入失敗') : window.__origSetAppearance(a)));
+        });
+        await page.fill('[data-testid=appearance-background-hex]', '#203040');
+        await page.click('[data-testid=appearance-mode-light]');
+        await page.waitForTimeout(2500);
+        const errShown = await page.isVisible('[data-testid=appearance-save-error]');
+        await page.evaluate(() => { window.go.main.App.SetAppearance = window.__origSetAppearance; });
+        await page.evaluate(() => { document.querySelector('[data-testid=appearance-advanced]')?.setAttribute('open', ''); });
+        await page.click('[data-testid=appearance-font-size]').catch(() => {});
+        const fontOpt = await page.waitForSelector('[data-testid=appearance-font-size-opt-large]', {timeout: 2000}).then(() => true).catch(() => false);
+        if (fontOpt) await page.click('[data-testid=appearance-font-size-opt-large]');
+        await page.waitForTimeout(1000);
+        const consistent = await page.evaluate(async () => {
+            const a = (await window.go.main.App.GetSettings()).appearance;
+            const uiMode = document.documentElement.classList.contains('light') ? 'light' : 'dark';
+            const uiBg = document.querySelector('[data-testid=appearance-background-hex]')?.value ?? null;
+            return {diskMode: a.mode, uiMode, diskBg: a[uiMode].background || '', uiBg, font: a.uiFontSize};
+        });
+        check('#121 第一筆寫入失敗:顯示錯誤,之後畫面與設定檔一致',
+            errShown && fontOpt && consistent.font === 'large' && consistent.diskMode === consistent.uiMode && consistent.diskBg === consistent.uiBg,
+            JSON.stringify({errShown, fontOpt, ...consistent}));
+        await resetAppearance();
+
         // PR #121 審查 3:內建綠色強調色的按鈕文字要選深色(白字對比不到 3:1)
         await page.click('[data-testid=appearance-accent-select]');
         await waitSel('[data-testid=appearance-accent-opt-green]');

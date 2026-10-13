@@ -981,23 +981,38 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
     // 顯示錯誤並保留原 state,不會出現「以為存了、重開不見」的狀況。
     const [saveError, setSaveError] = useState('');
     // 每次變更都以「最新的待存設定」為基礎(PR #121 審查):上一筆還沒存完就改別的欄位時,
-    // 不能用 render 時的舊 appearance 組完整物件,否則後一筆會蓋掉前一筆。寫入依序排隊;
-    // 畫面先套用,失敗時顯示錯誤並回到最後一次存成功的設定,不冒充已儲存。
+    // 不能用 render 時的舊 appearance 組完整物件,否則後一筆會蓋掉前一筆。
+    // 同時最多一個寫入,每次只送當下最新的設定;畫面先套用,失敗時顯示錯誤並回到最後一次存成功的設定,
+    // 迴圈結束時畫面、待存與磁碟三者一致(不會有「前一筆失敗回滾、後一筆舊快照又寫成功」的錯開)。
     const pending = useRef(appearance);
     const saved = useRef(appearance);
-    const queue = useRef<Promise<void>>(Promise.resolve());
+    const sending = useRef(false);
     type Ap = settings.Appearance;
+    const flush = async () => {
+        if (sending.current) return;
+        sending.current = true;
+        try {
+            while (pending.current !== saved.current) {
+                const next = pending.current;
+                try {
+                    await SetAppearance(next);
+                    saved.current = next;
+                    setSaveError('');
+                } catch (e) {
+                    setSaveError(errText(e));
+                    pending.current = saved.current;
+                    setAppearance(saved.current);
+                }
+            }
+        } finally {
+            sending.current = false;
+        }
+    };
     const persist = (change: (a: Ap) => Omit<Ap, 'convertValues'>) => {
         const next = settings.Appearance.createFrom(change(pending.current)) as Ap;
         pending.current = next;
         setAppearance(next);
-        queue.current = queue.current.then(() => SetAppearance(next)
-            .then(() => { saved.current = next; setSaveError(''); })
-            .catch(e => {
-                setSaveError(errText(e));
-                pending.current = saved.current;
-                setAppearance(saved.current);
-            }));
+        void flush();
     };
     const changePaper = (key: keyof PaperLayout, v: string) => {
         const next = {...paper, [key]: v};
