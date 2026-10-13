@@ -598,10 +598,10 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         } catch (e) { fail(e); }
     };
 
-    const applyHeader = async (typ: string, name: string, aliases: string[]) => {
+    const applyHeader = async (aliases: string[]) => {
         if (!current) return;
         try {
-            const next = await ApplyEntityHeader(latest.current.text, typ, name, aliases);
+            const next = await ApplyEntityHeader(latest.current.text, aliases);
             editVersion.current++;
             latest.current = {...latest.current, text: next, dirty: true};
             setText(next);

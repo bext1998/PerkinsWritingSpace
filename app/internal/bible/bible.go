@@ -14,14 +14,8 @@ import (
 	"perkins/internal/project"
 )
 
-// Types 是介面提供的實體類型;檔案裡寫其他值也接受,歸入原值。
-var Types = []string{"角色", "地點", "勢力", "道具", "名詞", "其他"}
-
-const TypeOther = "其他"
-
 type Entity struct {
 	Path    string   `json:"path"`
-	Type    string   `json:"type"`
 	Name    string   `json:"name"`
 	Aliases []string `json:"aliases"`
 }
@@ -68,23 +62,20 @@ func SplitFrontmatter(content string) (yamlPart, body string) {
 	return "", content // 沒有結尾的 ---:視為沒有 frontmatter,不猜
 }
 
-// Parse 讀出實體欄位。沒有 frontmatter 或格式錯誤時:type=其他、name=檔名(SPEC §12.2)。
+// Parse 讀出實體欄位:名稱 = 檔名(舊檔 frontmatter 有 name 時沿用),別名取 frontmatter 的 aliases。
+// 沒有 frontmatter 或格式錯誤時只有檔名(SPEC §12.2)。舊檔的 type 等其他欄位不讀也不改。
 func Parse(path, content string) Entity {
-	e := Entity{Path: path, Type: TypeOther, Name: baseName(path), Aliases: []string{}}
+	e := Entity{Path: path, Name: baseName(path), Aliases: []string{}}
 	y, _ := SplitFrontmatter(content)
 	if y == "" {
 		return e
 	}
 	var fm struct {
-		Type    string      `yaml:"type"`
 		Name    string      `yaml:"name"`
 		Aliases interface{} `yaml:"aliases"`
 	}
 	if yaml.Unmarshal([]byte(y), &fm) != nil {
 		return e
-	}
-	if t := strings.TrimSpace(fm.Type); t != "" {
-		e.Type = t
 	}
 	if n := strings.TrimSpace(fm.Name); n != "" {
 		e.Name = n
@@ -106,8 +97,9 @@ func Parse(path, content string) Entity {
 	return e
 }
 
-// SetHeader 更新 type/name/aliases,保留 frontmatter 其他欄位與本文不變。
-func SetHeader(content, typ, name string, aliases []string) (string, error) {
+// SetAliases 更新 frontmatter 的 aliases,這是 Perkins 唯一會寫進設定檔的欄位;
+// frontmatter 其他欄位與本文不變。別名清空時移除 aliases,frontmatter 因此變空就整段移除。
+func SetAliases(content string, aliases []string) (string, error) {
 	y, body := SplitFrontmatter(content)
 	var doc yaml.Node
 	if y != "" {
@@ -122,59 +114,44 @@ func SetHeader(content, typ, name string, aliases []string) (string, error) {
 	if m.Kind != yaml.MappingNode {
 		m.Kind, m.Content, m.Tag, m.Value = yaml.MappingNode, nil, "", ""
 	}
-	set := func(key string, val *yaml.Node) {
-		for i := 0; i+1 < len(m.Content); i += 2 {
-			if m.Content[i].Value == key {
-				m.Content[i+1] = val
-				return
-			}
-		}
-		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: key}, val)
-	}
-	str := func(s string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Value: s} }
 	seq := &yaml.Node{Kind: yaml.SequenceNode, Style: yaml.FlowStyle}
 	for _, a := range aliases {
 		if a = strings.TrimSpace(a); a != "" {
-			seq.Content = append(seq.Content, str(a))
+			seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: a})
 		}
 	}
-	set("type", str(strings.TrimSpace(typ)))
-	set("name", str(strings.TrimSpace(name)))
-	set("aliases", seq)
+	at := -1
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == "aliases" {
+			at = i
+		}
+	}
+	switch {
+	case len(seq.Content) == 0 && at >= 0:
+		m.Content = append(m.Content[:at], m.Content[at+2:]...)
+	case len(seq.Content) == 0:
+		return content, nil // 沒有別名也沒有舊欄位:原樣不動
+	case at >= 0:
+		m.Content[at+1] = seq
+	default:
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "aliases"}, seq)
+	}
+	// 本文一律原樣接在 frontmatter 後(不插入、不刪除空行),加了又清掉別名才會回到原內容
+	if len(m.Content) == 0 {
+		return body, nil
+	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(&doc); err != nil {
 		return "", err
 	}
-	if y == "" && !strings.HasPrefix(body, "\n") {
-		body = "\n" + body
-	}
 	return "---\n" + buf.String() + "---\n" + body, nil
 }
 
-// Template 產生新實體檔的初始內容。
-func Template(typ, name string) string {
-	head, _ := SetHeader("", typ, name, nil)
-	var fields []string
-	switch typ {
-	case "角色":
-		fields = []string{"外貌", "個性", "第一人稱／口癖", "對他人的稱呼", "背景"}
-	case "地點":
-		fields = []string{"位置", "特徵", "相關人物"}
-	case "勢力":
-		fields = []string{"目的", "成員", "與其他勢力的關係"}
-	case "道具":
-		fields = []string{"外觀", "能力／用途", "持有者"}
-	case "名詞":
-		fields = []string{"定義", "使用情境"}
-	}
-	var b strings.Builder
-	b.WriteString("\n# " + strings.TrimSpace(name) + "\n\n")
-	for _, f := range fields {
-		b.WriteString("- " + f + ":\n")
-	}
-	return head + b.String()
+// Template 產生新設定檔的初始內容:只有標題,不預設欄位、不寫 frontmatter(作者自由書寫,SPEC §12.2)。
+func Template(name string) string {
+	return "# " + strings.TrimSpace(name) + "\n"
 }
 
 func baseName(p string) string {

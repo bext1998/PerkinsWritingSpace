@@ -106,10 +106,10 @@ module.exports = {
             !!document.querySelector('.cm-content')
             && (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('主要角色'),
             null, {timeout: 10000}).then(() => true).catch(() => false);
-        await page.waitForSelector('[data-testid=entity-name]', {timeout: 5000}).catch(() => {});
-        // EntityHeader 由 ParseEntity 非同步更新:等欄位值真的換掉,不是讀到上一檔的殘值
+        await page.waitForSelector('[data-testid=entity-aliases]', {timeout: 5000}).catch(() => {});
+        // EntityHeader 由 ParseEntity 非同步更新:等提示裡的名稱真的換掉,不是讀到上一檔的殘值
         const noFmNameOk = await page.waitForFunction(() =>
-            (document.querySelector('[data-testid=entity-name]')?.value ?? '') === '主要角色',
+            (document.querySelector('[data-testid=entity-aliases]')?.getAttribute('placeholder') ?? '').includes('「主要角色」'),
             null, {timeout: 5000}).then(() => true).catch(() => false);
         check('設定集樹 無 frontmatter 的檔可開啟(名稱 = 檔名)', noFmOpen && noFmNameOk, JSON.stringify({noFmOpen, noFmNameOk}));
 
@@ -140,12 +140,14 @@ module.exports = {
         await setTheme('夜間書房');
         await shot('32-canon-tree-dark');
         await setTheme('白紙');
-        // #100:分類只用內建清單;既有的非內建 type 照常顯示、開檔不改寫檔案
-        await page.click('[data-testid=entity-row][data-file="canon/組織/白塔會.md"]');
-        const legacyType = await page.waitForFunction(() =>
-            (document.querySelector('[data-testid=entity-header-type]')?.textContent || '').includes('組織'),
+        // 舊檔的 type 等欄位(Perkins 已不使用)開檔不改寫,別名照常顯示(SPEC §12.2)
+        await page.click('[data-testid=entity-row][data-file="canon/組織/夜鶯團.md"]');
+        const legacyAlias = await page.waitForFunction(() =>
+            document.querySelector('[data-testid=entity-aliases]')?.value === '小夜',
             null, {timeout: 5000}).then(() => true).catch(() => false);
-        check('#100 非內建 type 照常顯示且檔案未被改寫', legacyType && fs.readFileSync(P('canon/組織/白塔會.md'), 'utf8') === LEGACY);
+        await page.click('[data-testid=entity-row][data-file="canon/組織/白塔會.md"]');
+        await settle(80, 700);
+        check('舊檔 type 開檔不改寫、別名照常顯示', legacyAlias && fs.readFileSync(P('canon/組織/白塔會.md'), 'utf8') === LEGACY);
 
         await shot('33-canon-tree-light');
         await setTheme(theme0 === 'light' ? '白紙' : '夜間書房');
@@ -164,8 +166,39 @@ module.exports = {
         check('設定集樹 測試檔已清掉(不留痕跡給後面的測試組)',
             !fs.existsSync(P('canon/人物')) && !fs.existsSync(P('canon/組織')) && !(await page.$('[data-testid=canon-folder]')));
 
-        // ===== 分類只用內建清單(#100):「管理分類」與自訂分類已移除 =====
-        check('#100 設定集側欄沒有「管理分類」入口', !(await page.$('[data-testid=manage-categories]')));
+        // ===== 設定檔就是純 Markdown(SPEC §12.2):沒有分類、名稱 = 檔名,Perkins 只寫作者填的別名 =====
+        check('設定集側欄沒有「管理分類」入口', !(await page.$('[data-testid=manage-categories]')));
+        await page.click('[data-testid=new-entity]');
+        check('新增設定對話框沒有分類欄', !(await page.$('[role=dialog] [data-testid=entity-type]')));
+        await page.fill('#ename', '測試賽馬');
+        await page.click('[role=dialog] button[type=submit]');
+        await page.waitForSelector('[data-testid=entity-aliases]', {timeout: 5000});
+        await settle(80, 700);
+        check('新增設定只有標題、沒有 frontmatter', read('canon/測試賽馬.md') === '# 測試賽馬\n', JSON.stringify(read('canon/測試賽馬.md')));
+        check('設定檔上方沒有分類與名稱欄', !(await page.$('[data-testid=entity-header-type]')) && !(await page.$('[data-testid=entity-name]')));
+        // 填別名 → 只多一行 aliases;清空 → 回到純 Markdown
+        await page.fill('[data-testid=entity-aliases]', '小賽、賽賽');
+        await page.click('[data-testid=entity-apply]');
+        await page.waitForSelector('.cm-content:has-text("aliases")', {timeout: 5000});
+        await page.keyboard.press('Control+s');
+        await settle(80, 900);
+        const horse = read('canon/測試賽馬.md');
+        // EntityHeader 由 ParseEntity(防抖 200ms)跟上新內容後「套用」才會消失;先等它同步,免得下一步的輸入被同步蓋回
+        await page.waitForSelector('[data-testid=entity-apply]', {state: 'detached', timeout: 5000});
+        check('別名只寫一行 aliases', horse === '---\naliases: [小賽, 賽賽]\n---\n# 測試賽馬\n', JSON.stringify(horse));
+        await page.fill('[data-testid=entity-aliases]', '');
+        await page.click('[data-testid=entity-apply]');
+        await page.waitForFunction(() => !document.querySelector('.cm-content')?.textContent.includes('aliases'), null, {timeout: 5000}).catch(() => {});
+        await page.keyboard.press('Control+s');
+        await settle(80, 900);
+        check('清空別名回到純 Markdown', read('canon/測試賽馬.md') === '# 測試賽馬\n', JSON.stringify(read('canon/測試賽馬.md')));
+        await page.fill('[data-testid=entity-aliases]', '小賽');
+        await shot('34-entity-aliases-only');
+        tdel('canon/測試賽馬.md');
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]', {timeout: 5000});
+        await page.click('[data-testid=close-settings]');
+        await page.waitForSelector('[data-testid=entity-row][data-file="canon/測試賽馬.md"]', {state: 'detached', timeout: 5000}).catch(() => {});
 
         // 寫法檢查
         await page.click('[data-testid=rail-checks]');

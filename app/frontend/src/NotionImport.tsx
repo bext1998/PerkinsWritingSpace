@@ -5,12 +5,11 @@ import {notion} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
 import {Select, SelectContent, SelectItem, SelectTrigger, SelectValue} from '@/components/ui/overlay';
 import {errText} from '@/lib/utils';
-import {BUILTIN_TYPES} from './panels/types';
 
 /** Notion 一次性匯入(SPEC §12.5):選來源 → 指定每組去處(可在資料夾之下逐頁覆寫)→ 匯入 → 可整批撤銷。 */
 export default function NotionImport({onDone}: {onDone: () => void}) {
-    const cats = BUILTIN_TYPES; // 匯入去處只有內建分類(自訂分類已移除,#100)
-    const targets = [...cats, '大綱', '筆記', '略過'];
+    // 匯入為「設定」時不帶分類(SPEC §12.2:分類由作者之後自由填寫)
+    const targets = ['設定', '大綱', '筆記', '略過'];
     const [src, setSrc] = useState('');
     const [plan, setPlan] = useState<notion.Plan | null>(null);
     const [choices, setChoices] = useState<Record<string, string>>({});
@@ -33,11 +32,11 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
             setPages({});
             const p = await NotionScan(s);
             setPlan(p);
-            // 預設:資料夾名稱看起來像角色/地點…就直接對應,其餘先匯入為筆記
+            // 預設:資料夾名稱看起來像設定(角色、地點…)就匯入為設定,像大綱就匯入為大綱,其餘先匯入為筆記
             const guess: Record<string, string> = {};
             for (const g of p.groups) {
-                const hit = cats.find(t => g.label.includes(t));
-                guess[g.key] = hit ?? (/人物|登場/.test(g.label) ? '角色' : /大綱|劇情/.test(g.label) ? '大綱' : '筆記');
+                guess[g.key] = /設定|角色|人物|登場|地點|勢力|組織|道具|名詞|世界觀/.test(g.label) ? '設定'
+                    : /大綱|劇情/.test(g.label) ? '大綱' : '筆記';
             }
             setChoices(guess);
             setError('');

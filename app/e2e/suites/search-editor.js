@@ -464,17 +464,17 @@ module.exports = {
             await page.mouse.move(10, 400);
             await page.keyboard.press('Escape');
             await settle(80, 600); // 等 UI 更新(原固定等 200ms)
-            // Radix Select 浮層(role=listbox)在作品畫面內(設定集 EntityHeader 類型選單)開啟時不被攔截
+            // 在設定集 EntityHeader 的別名輸入框打字時 Ctrl+F 不被攔截
+            // (原本測分類的 Radix Select 浮層;分類移除後作品畫面內已沒有 Select,SPEC §12.2)
             await page.click('[data-testid=rail-bible]');
             await page.waitForSelector('[data-testid=entity-row]');
             await page.click('[data-testid=entity-row]:has-text("艾莉絲")');
-            await page.waitForSelector('[data-testid=entity-header-type]');
-            await page.click('[data-testid=entity-header-type]');
-            await page.waitForSelector('[data-radix-popper-content-wrapper] [role=listbox]', {timeout: 5000});
+            await page.waitForSelector('[data-testid=entity-aliases]');
+            await page.click('[data-testid=entity-aliases]');
             await page.keyboard.press('Control+f');
             await settle(80, 600); // 等 UI 更新(原固定等 200ms)
-            check('Radix Select 浮層開啟時 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
-            await page.keyboard.press('Escape'); // 收起 Select 浮層
+            check('EntityHeader 輸入框內 Ctrl+F 不被攔截(面板不開)', !(await page.$('.perkins-search')));
+            await page.keyboard.press('Escape');
             await settle(80, 600); // 等 UI 更新(原固定等 200ms)
             await page.click('[data-testid=rail-manuscript]');
             await settle(80, 600); // 等 UI 更新(原固定等 200ms)

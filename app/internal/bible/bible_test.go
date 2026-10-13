@@ -12,18 +12,19 @@ import (
 	"perkins/internal/project"
 )
 
-// 意圖:舊的純 Markdown 設定檔(沒有 frontmatter)仍要能用,不能因為升級就失去名稱。
+// 意圖:設定檔就是純 Markdown,沒有 frontmatter 也要能用,名稱 = 檔名。
 func TestParseWithoutFrontmatterFallsBack(t *testing.T) {
 	e := Parse("canon/艾莉絲.md", "# 艾莉絲\n十七歲")
-	if e.Type != TypeOther || e.Name != "艾莉絲" || len(e.Aliases) != 0 {
+	if e.Name != "艾莉絲" || len(e.Aliases) != 0 {
 		t.Fatalf("got %+v", e)
 	}
 }
 
+// 意圖:舊檔 frontmatter 的 name/aliases 照常讀取(type 等其他欄位不再使用,也不影響讀取)。
 func TestParseFrontmatter(t *testing.T) {
 	c := "---\ntype: 角色\nname: 艾莉絲\naliases: [艾莉, 小艾]\nage: 17\n---\n\n# 艾莉絲\n"
 	e := Parse("canon/a.md", c)
-	if e.Type != "角色" || e.Name != "艾莉絲" || !reflect.DeepEqual(e.Aliases, []string{"艾莉", "小艾"}) {
+	if e.Name != "艾莉絲" || !reflect.DeepEqual(e.Aliases, []string{"艾莉", "小艾"}) {
 		t.Fatalf("got %+v", e)
 	}
 	e2 := Parse("canon/b.md", "---\nname: 雷恩\naliases: 雷、隊長\n---\n")
@@ -32,27 +33,56 @@ func TestParseFrontmatter(t *testing.T) {
 	}
 }
 
-// 意圖:介面只改 type/name/aliases,作者寫在 frontmatter 的其他欄位與本文一個字都不能掉。
-func TestSetHeaderPreservesOtherFieldsAndBody(t *testing.T) {
+// 意圖:Perkins 只改別名;作者寫在 frontmatter 的其他欄位(含舊的 type、name)與本文一個字都不能掉。
+func TestSetAliasesPreservesOtherFieldsAndBody(t *testing.T) {
 	c := "---\ntype: 其他\nname: 舊名\nage: 17\nnote: 保留我\n---\n# 本文\n口癖:「才不是呢」\n"
-	out, err := SetHeader(c, "角色", "艾莉絲", []string{"艾莉", " "})
+	out, err := SetAliases(c, []string{"艾莉", " "})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := Parse("canon/x.md", out)
-	if e.Type != "角色" || e.Name != "艾莉絲" || !reflect.DeepEqual(e.Aliases, []string{"艾莉"}) {
-		t.Fatalf("欄位未更新: %+v\n%s", e, out)
+	if e := Parse("canon/x.md", out); e.Name != "舊名" || !reflect.DeepEqual(e.Aliases, []string{"艾莉"}) {
+		t.Fatalf("別名未更新: %+v \n%s", e, out)
 	}
-	if !strings.Contains(out, "age: 17") || !strings.Contains(out, "note: 保留我") {
-		t.Fatalf("其他欄位遺失:\n%s", out)
+	for _, k := range []string{"type: 其他", "name: 舊名", "age: 17", "note: 保留我"} {
+		if !strings.Contains(out, k) {
+			t.Fatalf("其他欄位遺失 %q:\n%s", k, out)
+		}
 	}
 	if _, body := SplitFrontmatter(out); body != "# 本文\n口癖:「才不是呢」\n" {
 		t.Fatalf("本文被改動: %q", body)
 	}
-	// 沒有 frontmatter 的檔案加上欄位後,本文也要原樣保留
-	out2, _ := SetHeader("# 只有本文\n", "地點", "王都", nil)
-	if _, body := SplitFrontmatter(out2); strings.TrimLeft(body, "\n") != "# 只有本文\n" {
-		t.Fatalf("本文被改動: %q", body)
+	// 清空別名:只移除 aliases,其他欄位照留
+	out2, err := SetAliases(out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out2, "aliases") || !strings.Contains(out2, "note: 保留我") || !strings.Contains(out2, "type: 其他") {
+		t.Fatalf("清空別名應只移除 aliases:\n%s", out2)
+	}
+}
+
+// 意圖(SPEC §12.2):純 Markdown 設定檔加別名只多一行 aliases;清空別名就回到原本的純 Markdown,不留痕跡。
+func TestSetAliasesOnPlainFileRoundTrips(t *testing.T) {
+	// 本文開頭有作者自己的空行時也要逐字回到原內容(PR #112 審查)
+	for _, plain := range []string{"# 艾莉絲\n十七歲。\n", "\n# 艾莉絲\n", "\n\n# 艾莉絲\r\n"} {
+		if out, _ := SetAliases(plain, nil); out != plain {
+			t.Fatalf("沒有別名時不應加 frontmatter: %q", out)
+		}
+		out, err := SetAliases(plain, []string{"艾莉"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		y, body := SplitFrontmatter(out)
+		if strings.TrimSpace(y) != "aliases: [艾莉]" || body != plain {
+			t.Fatalf("frontmatter 應只有 aliases、本文原樣: y=%q body=%q", y, body)
+		}
+		if back, _ := SetAliases(out, nil); back != plain {
+			t.Fatalf("清空別名應回到原本內容: %q → %q", plain, back)
+		}
+	}
+	// 既有檔案只有 aliases 一欄:清空後只拿掉 frontmatter,本文(含開頭空行)不動
+	if got, _ := SetAliases("---\naliases: [艾莉]\n---\n\n# 艾莉絲\n", nil); got != "\n# 艾莉絲\n" {
+		t.Fatalf("本文開頭空行被刪: %q", got)
 	}
 }
 
@@ -64,10 +94,10 @@ func TestUnterminatedFrontmatterIsBody(t *testing.T) {
 	}
 }
 
-func TestTemplateIsParseable(t *testing.T) {
-	e := Parse("canon/a.md", Template("角色", "艾莉絲"))
-	if e.Type != "角色" || e.Name != "艾莉絲" {
-		t.Fatalf("got %+v", e)
+// 意圖(SPEC §12.2):新設定只有標題,不預設欄位、不寫 frontmatter。
+func TestTemplate(t *testing.T) {
+	if c := Template(" 艾莉絲 "); c != "# 艾莉絲\n" {
+		t.Fatalf("got %q", c)
 	}
 }
 
@@ -140,8 +170,7 @@ func TestBuildIndexReadOnly(t *testing.T) {
 	c2, _ := p.NewChapter("二", 0)
 	p.WriteFile(c1, "艾莉絲出場。")
 	p.WriteFile(c2, "雷恩和艾莉。艾莉絲。")
-	p.WriteFile("canon/艾莉絲.md", Template("角色", "艾莉絲"))
-	aliased, _ := SetHeader(Template("角色", "艾莉絲"), "角色", "艾莉絲", []string{"艾莉"})
+	aliased, _ := SetAliases(Template("艾莉絲"), []string{"艾莉"})
 	p.WriteFile("canon/艾莉絲.md", aliased)
 	p.WriteFile("canon/雷恩.md", "# 雷恩\n")
 
@@ -169,13 +198,5 @@ func TestBuildIndexReadOnly(t *testing.T) {
 	}
 	if bc := idx.ByChapter[c2]; len(bc) != 2 || bc[0].Path != "canon/艾莉絲.md" {
 		t.Fatalf("第二章登場錯誤: %+v", bc)
-	}
-}
-
-// 意圖(#100):移除自訂分類後,作者檔案裡既有的非內建 type 照常讀取,索引照常收錄,不被改成「其他」。
-func TestNonBuiltinTypeStillParsedAfterCustomCategoriesRemoved(t *testing.T) {
-	e := Parse("canon/白塔會.md", "---\ntype: 組織\nname: 白塔會\naliases: [白塔]\n---\n本文\n")
-	if e.Type != "組織" || e.Name != "白塔會" || len(e.Aliases) != 1 {
-		t.Fatalf("非內建 type 應原樣保留: %+v", e)
 	}
 }

@@ -427,17 +427,14 @@ func (a *App) NewChapter(title string, volume int) (string, error) {
 	return a.proj.NewChapter(title, volume)
 }
 
-// NewDoc 在 canon/(entityType 為實體類型)、outline/、notes/ 建立新檔。
-func (a *App) NewDoc(dir, title, entityType string) (string, error) {
+// NewDoc 在 canon/、outline/、notes/ 建立新檔(設定檔只帶標題,SPEC §12.2)。
+func (a *App) NewDoc(dir, title string) (string, error) {
 	if a.proj == nil {
 		return "", errNoProject
 	}
 	content := ""
 	if dir == project.CanonDir {
-		if entityType == "" {
-			entityType = bible.TypeOther
-		}
-		content = bible.Template(entityType, strings.TrimSpace(title))
+		content = bible.Template(title)
 	}
 	return a.proj.NewDoc(dir, title, content)
 }
@@ -497,9 +494,9 @@ func (a *App) ChapterWordCounts() (map[string]int, error) {
 
 func (a *App) ParseEntity(rel, content string) bible.Entity { return bible.Parse(rel, content) }
 
-// ApplyEntityHeader 回傳更新 frontmatter 後的內容,不寫檔:由編輯器套用後作者自行存檔。
-func (a *App) ApplyEntityHeader(content, typ, name string, aliases []string) (string, error) {
-	return bible.SetHeader(content, typ, name, aliases)
+// ApplyEntityHeader 回傳更新別名後的內容,不寫檔:由編輯器套用後作者自行存檔。
+func (a *App) ApplyEntityHeader(content string, aliases []string) (string, error) {
+	return bible.SetAliases(content, aliases)
 }
 
 func (a *App) BibleIndex() (*bible.Index, error) {
@@ -1432,7 +1429,7 @@ func (a *App) NotionApply(src string, choices map[string]string, pages map[strin
 	if _, err := s.Take("Notion 匯入前", "before-import", nil); err != nil {
 		return nil, fmt.Errorf("快照失敗,未匯入: %w", err)
 	}
-	return notion.Apply(a.proj, src, choices, pages, bible.Types) // 去處只有內建分類(自訂分類已移除,#100)
+	return notion.Apply(a.proj, src, choices, pages)
 }
 
 func (a *App) NotionUndo(id string) ([]string, error) {

@@ -4,11 +4,10 @@ import {NewDoc} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
 import {
-    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Select, SelectContent, SelectItem, SelectTrigger,
-    SelectValue,
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/overlay';
 import {cn} from '@/lib/utils';
-import {BUILTIN_TYPES, PanelProps} from './types';
+import {PanelProps} from './types';
 
 // 設定集側欄的資料夾檔案樹(SPEC §12.2 #31):依 tree.canon 的實際路徑組成(canon/... 遞迴)。
 // 同層「資料夾在前、檔案在後」,各自依名稱排序(zh-Hant)。
@@ -46,7 +45,6 @@ function buildTree(files: FileNode[]): DirNode {
 export default function BiblePanel({tree, current, index, openFile, refreshTree, refreshIndex, fail}: PanelProps) {
     const [q, setQ] = useState('');
     const [creating, setCreating] = useState(false);
-    const [type, setType] = useState('角色');
     const [name, setName] = useState('');
 
     const [collapsed, setCollapsed] = useState<Record<string, boolean>>({}); // 收合狀態只存記憶體(預設展開)
@@ -106,7 +104,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
         setCreating(false);
         setName('');
         try {
-            const rel = await NewDoc('canon', n, type);
+            const rel = await NewDoc('canon', n);
             await refreshTree();
             refreshIndex();
             await openFile(rel);
@@ -125,7 +123,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
             </div>
             {tree.canon.length === 0 && (
                 <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-                    還沒有設定。新增角色、地點、名詞後會自動建立登場索引;也可到「設定 › 作品」從 Notion 匯入。
+                    還沒有設定。新增設定後會自動建立登場索引;也可到「設定 › 作品」從 Notion 匯入。
                 </p>
             )}
             <div data-testid="canon-tree">
@@ -140,16 +138,9 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>新增設定</DialogTitle>
-                        <DialogDescription>名稱與別名用於登場索引與寫法檢查;其他描述可以在本文自由撰寫。</DialogDescription>
+                        <DialogDescription>名稱就是檔名,建立後是一份只有標題的 Markdown,內容自由撰寫。</DialogDescription>
                     </DialogHeader>
                     <form className="grid gap-3" onSubmit={e => { e.preventDefault(); create(); }}>
-                        <div className="grid gap-1.5">
-                            <Label>類型</Label>
-                            <Select value={type} onValueChange={setType}>
-                                <SelectTrigger data-testid="entity-type"><SelectValue/></SelectTrigger>
-                                <SelectContent>{BUILTIN_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-                            </Select>
-                        </div>
                         <div className="grid gap-1.5">
                             <Label htmlFor="ename">名稱</Label>
                             <Input id="ename" autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="例如:艾莉絲"/>
