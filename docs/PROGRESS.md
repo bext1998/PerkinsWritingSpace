@@ -1,5 +1,14 @@
 # PROGRESS.md
 
+## 2026-10-15 — 合併 #127、#128、#129(#124、#80、#114)
+
+- **#127 拒絕提案後 Bot 不再提案**(#124,Pi/MiniMax M3.1 Flash Preview 初版與兩輪返工):提案卡處理後留在建立它的那個對話原位,顯示已拒絕(附理由)/已接受;理由存進提案 JSON。Bot 端改為**每次送出時依本會話建立過的提案 id 即時讀提案檔**,在系統訊息組「本次對話的提案現況」(最近 20 筆),History 不寫任何提案通知。Orchestrator 初審 3 Major(已處理卡作品層級、無理由拒絕未通知、連續 user 訊息);Codex 再審 4 Major(壓縮後連續 assistant、finish 倒回待審、壓縮期間通知遺失、跨會話狀態過期),Orchestrator 改設計後全解;複審 1 Major(提案檔損壞被靜默略過)Orchestrator 自修 26414db。
+- **#128 Caps Lock 快捷鍵**(#80,同上實作):Ctrl+Shift+F 改到 capture 攔截(原本 CM 的 Mod-f 會順手開搜尋)、Ctrl+S 不分大小寫(原本 Caps Lock 下不存檔);Ctrl+F/H 原本正常只補檢查。Codex 審出 Ctrl+S 測試實際送成 Ctrl+Shift+S、右鍵選單在 capture 後不收起,Orchestrator 自修 b7f3d5e。
+- **#129 Bot 技能與「/」選單**(#114,MiniMax 初版、Qoder/Qwen3.8-Flash 返工第 1 輪):`~/.perkins/skills/<名>.md`,`/技能名` 只作用於該次提問;`/new`、`/compact` 內建優先;後端讀檔前驗證技能名為單一檔名。Codex 審出 3 Major(ListSkills 呼叫 prepare 改寫執行中端點、路徑穿越、E2E 覆寫作者同名技能檔)+ 2 Minor,Qwen 修;剩 1 Minor(換行後選單仍開)Orchestrator 修 9400ae8。合併 main 時 `app/app.go` 衝突(#127 移除 `saveRejections`)與重複的測試輔助函式由 Orchestrator 解決(f837b38),冷啟動 `E2E_SKIP_AI=1 --all` 675/677。
+- **觀察**:MiniMax 照定好的設計實作可交付,需要自己想清楚時序/例外的設計會反覆返工;Qwen3.8-Flash 照明確說明修補可靠,但未遵守 `E2E_SKIP_AI=1`(載入本機模型致記憶體吃緊)且報告稱全程略過。實作者的測試數字一律由 Orchestrator 以正確方式複驗。
+- **仍未解決**:`bot-chat`「#32 雲端端點未確認時 /compact 被外流確認擋下」在作者端點已確認的環境必然失敗;`bible`「設定的登場索引列出章節」在 `--all` 偶發(單獨重跑通過);組間隱含相依(`titlebar-zen` 需在 `search-editor`/`paper` 前、`sessions` 在 `polish` 前會讓 polish 中斷)。
+- **作者待實測(未用真實模型驗證)**:帶理由/不帶理由拒絕後 Bot 是否重新提案;Caps Lock 下 Ctrl+S、Ctrl+Shift+F(硬體鍵盤);放一份技能檔以 `/名稱` 叫用。
+
 ## 2026-10-14 — E2E 修正合併(#125、#126)
 
 - **#125 shelf 組**(#113,MiniMax M3.1 Flash Preview 實作):平台輸出改走清單 → 子頁 → 返回;組開頭先收合前組留下的對話框(`--all` 時 `chat-fab` 不 render 的中斷點)。Codex 審查無發現。
