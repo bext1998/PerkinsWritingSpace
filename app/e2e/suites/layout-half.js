@@ -181,37 +181,41 @@ module.exports = {
             await settle(80, 900);
         };
         const waitFooterModel = m => page.waitForFunction(m =>
-            (document.querySelector('footer')?.textContent || '').includes(m), m, {timeout: 5000}).catch(() => {});
-        await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, LONG_MODEL]);
-        await rereadSettings();
-        await waitFooterModel(LONG_MODEL);
-        const sb640 = await page.evaluate(() => {
-            const f = document.querySelector('footer');
-            const main = document.querySelector('main');
-            if (!f || !main) return null;
-            const mainRight = main.getBoundingClientRect().right;
-            const items = [...f.children].map(el => {
-                const r = el.getBoundingClientRect();
-                return {t: (el.textContent || '').trim().slice(0, 16), w: r.width, h: r.height, right: r.right};
-            }).filter(i => i.w > 0 && i.h > 0);
-            const ai = [...f.children].find(el => (el.textContent || '').startsWith('AI:'));
-            const ar = ai ? ai.getBoundingClientRect() : null;
-            return {
-                text: (f.innerText || '').replace(/\s+/g, ' '),
-                mainRight,
-                items,
-                ai: ai ? {scrollW: ai.scrollWidth, clientW: ai.clientWidth, right: ar.right, h: ar.height} : null,
-            };
-        });
-        check('狀態列 640×672 每一項單行且不超出 main 右緣(不換行、不溢出)',
-            !!sb640 && sb640.items.every(i => i.h <= 20 && i.right <= sb640.mainRight + 1),
-            JSON.stringify(sb640 && {mainRight: sb640.mainRight, items: sb640.items}));
-        check('狀態列 640×672 保留本章與已儲存、模型名省略號截斷且在 main 內',
-            !!sb640 && /本章/.test(sb640.text) && /已儲存/.test(sb640.text)
-                && !!sb640.ai && sb640.ai.scrollW > sb640.ai.clientW
-                && sb640.ai.right <= sb640.mainRight + 1 && sb640.ai.h <= 20,
-            JSON.stringify(sb640 && sb640.ai));
-        await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, origModel]);
+            (document.querySelector('footer')?.textContent || '').includes(m), m, {timeout: 5000});
+        // 換名會立即寫入使用者 settings.json:從換名起包 try/finally,等待或量測丟例外時也一定還原持久設定
+        try {
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, LONG_MODEL]);
+            await rereadSettings();
+            await waitFooterModel(LONG_MODEL);
+            const sb640 = await page.evaluate(() => {
+                const f = document.querySelector('footer');
+                const main = document.querySelector('main');
+                if (!f || !main) return null;
+                const mainRight = main.getBoundingClientRect().right;
+                const items = [...f.children].map(el => {
+                    const r = el.getBoundingClientRect();
+                    return {t: (el.textContent || '').trim().slice(0, 16), w: r.width, h: r.height, right: r.right};
+                }).filter(i => i.w > 0 && i.h > 0);
+                const ai = [...f.children].find(el => (el.textContent || '').startsWith('AI:'));
+                const ar = ai ? ai.getBoundingClientRect() : null;
+                return {
+                    text: (f.innerText || '').replace(/\s+/g, ' '),
+                    mainRight,
+                    items,
+                    ai: ai ? {scrollW: ai.scrollWidth, clientW: ai.clientWidth, right: ar.right, h: ar.height} : null,
+                };
+            });
+            check('狀態列 640×672 每一項單行且不超出 main 右緣(不換行、不溢出)',
+                !!sb640 && sb640.items.every(i => i.h <= 20 && i.right <= sb640.mainRight + 1),
+                JSON.stringify(sb640 && {mainRight: sb640.mainRight, items: sb640.items}));
+            check('狀態列 640×672 保留本章與已儲存、模型名省略號截斷且在 main 內',
+                !!sb640 && /本章/.test(sb640.text) && /已儲存/.test(sb640.text)
+                    && !!sb640.ai && sb640.ai.scrollW > sb640.ai.clientW
+                    && sb640.ai.right <= sb640.mainRight + 1 && sb640.ai.h <= 20,
+                JSON.stringify(sb640 && sb640.ai));
+        } finally {
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, origModel]);
+        }
         await rereadSettings();
         await waitFooterModel(origModel || '未選擇模型');
 
