@@ -884,6 +884,7 @@ export namespace sessions {
 	    updatedAt: string;
 	    history: llm.Message[];
 	    rejections?: string[];
+	    proposalIds?: string[];
 	    turns: Turn[];
 	
 	    static createFrom(source: any = {}) {
@@ -899,6 +900,7 @@ export namespace sessions {
 	        this.updatedAt = source["updatedAt"];
 	        this.history = this.convertValues(source["history"], llm.Message);
 	        this.rejections = source["rejections"];
+	        this.proposalIds = source["proposalIds"];
 	        this.turns = this.convertValues(source["turns"], Turn);
 	    }
 	

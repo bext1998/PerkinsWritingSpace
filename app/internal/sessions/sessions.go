@@ -51,7 +51,8 @@ type Turn struct {
 }
 
 // Session 是一份對話記錄。History 是送給模型的 user/assistant 回合(可能以濃縮摘要開頭),
-// Rejections 是本次會話作者拒絕提案時說明的原因(#40,放在系統訊息);接續時兩者載回 Agent。
+// Rejections 是舊版記錄下的拒絕原因(#40,相容用;新拒絕的理由存在提案 JSON),ProposalIds 是本會話
+// 建立過的提案 id(#124:送出時依它即時讀提案現況);接續時三者都載回 Agent。
 type Session struct {
 	ID         string        `json:"id"`
 	Title      string        `json:"title"` // 第一個問題截短
@@ -60,7 +61,9 @@ type Session struct {
 	UpdatedAt  string        `json:"updatedAt"`
 	History    []llm.Message `json:"history"`
 	Rejections []string      `json:"rejections,omitempty"`
-	Turns      []Turn        `json:"turns"`
+	// ProposalIds 是本會話建立過的提案 id;舊 JSON 沒有這個欄位照常可讀(就是不會列出現況)。
+	ProposalIds []string `json:"proposalIds,omitempty"`
+	Turns       []Turn   `json:"turns"`
 }
 
 // Meta 是清單顯示用的摘要(標題、更新時間、回合數、狀態、是否目前會話)。

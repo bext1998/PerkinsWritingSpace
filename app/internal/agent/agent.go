@@ -110,9 +110,13 @@ type Agent struct {
 	GlobalAgentsPath string
 
 	mu      sync.Mutex
-	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
-	// rejections 是本次會話作者拒絕提案時附的原因(#40);放在系統訊息,不受對話壓縮影響,Reset 清空。
+	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭;嚴格交替)
+	// rejections 是舊會話記錄下來的拒絕原因(#40);只讀回、相容用(#124:新的拒絕理由存在提案 JSON,
+	// 由「提案現況」段落帶出,不再寫進這裡)。
 	rejections []string
+	// sessionProposals 是本次對話建立過的提案 id(propose_patch 成功當下加入,#124)。
+	// 送出時依這份清單向 Store 讀**當下**狀態組成「提案現況」,所以不會有「事後被壓縮/被倒回待審」的問題。
+	sessionProposals []string
 }
 
 // rlog 記錄研究事件(關閉或 nil 時為 no-op;失敗只留內部訊息,不影響 AI 流程)。
@@ -599,18 +603,13 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】作者拒絕了下列提案;請看過每個提案的編號與作者的理由,修正後重新提出新的提案,不要重複被拒的方案:\n- " + strings.Join(a.rejections, "\n- ")
 	}
 	msgs := append([]llm.Message{{Role: "system", Content: sys}}, a.History...)
+	ids := append([]string{}, a.sessionProposals...)
 	a.mu.Unlock()
+	// 提案現況每次送出時即時讀提案檔案組成,不經對話歷史(所以壓縮、跨會話、finish 之後才被處理都不會錯)。
+	msgs[0].Content += proposalStatus(a.Proposals, ids)
 	user := p.Question
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
-	}
-	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
-		// 對話歷史最後一則是「提案狀態通知」(user 角色)時,本回合的問題併進去而不是再送一則 user:
-		// user/assistant 必須交替,本機模型的聊天範本遇到連續兩則 user 會直接報錯(#124 審查)。
-		// 只改這次送出的副本,a.History 不動(Preview 與 Ask 共用同一條路徑,A6)。
-		out := append([]llm.Message{}, msgs[:n-1]...)
-		out = append(out, llm.Message{Role: "user", Content: msgs[n-1].Content + "\n\n" + user})
-		return out, buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
 	}
 	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
 }
@@ -738,23 +737,27 @@ func (a *Agent) Reset() {
 	a.mu.Lock()
 	a.History = nil
 	a.rejections = nil
+	a.sessionProposals = nil // 新對話:提案現況從頭算(這次對話還沒建立任何提案)
 	a.mu.Unlock()
 }
 
-// Snapshot 回傳對話歷史與拒絕原因的副本(對話記錄保存用,#33)。
-func (a *Agent) Snapshot() ([]llm.Message, []string) {
+// Snapshot 回傳對話歷史、拒絕原因與本次對話建立過的提案 id 的副本(對話記錄保存用,#33、#124)。
+func (a *Agent) Snapshot() ([]llm.Message, []string, []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]llm.Message{}, a.History...), append([]string{}, a.rejections...)
+	return append([]llm.Message{}, a.History...), append([]string{}, a.rejections...), append([]string{}, a.sessionProposals...)
 }
 
 // RestoreSession 以保存的對話內容取代目前的對話歷史與拒絕原因(接續對話記錄,#33)。
 // 過往會話屬 Interpretation:只當對話上下文參考,不會成為 Canon(SPEC §0 第 3 條);
 // 接續後送出的內容照常計入上下文預算並在送出預覽可見(A6)。
-func (a *Agent) RestoreSession(history []llm.Message, rejections []string) {
+// sessionProposals 是該會話建立過的提案 id(舊會話 JSON 沒有這個欄位 = nil):接續後仍能組出提案現況,
+// 就算作者是在別的會話處理的(#124)。
+func (a *Agent) RestoreSession(history []llm.Message, rejections []string, sessionProposals []string) {
 	a.mu.Lock()
 	a.History = append([]llm.Message{}, history...)
 	a.rejections = append([]string{}, rejections...)
+	a.sessionProposals = append([]string{}, sessionProposals...)
 	a.mu.Unlock()
 }
 
@@ -773,61 +776,62 @@ func proposalTag(p *proposal.Proposal) string {
 	return tag
 }
 
-// appendHistory 往對話歷史加一則訊息;與上一則同角色時併進去(Messages API 的 user/assistant 要交替,
-// 連續同角色會被合併)。呼叫端須持有 a.mu。
-func (a *Agent) appendHistory(role, content string) {
-	if n := len(a.History); n > 0 && a.History[n-1].Role == role {
-		a.History[n-1].Content += "\n\n" + content
-		return
-	}
-	a.History = append(a.History, llm.Message{Role: role, Content: content})
-}
-
-// appendNotice 把「提案狀態通知」寫進對話歷史(#124):如實記下提案建立與後續被接受／拒絕的事實,
-// 讓模型看到真實狀態,不會複述舊的「提案已送出」。以 user 角色送(事件由作者的操作造成),
-// 開頭標明是程式記錄的通知,不是作者說的話;聊天畫面顯示的是前端的 turns,不會顯示這些。
-func (a *Agent) appendNotice(content string) {
-	a.appendHistory("user", "【提案狀態通知】(程式記錄,不是作者打的字)"+content)
-}
-
-// noteCreated 記下本回合實際建立的提案(待審)。
-func noteCreated(ps []*proposal.Proposal) string {
-	var b strings.Builder
-	b.WriteString("你在本回合建立提案:")
-	for i, p := range ps {
-		if i > 0 {
-			b.WriteString(";")
+// recordProposal 記下本次對話建立過的提案(工具成功當下就記,不等回合結束):送出時依這份清單
+// 向 Store 讀當下狀態組成「提案現況」(#124)。不管作者在回合結束前、或別的會話裡處理的提案,
+// 現況都是即時讀出來的。
+func (a *Agent) recordProposal(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, got := range a.sessionProposals {
+		if got == id {
+			return
 		}
-		fmt.Fprintf(&b, " %s", proposalTag(p))
 	}
-	b.WriteString("。目前的狀態是等待作者審查,尚未寫入任何檔案;作者接受或拒絕之後程式會再送一則通知。在收到通知前不要說提案已寫入或已完成。")
+	a.sessionProposals = append(a.sessionProposals, id)
+}
+
+// sessionProposalLimit 是「提案現況」最多列出的筆數:只列最近這些,舊的不再佔上下文。
+const sessionProposalLimit = 20
+
+// proposalStatus 依本次對話建立過的提案 id,向 Store 讀**當下**狀態組成系統訊息的一段(#124)。
+// 每次送出都重讀,所以不論提案是在這回合之後、壓縮期間、或別的會話處理的,模型看到的都是真實狀態;
+// 事後寫進對話歷史的做法會被壓縮切割、會被舊快照覆蓋、也會把已處理的提案倒回待審,一律不用。
+func proposalStatus(store *proposal.Store, ids []string) string {
+	if store == nil || len(ids) == 0 {
+		return ""
+	}
+	if len(ids) > sessionProposalLimit { // 只列最近 sessionProposalLimit 筆
+		ids = ids[len(ids)-sessionProposalLimit:]
+	}
+	var b strings.Builder
+	b.WriteString("\n\n【本次對話的提案現況】以下是程式依提案檔案即時讀出的真實狀態;若與你先前提到的說法不一致,以這裡為準:")
+	for _, id := range ids {
+		p, err := store.Get(id)
+		if err != nil {
+			continue // 提案檔已不存在:略過這筆,不讓請求失敗
+		}
+		var state string
+		switch p.Status {
+		case proposal.Accepted:
+			state = fmt.Sprintf("作者已接受第 %d 個版本並寫入;之後以檔案現況為準", p.AcceptedVersion+1)
+		case proposal.Rejected:
+			why := p.RejectReason
+			if why == "" {
+				why = "(作者未填理由)"
+			}
+			state = fmt.Sprintf("作者已拒絕;理由:%s。已失效,請依理由修正後重新提出新的提案,不要重複被拒的方案", why)
+		case proposal.Conflict:
+			state = "檔案在提案後已被作者修改,提案無法套用,目前尚未處理"
+		default: // pending
+			state = "等待作者審查,尚未寫入任何檔案"
+		}
+		fmt.Fprintf(&b, "\n- %s:%s", proposalTag(p), state)
+	}
 	return b.String()
 }
 
-// NoteRejection 記下作者拒絕提案的事實,之後的請求都帶得上(#40、#124)。兩處:
-// 對話歷史(如實記下「這個提案已被拒」,讓模型修正後重新提案)+ 系統訊息的拒絕原因清單(有理由才有;不受對話壓縮影響)。
-// 作者沒填理由時一樣要通知模型「已失效」——noteCreated 已經承諾過「接受或拒絕之後程式會再送一則通知」。
-func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
-	tag := proposalTag(p)
-	why := reason
-	if why == "" {
-		why = "(作者未填理由)"
-	}
-	a.mu.Lock()
-	if reason != "" {
-		a.rejections = append(a.rejections, fmt.Sprintf("%s:%s", tag, reason))
-	}
-	a.appendNotice(fmt.Sprintf("作者拒絕了提案 %s。作者的理由:%s。這個提案已失效,不要再複述「提案已送出」,也不要重複被拒的方案;請依作者的理由修正後重新提出新的提案。", tag, why))
-	a.mu.Unlock()
-}
-
-// NoteAccepted 記下作者接受提案的事實(#124):建議文字已寫入,這個提案不再是待審。
-func (a *Agent) NoteAccepted(p *proposal.Proposal) {
-	a.mu.Lock()
-	a.appendNotice(fmt.Sprintf("作者接受了提案 %s 的第 %d 個版本,已寫入 %s。這個提案不再是待審,不要複述「提案已送出」;之後以檔案現況為準。",
-		proposalTag(p), p.AcceptedVersion+1, p.Target))
-	a.mu.Unlock()
-}
+// 註:拒絕不再寫進對話歷史或 rejections——理由存在提案 JSON,送出時由 proposalStatus 即時讀出(#124)。
+// 舊會話記錄裡的 Rejections 仍會讀回並照舊附在系統訊息(相容用)。
 
 const compactKeep = 4 // 最近 2 個回合原文保留
 
@@ -900,7 +904,6 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		requests       []researchRequest // 依序列出每次實際送出的請求
 		toolCalls      []researchToolCall
 		pIDs           []string // 本次建立的提案 id(研究記錄用)
-		created        []*proposal.Proposal
 		replyText      string
 		result, errMsg string
 	)
@@ -950,15 +953,13 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	rejectedIDs := map[string]bool{}
 	// finish 把一次文字回覆寫成正常回合:存進對話歷史、必要時濃縮後回傳。
 	// 工具迴圈內的文字回覆與達上限後的收尾回覆都走這條路徑(研究記錄照常)。
-	// 本回合實際建立的提案也如實記進歷史(#124):模型看得到提案目前的真實狀態。
+	// 歷史維持嚴格 user/assistant 交替:提案狀態不寫進歷史,而是送出時即時組出(見 proposalStatus,#124)。
 	finish := func(content string) (string, error) {
 		replyText = content // 已由上方保存到對應 request
 		a.mu.Lock()
-		a.appendHistory("user", p.Question)
-		a.appendHistory("assistant", content)
-		if len(created) > 0 {
-			a.appendNotice(noteCreated(created))
-		}
+		a.History = append(a.History,
+			llm.Message{Role: "user", Content: p.Question},
+			llm.Message{Role: "assistant", Content: content})
 		a.mu.Unlock()
 		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7);自動壓縮關閉時不做(#32)
 		if b := a.ContextTokens; b > 0 && !a.DisableAutoCompact && a.historyTokens() > b*2/5 {
@@ -1007,7 +1008,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
 			if terr == nil && pr != nil {
 				pIDs = append(pIDs, pr.ID)
-				created = append(created, pr)
+				a.recordProposal(pr.ID)
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}

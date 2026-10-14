@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,10 +26,11 @@ func sample() *Session {
 			{Role: "assistant", Content: "我建議把背景移到後面。"},
 		},
 		Rejections: []string{"canon/characters.md 的提案:不要改動敘事視角"},
+		ProposalIds: []string{"20261015-010000-abc123"},
 		Turns: []Turn{
 			{Role: "user", Text: "幫我把開頭改得更緊湊"},
 			{Role: "assistant", Text: "我建議把背景移到後面。"},
-			{Role: "tool", Text: "讀取 manuscript/01.md", Args: `{"path":"manuscript/01.md"}`, Result: "# 第一章"},
+			{Role: "tool", Text: "讀取 manuscript/01.md", Args: `{"path":"manuscript/01.md"}`, Result: "# 第一章", ProposalIDs: []string{"20261015-010000-abc123"}},
 			{Role: "notice", Text: "較早的對話已濃縮成摘要"},
 		},
 	}
@@ -59,6 +61,13 @@ func TestSaveReadRoundTrip(t *testing.T) {
 	if len(out.Turns) != 4 || out.Turns[2].Role != "tool" || out.Turns[2].Args != `{"path":"manuscript/01.md"}` ||
 		out.Turns[3].Role != "notice" || out.Turns[0].Text != in.Turns[0].Text {
 		t.Fatalf("Turns 往返不符: %+v", out.Turns)
+	}
+	// #124:會話建立過的提案 id(送給模型的「提案現況」靠它)與回合上的歸屬都要往返
+	if len(out.ProposalIds) != 1 || out.ProposalIds[0] != in.ProposalIds[0] {
+		t.Fatalf("ProposalIds 往返不符: %+v", out.ProposalIds)
+	}
+	if len(out.Turns[2].ProposalIDs) != 1 || out.Turns[2].ProposalIDs[0] != in.Turns[2].ProposalIDs[0] {
+		t.Fatalf("回合的提案歸屬往返不符: %+v", out.Turns[2])
 	}
 	m := MetaOf(out)
 	if m.Turns != 1 { // 回合數 = 使用者提問次數(工具列與通知不算)
@@ -261,5 +270,41 @@ func TestTitleFor(t *testing.T) {
 	}
 	if TitleFor([]Turn{{Role: "assistant", Text: "只有回覆"}}) != "" {
 		t.Fatal("沒有使用者問題時標題應為空")
+	}
+}
+
+// 舊的會話 JSON 沒有 proposalIds(欄位是 #124 才加的)也要照常讀得出來,不能因為欄位新增就打不開舊記錄。
+func TestLegacyJSONWithoutProposalIDsStillLoads(t *testing.T) {
+	st := newStore(t)
+	in := sample()
+	if err := st.Save("C:/proj/novel", in); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(st.Dir, Key("C:/proj/novel"), in.ID+".json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	delete(doc, "proposalIds") // 舊檔沒有這個欄位
+	for _, turn := range doc["turns"].([]any) {
+		delete(turn.(map[string]any), "proposalIds")
+	}
+	legacy, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := st.Get("C:/proj/novel", in.ID)
+	if err != nil {
+		t.Fatalf("舊格式會話應照常可讀: %v", err)
+	}
+	if len(out.ProposalIds) != 0 || len(out.History) != 2 || len(out.Turns) != 4 {
+		t.Fatalf("舊格式讀出應是空清單: %+v", out)
 	}
 }
