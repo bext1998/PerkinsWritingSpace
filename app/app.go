@@ -953,7 +953,7 @@ func (a *App) SaveSession(turns []sessions.Turn) (sessions.Meta, error) {
 			return sessions.Meta{}, err
 		}
 	}
-	sess.History, sess.Rejections = ag.Snapshot()
+	sess.History, sess.Rejections, sess.ProposalIds = ag.Snapshot()
 	if err := st.Save(root, sess); err != nil {
 		return sessions.Meta{}, err
 	}
@@ -1001,7 +1001,7 @@ func (a *App) ResumeSession(id string, currentTurns []sessions.Turn) (sessions.S
 	if sess.Status == sessions.StatusDeleted {
 		return sessions.Session{}, errors.New("已刪除的對話記錄要先還原才能接續")
 	}
-	ag.RestoreSession(sess.History, sess.Rejections)
+	ag.RestoreSession(sess.History, sess.Rejections, sess.ProposalIds)
 	a.mu.Lock()
 	a.curSess = id
 	a.mu.Unlock()
@@ -1178,7 +1178,7 @@ func (a *App) ListProposals() ([]*proposal.Proposal, error) {
 }
 
 // AcceptProposal 回傳更新後的提案;version 是作者選的版本序號(0 = 主版本,#39);
-// edited 非 nil 表示作者編輯過建議文字(部分採用)。
+// edited 非 nil 表示作者編輯過建議文字(部分採用)。接受的事實由「提案現況」在送出時即時讀提案檔帶出(#124)。
 func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
@@ -1190,44 +1190,18 @@ func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.
 	return p, err
 }
 
-// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),非空時本次會話的 Bot 會記住。
+// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),存進提案 JSON(卡片顯示得出來,#124)。
+// 被拒的事實由「提案現況」在送出時即時讀提案檔帶出(不寫進對話歷史),所以這裡不需要再通知 Agent(#124)。
 func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
 	}
 	reason = strings.TrimSpace(reason)
-	p, err := a.agent.Proposals.Reject(id)
+	p, err := a.agent.Proposals.Reject(id, reason)
 	if err == nil && p != nil {
 		proposal.LogReject(a.research, p, reason)
-		if reason != "" {
-			a.agent.NoteRejection(p, reason)
-			if err := a.saveRejections(); err != nil {
-				return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
-			}
-		}
 	}
 	return p, err
-}
-
-// saveRejections 把目前的拒絕原因寫進已保存的目前會話(#33):拒絕常發生在回合存檔之後,
-// 不寫回的話作者接著開新對話或關閉程式,接續時就會遺失(PR #89 審查)。尚未存過的會話不處理。
-func (a *App) saveRejections() error {
-	ag, st, root, err := a.sessionCtx()
-	if err != nil {
-		return err
-	}
-	a.mu.Lock()
-	id := a.curSess
-	a.mu.Unlock()
-	if id == "" {
-		return nil
-	}
-	sess, err := st.Get(root, id)
-	if err != nil {
-		return err
-	}
-	_, sess.Rejections = ag.Snapshot()
-	return st.Save(root, sess)
 }
 
 // ListSkills 回傳「/」選單要列的技能(名稱+說明;SPEC §12.3「技能與 / 指令」,#114)。

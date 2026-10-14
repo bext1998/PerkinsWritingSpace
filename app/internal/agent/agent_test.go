@@ -1850,7 +1850,7 @@ func TestToolsCannotReachWorkspaceAgentsFile(t *testing.T) {
 	if _, _, err := a.runTool("read_document", `{"path":"./AGENTS.md"}`, gate{}); err == nil {
 		t.Error("相對路徑寫法也不應繞過限制")
 	}
-	if _, prID, err := a.runTool("propose_patch", `{"path":"AGENTS.md","original":"x","replacement":"y","rationale":"r"}`, gate{}); err == nil || prID != "" {
+	if _, pr, err := a.runTool("propose_patch", `{"path":"AGENTS.md","original":"x","replacement":"y","rationale":"r"}`, gate{}); err == nil || pr != nil {
 		t.Error("propose_patch 不應能對作品根目錄的 AGENTS.md 提案")
 	}
 	if r, _, err := a.runTool("search_project", `{"query":"紫斑蝴蝶"}`, gate{}); err != nil || strings.Contains(r, "紫斑蝴蝶") {
@@ -1883,37 +1883,374 @@ func mustMsgs(t *testing.T, a *Agent, p AskParams) []llm.Message {
 	return msgs
 }
 
-// 意圖(#40):作者拒絕提案時寫的原因,要真的送到模型手上,之後的提案才會避開同樣的問題;
-// 開新對話(Reset)後不再帶上,避免上一段對話的偏好悄悄延續。
+// joined 把送給模型的訊息接成一段,方便檢查「這一回合實際送出的內容」。
+func joined(msgs []llm.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		b.WriteString(m.Content)
+		b.WriteString("\n---\n")
+	}
+	return b.String()
+}
+
+// assertAlternating 檢查送給模型的訊息(扣掉開頭的 system)沒有連續兩則同為 user/assistant:
+// 本機模型的聊天範本遇到 user/assistant 未交替會直接報錯(#124 審查)。連續的 tool 訊息是正常的
+// (一次回覆多個工具呼叫),不算違規。
+func assertAlternating(t *testing.T, msgs []llm.Message) {
+	t.Helper()
+	prev := ""
+	for i, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		if (m.Role == "user" || m.Role == "assistant") && m.Role == prev {
+			t.Fatalf("第 %d 則與前一則同為 %s(不應連續):%+v", i, m.Role, msgs[i-1])
+		}
+		prev = m.Role
+	}
+}
+
+// askTurn 讓模型跑一個回合:提一個提案然後回一句話,回傳該回合建立的提案。
+func askTurn(t *testing.T, a *Agent, s *scripted, question, replacement string) *proposal.Proposal {
+	t.Helper()
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"` + replacement + `","rationale":"r"}`}}},
+		{Role: "assistant", Content: "我提了一個方向,你審核後再決定。"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: question}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := a.Proposals.List()
+	if len(list) == 0 {
+		t.Fatal("回合應建立一個提案")
+	}
+	return list[0]
+}
+
+// 意圖(#40 + #124):作者拒絕時寫的原因要真的送到模型手上;開新對話(Reset)後不再帶上,
+// 避免上一段對話的偏好悄悄延續。理由由「提案現況」帶出(送出時即時讀提案檔)。
 func TestRejectionReasonSentUntilReset(t *testing.T) {
 	a, s, _ := setup(t)
-	a.NoteRejection(&proposal.Proposal{Target: "manuscript/001.md", Original: "小明走進森林。"}, "太口語")
+	p := askTurn(t, a, s, "改得有畫面感", "小明獨自闖入森林。")
+	if _, err := a.Proposals.Reject(p.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
-	if sys := s.reqs[0].Messages[0].Content; !strings.Contains(sys, "太口語") || !strings.Contains(sys, "小明走進森林。") {
+	sys := s.reqs[len(s.reqs)-1].Messages[0].Content
+	if !strings.Contains(sys, "太口語") || !strings.Contains(sys, "小明走進森林。") {
 		t.Fatalf("拒絕原因應送出: %q", sys)
 	}
 	a.Reset()
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	a.Ask(context.Background(), AskParams{Question: "新對話"}, func(Event) {})
-	if strings.Contains(s.reqs[1].Messages[0].Content, "太口語") {
+	if strings.Contains(s.reqs[len(s.reqs)-1].Messages[0].Content, "太口語") {
 		t.Fatal("Reset 後不應再帶上拒絕原因")
 	}
 }
 
 // 意圖(G2):拒絕的若是設定集等受保護檔案的提案(可能是先前對話附加時產生的),
-// 本次沒附加就不能把其中的原文片段送出;只送檔名與作者寫的原因。
+// 本次沒附加就不能把其中的原文片段送出;只送編號、檔名、版本數與作者寫的原因。
 func TestRejectionReasonOmitsProtectedOriginal(t *testing.T) {
-	a, s, _ := setup(t)
-	a.NoteRejection(&proposal.Proposal{Target: "canon/secret.md", Original: "祕密設定:反派是小明的哥哥。"}, "語氣太硬")
-	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
-	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+	a, _, _ := setup(t)
+	p, err := a.Proposals.Create("m", "canon/secret.md", "祕密設定:反派是小明的哥哥。", "祕密設定:反派是小明的妹妹。", "r", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	sys := s.reqs[0].Messages[0].Content
-	if strings.Contains(sys, "反派") || !strings.Contains(sys, "語氣太硬") {
-		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", sys)
+	a.recordProposal(p.ID)
+	if _, err := a.Proposals.Reject(p.ID, "語氣太硬"); err != nil {
+		t.Fatal(err)
+	}
+	all := joined(mustMsgs(t, a, AskParams{Question: "再改一次"}))
+	if strings.Contains(all, "反派") || !strings.Contains(all, "語氣太硬") {
+		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", all)
+	}
+	if !strings.Contains(all, p.ID) || !strings.Contains(all, "canon/secret.md") {
+		t.Fatalf("受保護檔案仍應附提案編號與目標檔: %q", all)
+	}
+}
+
+// 意圖(#124):帶理由拒絕後,下一回合送給模型的內容必須讓模型知道「哪個提案被拒(編號、目標檔、版本數)、
+// 作者的理由是什麼」並請它修正後重新提案;只留一句「避免同樣的問題」會讓模型改用純文字回答、不再提案。
+func TestRejectionTellsModelWhichProposalToRepropose(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","alternatives":[{"replacement":"A"},{"replacement":"B"}],"rationale":"r"}`}}},
+		{Role: "assistant", Content: "我提了幾個方向,你審核後再決定。"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改得有畫面感"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := a.Proposals.List()
+	p := list[0]
+	if _, err := a.Proposals.Reject(p.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {})
+	all := joined(s.reqs[len(s.reqs)-1].Messages)
+	for _, want := range []string{p.ID, "manuscript/第一章.md", "3 個版本", "太口語", "重新提出"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("下一回合送給模型的內容應含 %q,實際:%q", want, all)
+		}
+	}
+}
+
+// 意圖(#124):本回合建立的提案要讓模型看得到真實狀態(下一回合的系統訊息列出它待審),
+// 不會只複述自己上一輪那句「提案已送出」。狀態是送出時讀提案檔得來的,不寫進對話歷史。
+func TestProposalStatusShownLiveFromStore(t *testing.T) {
+	a, s, _ := setup(t)
+	p := askTurn(t, a, s, "改得有畫面感", "小明獨自闖入森林。")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	a.Ask(context.Background(), AskParams{Question: "還要改哪裡"}, func(Event) {})
+	sys := s.reqs[len(s.reqs)-1].Messages[0].Content
+	if !strings.Contains(sys, p.ID) || !strings.Contains(sys, "等待作者審查") {
+		t.Fatalf("系統訊息應列出本回合建立的提案與待審狀態: %q", sys)
+	}
+	if hist := joined(a.History); strings.Contains(hist, p.ID) {
+		t.Fatalf("提案狀態不應寫進對話歷史(壓縮會切掉、會被舊快照覆蓋): %q", hist)
+	}
+}
+
+// 意圖(#124):接受的事實也要讓模型看得到(下一回合的系統訊息說已寫入第幾個版本),
+// 模型就不會再說「等你審核」。
+func TestAcceptedProposalStatusShown(t *testing.T) {
+	a, _, _ := setup(t)
+	p, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "小明獨自闖入森林。", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.recordProposal(p.ID)
+	if _, err := a.Proposals.Accept(p.ID, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	sys := joined(mustMsgs(t, a, AskParams{Question: "再改哪裡"}))
+	if !strings.Contains(sys, p.ID) || !strings.Contains(sys, "作者已接受第 1 個版本並寫入") {
+		t.Fatalf("系統訊息應說明提案已接受並寫入: %q", sys)
+	}
+}
+
+// 意圖(#124 + SPEC §12.3 對話記錄):本會話建立過的提案清單隨會話存檔與接續;接續後送給模型的內容
+// 依清單重新讀當下狀態,所以作者在存檔之後、接續之前處理的提案,接續回來也看得到真實狀態。
+func TestSessionProposalIDsSurviveSnapshotRestore(t *testing.T) {
+	a, s, _ := setup(t)
+	p, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "小明獨自闖入森林。", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.recordProposal(p.ID)
+	hist, rej, ids := a.Snapshot()
+	if len(ids) != 1 || ids[0] != p.ID {
+		t.Fatalf("Snapshot 應帶回本會話建立的提案 id:%q", ids)
+	}
+	// 存檔之後、接續之前,作者把提案拒絕了(磁碟上的狀態才是真的)
+	if _, err := a.Proposals.Reject(p.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	a.Reset() // 新對話
+	a.RestoreSession(hist, rej, ids)
+	all := joined(mustMsgs(t, a, AskParams{Question: "再改一次"}))
+	for _, want := range []string{p.ID, "太口語", "重新提出", "已失效"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("接續後送給模型的內容應仍含 %q,實際:%q", want, all)
+		}
+	}
+	if len(s.reqs) != 0 {
+		t.Fatal("測試只需要組裝訊息,不應送出請求")
+	}
+}
+
+// 意圖(#124):不填理由直接拒絕,現況也要說明提案已失效並請模型重新提案——
+// 否則模型會以為提案還在待審,繼續複述「等你審核」。
+func TestRejectWithoutReasonStillShowsInvalidated(t *testing.T) {
+	a, s, _ := setup(t)
+	p := askTurn(t, a, s, "改得有畫面感", "小明獨自闖入森林。")
+	if _, err := a.Proposals.Reject(p.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {})
+	all := joined(s.reqs[len(s.reqs)-1].Messages)
+	for _, want := range []string{p.ID, "作者已拒絕", "(作者未填理由)", "已失效", "重新提出"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("不填理由的拒絕也要讓模型知道已失效,應含 %q,實際:%q", want, all)
+		}
+	}
+}
+
+// 意圖(#124 審查 1):以建立提案的回合做對話壓縮(手動或自動)之後,送出的訊息仍要嚴格 user/assistant 交替——
+// 提案狀態不進對話歷史,所以切點不會切出連續 assistant。
+func TestCompactAfterProposalTurnKeepsAlternation(t *testing.T) {
+	a, s, _ := setup(t)
+	a.RestoreSession([]llm.Message{
+		{Role: "user", Content: "q1"}, {Role: "assistant", Content: "a1"},
+		{Role: "user", Content: "q2"}, {Role: "assistant", Content: "a2"},
+	}, nil, nil)
+	p := askTurn(t, a, s, "q3", "小明獨自闖入森林。")
+	s.replies = []llm.Message{{Role: "assistant", Content: "摘要"}}
+	if err := a.Compact(context.Background(), func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	msgs := mustMsgs(t, a, AskParams{Question: "q4"})
+	assertAlternating(t, msgs)
+	if !strings.Contains(msgs[0].Content, p.ID) {
+		t.Fatalf("壓縮後仍應帶提案現況:%q", msgs[0].Content)
+	}
+}
+
+// 意圖(#124 審查 2):工具成功後、回合結束(模型還在生成文字)之前,作者就拒絕了提案——
+// 下一回合送出的內容要顯示已拒絕,不能仍把這個提案描述成待審。
+func TestRejectBeforeFinishShowsRejected(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "提案已送出"},
+	}
+	var created string
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) {
+		if e.ProposalID != "" { // 工具事件一送出,作者就按下拒絕(不填理由)
+			created = e.ProposalID
+			if _, err := a.Proposals.Reject(e.ProposalID, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if created == "" {
+		t.Fatal("應有建立的提案 id")
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {})
+	all := joined(s.reqs[len(s.reqs)-1].Messages)
+	if !strings.Contains(all, created) || !strings.Contains(all, "作者已拒絕") {
+		t.Fatalf("回合結束前就被拒絕的提案,下一回合應顯示已拒絕:%q", all)
+	}
+	if strings.Contains(all, created+"(") && strings.Contains(all[strings.Index(all, created+"("):], "等待作者審查") {
+		t.Fatalf("不得仍把這個提案描述成待審:%q", all)
+	}
+}
+
+// review127Client 在每次送出請求時觸發 hook,讓測試能在「壓縮等待摘要」期間操作提案(#124 審查 3)。
+type review127Client struct{ hook func() }
+
+func (c review127Client) Chat(context.Context, llm.Request, func(string)) (llm.Message, error) {
+	c.hook()
+	return llm.Message{Role: "assistant", Content: "摘要"}, nil
+}
+
+// 意圖(#124 審查 3):壓縮進行中(等模型產摘要)時作者拒絕提案,摘要回來後下一回合仍要顯示已拒絕——
+// 事後寫進對話歷史的做法會被 compact 的舊快照整份覆蓋掉。
+func TestRejectDuringCompactStillShowsRejected(t *testing.T) {
+	a, s, _ := setup(t)
+	p := askTurn(t, a, s, "q1", "小明獨自闖入森林。")
+	// 再兩輪一般問答,讓歷史長於可壓縮的門檻
+	for _, q := range []string{"q2", "q3"} {
+		s.replies = []llm.Message{{Role: "assistant", Content: "回答"}}
+		if _, err := a.Ask(context.Background(), AskParams{Question: q}, func(Event) {}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 壓縮送出摘要請求、等待回覆時,作者拒絕了提案
+	a.LLM = review127Client{hook: func() {
+		if _, err := a.Proposals.Reject(p.ID, "太口語"); err != nil {
+			t.Errorf("壓縮期間拒絕應成功:%v", err)
+		}
+	}}
+	if err := a.Compact(context.Background(), func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	a.LLM = s // 測試接下來只需要組裝訊息
+	all := joined(mustMsgs(t, a, AskParams{Question: "再改一次"}))
+	if !strings.Contains(all, "作者已拒絕") || !strings.Contains(all, "太口語") {
+		t.Fatalf("壓縮期間被拒絕的提案,下一回合仍應顯示已拒絕與理由:%q", all)
+	}
+}
+
+// 意圖(#124):現況段落只列最近 sessionProposalLimit 筆,舊的不再佔上下文。
+func TestProposalStatusListsOnlyRecentOnes(t *testing.T) {
+	a, _, _ := setup(t)
+	ids := make([]string, 0, 25)
+	for i := 0; i < 25; i++ {
+		p, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", fmt.Sprintf("版本%d", i), "r", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.recordProposal(p.ID)
+		ids = append(ids, p.ID)
+	}
+	sys := joined(mustMsgs(t, a, AskParams{Question: "q"}))
+	if strings.Contains(sys, ids[0]) || strings.Contains(sys, ids[4]) {
+		t.Fatalf("最早的提案不應再列出:%q", sys)
+	}
+	for _, id := range ids[5:] {
+		if !strings.Contains(sys, id) {
+			t.Fatalf("最近的提案應列出,缺 %q", id)
+		}
+	}
+}
+
+// 意圖(#124 審查):提案檔被刪掉時只略過那一筆,請求照常送出;損壞或讀不到時要明確失敗,
+// 不能讓「已拒絕」這個真實狀態無聲消失、模型只剩先前「提案已送出」的說法。
+func TestProposalStatusSkipsMissingButSurfacesCorrupt(t *testing.T) {
+	a, _, _ := setup(t)
+	gone, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "版本甲", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "版本乙", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.recordProposal(gone.ID)
+	a.recordProposal(bad.ID)
+	if _, err := a.Proposals.Reject(bad.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(a.Proj.Root, ".perkins", "proposals")
+	if err := os.Remove(filepath.Join(dir, gone.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if all := joined(mustMsgs(t, a, AskParams{Question: "q"})); strings.Contains(all, gone.ID) || !strings.Contains(all, bad.ID) {
+		t.Fatalf("已刪除的提案應略過、其餘照常列出:%q", all)
+	}
+	if err := os.WriteFile(filepath.Join(dir, bad.ID+".json"), []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.BuildMessages(AskParams{Question: "q"}); err == nil || !strings.Contains(err.Error(), bad.ID) {
+		t.Fatalf("提案檔損壞時應回報含提案 id 的錯誤,得到 %v", err)
+	}
+}
+
+// 意圖(#124):propose_patch 成功時,工具事件要帶出實際建立的提案 id——前端靠它把卡片留在建立它的對話原位。
+func TestToolEventCarriesCreatedProposalID(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	var events []Event
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := a.Proposals.List()
+	if len(list) != 1 {
+		t.Fatalf("應建立一個提案,得到 %d", len(list))
+	}
+	var got string
+	for _, e := range events {
+		if e.Kind == "tool" && e.ProposalID != "" {
+			got = e.ProposalID
+		}
+	}
+	if got != list[0].ID {
+		t.Fatalf("工具事件應帶出建立的提案 id,得到 %q(應為 %q)", got, list[0].ID)
 	}
 }
 

@@ -61,6 +61,7 @@ interface ChatEvent {
     args?: string;
     allowed?: boolean;
     result?: string; // 工具執行完才會有:結果或「錯誤:…」/拒絕訊息,只是顯示給作者看(#34 第 7 項)
+    proposalId?: string; // 這次呼叫實際建立的提案 id(propose_patch 成功時才有,#124)
 }
 
 interface Turn {
@@ -71,6 +72,9 @@ interface Turn {
     args?: string;
     result?: string;
     bad?: boolean; // 錯誤或被拒:收合的一行就要看得出來
+    // proposalIds 是這個回合的工具呼叫實際建立的提案 id(#124):已處理(已接受/已拒絕)的提案卡
+    // 留在建立它的那個對話的原位,隨對話記錄存檔與接續;待審卡片仍是作品層級清單。
+    proposalIds?: string[];
 }
 
 const KIND_LABEL: Record<string, string> = {canon: '設定', outline: '大綱', notes: '筆記', manuscript: '章節'};
@@ -218,7 +222,9 @@ export default function ChatWindow(props: Props) {
                 // 錯誤或被拒在收合的一行就看得出來;結果在工具執行完才會有(#34 第 7 項)
                 const bad = !e.allowed || (e.result ?? '').startsWith('錯誤');
                 const prefix = !e.allowed ? '【已拒絕】' : bad ? '【錯誤】' : '';
-                setTurns(t => [...t, {role: 'tool', text: `${prefix}${label} ${arg}`, args: e.args, result: e.result, bad}]);
+                setTurns(t => [...t, {role: 'tool', text: `${prefix}${label} ${arg}`, args: e.args, result: e.result, bad,
+                                       // 建立的提案掛在這個回合上:之後被接受/拒絕時,卡片留在建立它的對話的原位(#124)
+                                       proposalIds: e.proposalId ? [e.proposalId] : undefined}]);
             } else if (e.kind === 'notice') {
                 setTurns(t => [...t, {role: 'notice', text: e.text ?? ''}]);
             }
@@ -449,9 +455,9 @@ export default function ChatWindow(props: Props) {
 
     // ---- 對話記錄(#33):存在使用者設定目錄(依作品分開);過往內容只當對話上下文參考,不會成為設定 ----
     const toSessionTurns = (list: Turn[]): sessions.Turn[] =>
-        list.map(t => ({role: t.role, text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad}));
+        list.map(t => ({role: t.role, text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad, proposalIds: t.proposalIds}));
     const fromSessionTurns = (list: sessions.Turn[]): Turn[] =>
-        (list ?? []).map(t => ({role: t.role as Turn['role'], text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad}));
+        (list ?? []).map(t => ({role: t.role as Turn['role'], text: t.text, meta: t.meta, args: t.args, result: t.result, bad: t.bad, proposalIds: t.proposalIds}));
     const fmtTime = (s: string) => (s || '').replace('T', ' ').slice(0, 16);
     const loadSessions = () => ListSessions().then(list => setSessionList(list ?? [])).catch(e => setError(errText(e)));
 
@@ -528,6 +534,12 @@ export default function ChatWindow(props: Props) {
     }, [open, pos]);
 
     const openProposals = proposals.filter(p => p.status === 'pending' || p.status === 'conflict');
+    // 已處理(已接受/已拒絕)的提案卡留在「建立它的那個對話」的原位(#124):由回合上的 proposalIds 找出對應提案,
+    // 在那個回合下面顯示狀態;不另做彙總清單(那是作者否決的方案)。待審卡片仍是作品層級清單(現行行為)。
+    const proposalById = useMemo(() => new Map(proposals.map(p => [p.id, p])), [proposals]);
+    const doneCardsOf = (t: Turn) => (t.proposalIds ?? [])
+        .map(id => proposalById.get(id))
+        .filter((p): p is proposal.Proposal => !!p && p.status !== 'pending' && p.status !== 'conflict');
 
     const pickable = useMemo(() => {
         const groups: {label: string; items: project.Entry[]}[] = [
@@ -624,7 +636,7 @@ export default function ChatWindow(props: Props) {
                         </div>
                     )}
                     {turns.map((t, i) => (
-                        <div key={i} className={cn('my-2', t.role === 'user' && 'flex flex-col items-end')}>
+                        <div key={i} data-testid="turn" className={cn('my-2', t.role === 'user' && 'flex flex-col items-end')}>
                             {t.role === 'user' && (
                                 <>
                                     <div className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary/15 px-3 py-2 text-sm">{t.text}</div>
@@ -665,38 +677,64 @@ export default function ChatWindow(props: Props) {
                                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0"/>{t.text}
                                 </div>
                             )}
+                            {/* #124:這一回合建立的提案被處理後,卡片留在原位並顯示狀態;已處理者不可再審查/接受(G1/G3) */}
+                            {doneCardsOf(t).map(p => (
+                                <div key={p.id} data-testid="proposal" data-proposal-id={p.id}
+                                     className="ml-2.5 border-t border-border pt-2 text-sm opacity-80">
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                        <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                        {(p.alternatives ?? []).length > 0 &&
+                                            <span className="shrink-0" data-testid="proposal-versions">{1 + (p.alternatives ?? []).length} 個版本</span>}
+                                        <span className="ml-auto shrink-0">{p.model}</span>
+                                    </div>
+                                    <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                    <p data-testid="proposal-status"
+                                       className={cn('mt-0.5 text-xs font-medium',
+                                                      p.status === 'rejected' ? 'text-destructive' : 'text-muted-foreground')}>
+                                        {p.status === 'rejected' ? '已拒絕' : '已接受'}
+                                    </p>
+                                    {p.status === 'rejected' && p.rejectReason && (
+                                        <p className="truncate text-xs text-muted-foreground" data-testid="proposal-reject-reason"
+                                           title={p.rejectReason}>作者理由:{p.rejectReason}</p>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     ))}
                     {busy && <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin"/>思考中…</div>}
 
                     {openProposals.length > 0 && (
                         <div className="mt-3 space-y-2" data-testid="proposals">
-                            <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
-                            {openProposals.map(p => {
-                                // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
-                                // edited 以「提案#版本」為鍵(#39):任一版本被編輯過就顯示已修改
-                                const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
-                                const changed = versions.some((v, i) =>
-                                    edited[`${p.id}#${i}`] !== undefined && edited[`${p.id}#${i}`] !== v.replacement);
-                                return (
-                                    <div key={p.id} data-testid="proposal"
-                                         className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
-                                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                            <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
-                                            {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
-                                            <span className="ml-auto shrink-0">{p.model}</span>
-                                        </div>
-                                        <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
-                                        {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
-                                        {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
-                                        {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
-                                        <div className="mt-1.5 flex justify-end">
-                                            <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
-                                                    onClick={() => setReviewId(p.id)}><Maximize2/>審查</Button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                            {openProposals.length > 0 && (
+                                <>
+                                    <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
+                                    {openProposals.map(p => {
+                                        // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
+                                        // edited 以「提案#版本」為鍵(#39):任一版本被編輯過就顯示已修改
+                                        const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
+                                        const changed = versions.some((v, i) =>
+                                            edited[`${p.id}#${i}`] !== undefined && edited[`${p.id}#${i}`] !== v.replacement);
+                                        return (
+                                            <div key={p.id} data-testid="proposal"
+                                                 className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
+                                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                    <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                                    {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
+                                                    <span className="ml-auto shrink-0">{p.model}</span>
+                                                </div>
+                                                <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                                {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
+                                                {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
+                                                {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
+                                                <div className="mt-1.5 flex justify-end">
+                                                    <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
+                                                            onClick={() => setReviewId(p.id)}><Maximize2/>審查</Button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </>
+                            )}
                         </div>
                     )}
                     <div ref={bottom}/>

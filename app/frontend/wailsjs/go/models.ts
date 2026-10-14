@@ -730,6 +730,7 @@ export namespace proposal {
 	    acceptedVersion?: number;
 	    authorEdited?: boolean;
 	    final?: string;
+	    rejectReason?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Proposal(source);
@@ -756,6 +757,7 @@ export namespace proposal {
 	        this.acceptedVersion = source["acceptedVersion"];
 	        this.authorEdited = source["authorEdited"];
 	        this.final = source["final"];
+	        this.rejectReason = source["rejectReason"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -873,6 +875,7 @@ export namespace sessions {
 	    args?: string;
 	    result?: string;
 	    bad?: boolean;
+	    proposalIds?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Turn(source);
@@ -886,6 +889,7 @@ export namespace sessions {
 	        this.args = source["args"];
 	        this.result = source["result"];
 	        this.bad = source["bad"];
+	        this.proposalIds = source["proposalIds"];
 	    }
 	}
 	export class Session {
@@ -896,6 +900,7 @@ export namespace sessions {
 	    updatedAt: string;
 	    history: llm.Message[];
 	    rejections?: string[];
+	    proposalIds?: string[];
 	    turns: Turn[];
 	
 	    static createFrom(source: any = {}) {
@@ -911,6 +916,7 @@ export namespace sessions {
 	        this.updatedAt = source["updatedAt"];
 	        this.history = this.convertValues(source["history"], llm.Message);
 	        this.rejections = source["rejections"];
+	        this.proposalIds = source["proposalIds"];
 	        this.turns = this.convertValues(source["turns"], Turn);
 	    }
 	

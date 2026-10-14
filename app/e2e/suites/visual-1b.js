@@ -350,7 +350,16 @@ module.exports = {
         const leftoverJson = JSON.parse(fs.readFileSync(P(leftoverProp), 'utf8'));
         leftoverJson.status = 'rejected';
         projWrite(leftoverProp, JSON.stringify(leftoverJson, null, 2));
-        await page.evaluate(() => window.__perkinsRefreshProposals());
+        // #124:已處理的提案卡留在「建立它的那個對話」的原位,所以這兩個提案要掛在建立它們的回合上
+        // (真實流程由 propose_patch 的工具事件帶出提案 id,DEV hook 注入等價的回合)
+        const REVB = '20261010-150100-revb', REVA = '20261010-150000-reva';
+        const REV_TURNS = [
+            {role: 'user', text: '幫我改一下開場與秋風那兩句', meta: ''},
+            {role: 'tool', text: '· 提出修改提案 審查視窗.md', result: `提案 ${REVB} 已建立(1 個版本),等待作者審核。`, proposalIds: [REVB]},
+            {role: 'assistant', text: '兩處各提一個方向,你審核後再決定要不要用。'},
+            {role: 'tool', text: '· 提出修改提案 審查視窗.md', result: `提案 ${REVA} 已建立(1 個版本),等待作者審核。`, proposalIds: [REVA]},
+        ];
+        await page.evaluate(t => { window.__perkinsChatInject(t); window.__perkinsRefreshProposals(); }, REV_TURNS);
         await settle(80, 700);
         // 檢查名稱集中一處:萬一中途抛錯,尚未報告的項目才補成 FAIL(已報告的不重複)
         const REV_CHECKS = [
@@ -366,7 +375,7 @@ module.exports = {
             '#35 審查視窗內編輯:聊天卡片顯示「已修改」',
             '#45 卡片只做通知:沒有接受/拒絕/編輯,只有「審查」',
             '#35 審查視窗接受:磁碟寫入作者版本、視窗切到下一個待審提案',
-            '#35 審查視窗拒絕最後一個:視窗關閉、提案從待審消失(磁碟 rejected)',
+            '#35 審查視窗拒絕最後一個:視窗關閉、卡片留在對話中顯示「已拒絕」與作者理由(磁碟 rejected)',
             '#35 返工 手動放大後縮到 640:視窗尺寸跟著縮、接受/拒絕仍在畫面內',
             '#35 返工 接受等待中下一張被拒絕:完成後依最新清單切到再下一張',
             '#35 返工 接受失敗(衝突):視窗留在目前提案並顯示衝突',
@@ -376,10 +385,26 @@ module.exports = {
             '#45 Ctrl+Shift+Enter:選取後開啟 Perkins Bot 並帶入選取',
             '#45 返工 CRLF 多行原文:直接顯示與在原文外打字後都能標示',
             '#45 返工 640 寬已修改狀態:頁尾按鈕都在視窗內且可點',
-            '#40 按「拒絕」先出現選填原因列,確認前提案仍待審;確認後原因送進下一次給 Bot 的系統訊息',
+            '#40 按「拒絕」先出現選填原因列,確認前提案仍待審;確認後理由存進提案 JSON(Bot 在送出時讀它)',
+            '#124 已接受的提案卡顯示「已接受」、已拒絕的顯示「已拒絕」與理由,留在建立它的回合且不能再審查',
+            '#124 重開作品並接續會話後,已處理提案的卡片與狀態、作者理由仍在原位',
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
+        // #124:讀聊天卡片裡「已處理提案」的狀態與作者理由,並確認已處理的卡沒有審查按鈕(不可再審查/接受)
+        const readDoneCards = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=proposal]')].map(c => ({
+            txt: c.textContent, review: !!c.querySelector('[data-testid=review-open]'),
+            status: c.querySelector('[data-testid=proposal-status]')?.textContent?.trim() || '',
+            reason: c.querySelector('[data-testid=proposal-reject-reason]')?.textContent?.trim() || '',
+        })));
+        const doneOK = (cards) => {
+            const rej = cards.find(c => c.txt.includes('秋風起了'));
+            const acc = cards.find(c => c.txt.includes('春日在望'));
+            return !!rej && rej.status === '已拒絕' && rej.reason.includes('節奏太快') && !rej.review
+                && !!acc && acc.status === '已接受' && !acc.review;
+        };
+        // 作者否決過「已處理提案」那種彙總清單:已處理的卡只能出現在建立它的那個回合裡
+        const noAggregate = async () => !(await page.textContent('[data-testid=chat-window]')).includes('已處理提案');
         const revHead = () => page.evaluate(() => ({
             target: document.querySelector('[data-testid=review-target]')?.textContent,
             count: document.querySelector('[data-testid=review-count]')?.textContent,
@@ -417,11 +442,14 @@ module.exports = {
             // --- Esc 只關閉視窗,不動提案狀態 ---
             await page.keyboard.press('Escape');
             await page.waitForSelector('[data-testid=proposal-review]', {state: 'detached', timeout: 5000});
-            const escCards = await page.$$eval('[data-testid=proposal]', els => els.length);
+            // #124:卡片清單已含已處理的提案,所以只數「待審」卡(有審查按鈕的)
+            const escCards = await page.$$eval('[data-testid=proposal]', els => ({
+                pending: els.filter(e => e.querySelector('[data-testid=review-open]')).length, total: els.length,
+            }));
             revCheck(REV_CHECKS[3],
-                escCards === 2 && JSON.parse(read('.perkins/proposals/20261010-150100-revb.json')).status === 'pending'
+                escCards.pending === 2 && JSON.parse(read('.perkins/proposals/20261010-150100-revb.json')).status === 'pending'
                 && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'pending',
-                JSON.stringify({cards: escCards}));
+                JSON.stringify(escCards));
             // --- 先拖到畫面右側,再縮成 640×672:視窗要自己回到可見範圍(#55 的做法),內容改上下堆疊 ---
             await page.click('[data-testid=proposal]:has-text("春日在望") [data-testid=review-open]');
             await page.waitForSelector('[data-testid=proposal-review]');
@@ -598,16 +626,28 @@ module.exports = {
             await page.fill('[data-testid=review-reject-reason]', '節奏太快');
             await page.click('[data-testid=review-reject-confirm]');
             await settle(80, 900);
-            const pvSys = await page.evaluate(() => window.go.main.App.PreviewContext({question: 'x'}).then(p => p.messages[0].content));
-            revCheck(REV_CHECKS[22], reasonRow && stillPending && pvSys.includes('節奏太快'), JSON.stringify({reasonRow, stillPending, hasReason: pvSys.includes('節奏太快')}));
+            // #124:理由存進提案 JSON,Bot 那邊的「提案現況」在**送出時**才讀它(E2E 不呼叫模型,
+            // 而且這個提案是本組直接寫檔 seeded 的、本會話並沒有建立它,所以預覽不會列出它——
+            // 送給模型的內容由 Go 測試驗:internal/agent TestRejectionReasonSentUntilReset 等)
+            const rejFile = JSON.parse(read('.perkins/proposals/20261010-150000-reva.json'));
+            revCheck(REV_CHECKS[22], reasonRow && stillPending && rejFile.status === 'rejected' && rejFile.rejectReason === '節奏太快',
+                JSON.stringify({reasonRow, stillPending, status: rejFile.status, reason: rejFile.rejectReason}));
             const endState = await page.evaluate(() => ({
                 win: !!document.querySelector('[data-testid=proposal-review]'),
                 cards: [...document.querySelectorAll('[data-testid=proposal]')].map(e => e.textContent),
             }));
             revCheck(REV_CHECKS[12],
-                !endState.win && !endState.cards.some(t => t.includes('秋風起了'))
+                !endState.win && endState.cards.some(t => t.includes('秋風起了') && t.includes('已拒絕'))
                 && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'rejected'
                 && !read(revRel).includes('秋風捲起落葉'), JSON.stringify(endState));
+            // --- #124 卡片留在建立它的回合:已拒絕附作者理由、已接受只顯示狀態;已處理的卡不能再審查(G1/G3 不變) ---
+            const doneCards = await readDoneCards();
+            // 卡片要掛在建立它的那個回合裡(與工具列同一個 turn),不是另外彙整的一片
+            const inTurn = await page.evaluate(ids => ids.every(id => {
+                const turn = document.querySelector(`[data-proposal-id="${id}"]`)?.closest('[data-testid=turn]');
+                return !!turn && !!turn.querySelector('[data-testid=tool-turn]');
+            }), [REVB, REVA]);
+            revCheck(REV_CHECKS[23], doneOK(doneCards) && await noAggregate() && inTurn, JSON.stringify({doneCards, inTurn}));
 
             // --- 返工(PR #64 審查):清單在視窗開著時變動、接受失敗 ---
             const errs = [];
@@ -893,6 +933,29 @@ module.exports = {
         }
         await page.setViewportSize({width: 1440, height: 900});
         await settle(80, 700);
+
+        // ===== #124 重開作品:接續會話後,已處理提案的卡片與狀態、作者理由仍在原位 =====
+        // (回合上的 proposalIds 隨會話存檔;重載後從「對話記錄」接續回來。只清 fixture 作品對應的鍵。)
+        const sessDir = path.join(os.homedir(), '.perkins', 'sessions',
+            require('crypto').createHash('sha256').update(path.resolve(PROJ).replace(/\\/g, '/').toLowerCase()).digest('hex').slice(0, 32));
+        try {
+            await page.evaluate(t => window.go.main.App.SaveSession(t), REV_TURNS);
+            await page.reload();
+            await settle(80, 1500);
+            await ctx.ensureProject('第一章', 'manuscript');
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            await page.click('[data-testid=sessions-btn]');
+            await page.waitForSelector('[data-testid=sessions-dialog]');
+            await page.click('[data-testid=session-row]:has-text("幫我改一下開場與秋風那兩句") [data-testid=session-resume]');
+            await page.waitForSelector('[data-testid=sessions-dialog]', {state: 'detached'});
+            await settle(80, 900);
+            const afterReload = await readDoneCards();
+            revCheck(REV_CHECKS[24], doneOK(afterReload) && await noAggregate(), JSON.stringify(afterReload));
+        } catch (e) {
+            revCheck(REV_CHECKS[24], false, e.message);
+        } finally {
+            if (fs.existsSync(sessDir)) fs.rmSync(sessDir, {recursive: true, force: true});
+        }
 
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
         if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');

@@ -44,10 +44,15 @@ type Turn struct {
 	Args   string `json:"args,omitempty"`   // 工具呼叫列:參數(僅顯示)
 	Result string `json:"result,omitempty"` // 工具呼叫列:結果/錯誤/拒絕訊息(僅顯示)
 	Bad    bool   `json:"bad,omitempty"`    // 錯誤或被拒
+	// ProposalIDs 是這個回合的工具呼叫實際建立的提案 id(#124)。
+	// 已處理(已接受/已拒絕)的提案卡靠它留在「建立它的那個對話」的原位,隨會話存檔與接續;
+	// 待審卡片仍是作品層級清單,不靠這個欄位。
+	ProposalIDs []string `json:"proposalIds,omitempty"`
 }
 
 // Session 是一份對話記錄。History 是送給模型的 user/assistant 回合(可能以濃縮摘要開頭),
-// Rejections 是本次會話作者拒絕提案時說明的原因(#40,放在系統訊息);接續時兩者載回 Agent。
+// Rejections 是舊版記錄下的拒絕原因(#40,相容用;新拒絕的理由存在提案 JSON),ProposalIds 是本會話
+// 建立過的提案 id(#124:送出時依它即時讀提案現況);接續時三者都載回 Agent。
 type Session struct {
 	ID         string        `json:"id"`
 	Title      string        `json:"title"` // 第一個問題截短
@@ -56,7 +61,9 @@ type Session struct {
 	UpdatedAt  string        `json:"updatedAt"`
 	History    []llm.Message `json:"history"`
 	Rejections []string      `json:"rejections,omitempty"`
-	Turns      []Turn        `json:"turns"`
+	// ProposalIds 是本會話建立過的提案 id;舊 JSON 沒有這個欄位照常可讀(就是不會列出現況)。
+	ProposalIds []string `json:"proposalIds,omitempty"`
+	Turns       []Turn   `json:"turns"`
 }
 
 // Meta 是清單顯示用的摘要(標題、更新時間、回合數、狀態、是否目前會話)。

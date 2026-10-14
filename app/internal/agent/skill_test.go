@@ -10,16 +10,6 @@ import (
 	"perkins/internal/llm"
 )
 
-// joined 把對話歷史接成一段,方便檢查「歷史裡有沒有技能全文」。
-func joined(msgs []llm.Message) string {
-	var b strings.Builder
-	for _, m := range msgs {
-		b.WriteString(m.Content)
-		b.WriteString("\n---\n")
-	}
-	return b.String()
-}
-
 // setupSkills 沿用 setup 的作品與假的 LLM,另給一個技能目錄。
 func setupSkills(t *testing.T) (*Agent, *scripted, string) {
 	t.Helper()
