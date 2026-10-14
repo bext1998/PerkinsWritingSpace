@@ -38,7 +38,11 @@ func TestSessionSaveResumeRoundTrip(t *testing.T) {
 		{Role: "user", Content: "舊問題"},
 		{Role: "assistant", Content: "舊回答"},
 	}, []string{"拒絕原因 A"})
-	turns := []sessions.Turn{{Role: "user", Text: "舊問題"}, {Role: "assistant", Text: "舊回答"}}
+	turns := []sessions.Turn{
+		{Role: "user", Text: "舊問題"},
+		{Role: "tool", Text: "· 提出修改提案 第一章.md", ProposalIDs: []string{"20261015-010000-abc123"}},
+		{Role: "assistant", Text: "舊回答"},
+	}
 
 	m, err := a.SaveSession(turns)
 	if err != nil {
@@ -70,8 +74,12 @@ func TestSessionSaveResumeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resumed.Turns) != 2 || resumed.Turns[0].Text != "舊問題" || resumed.Turns[1].Text != "舊回答" {
+	if len(resumed.Turns) != 3 || resumed.Turns[0].Text != "舊問題" || resumed.Turns[2].Text != "舊回答" {
 		t.Fatalf("接續應載回 turns: %+v", resumed.Turns)
+	}
+	// #124:回合上建立的提案 id 要隨會話存檔與接續(已處理的提案卡靠它留在原對話的原位)
+	if len(resumed.Turns[1].ProposalIDs) != 1 || resumed.Turns[1].ProposalIDs[0] != "20261015-010000-abc123" {
+		t.Fatalf("接續應載回回合建立的提案 id: %+v", resumed.Turns[1])
 	}
 	if len(resumed.History) != 2 || resumed.History[1].Content != "舊回答" || len(resumed.Rejections) != 1 || resumed.Rejections[0] != "拒絕原因 A" {
 		t.Fatalf("接續應載回 History 與拒絕原因: %+v / %+v", resumed.History, resumed.Rejections)

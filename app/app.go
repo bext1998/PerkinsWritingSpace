@@ -1193,8 +1193,9 @@ func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.
 	return p, err
 }
 
-// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),存進提案 JSON(卡片顯示得出來,#124),
-// 非空時本次會話的 Bot 會記住並依它重新提案。
+// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),存進提案 JSON(卡片顯示得出來,#124)。
+// 不論有沒有填理由,被拒的事實都會回到對話歷史給模型(它需要知道提案已失效,#124);有理由時另外帶進
+// 本次會話的拒絕原因清單(系統訊息,Bot 依它修正後重新提案)。
 func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
@@ -1203,9 +1204,7 @@ func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
 	p, err := a.agent.Proposals.Reject(id, reason)
 	if err == nil && p != nil {
 		proposal.LogReject(a.research, p, reason)
-		if reason != "" {
-			a.agent.NoteRejection(p, reason)
-		}
+		a.agent.NoteRejection(p, reason)
 		if err := a.saveAgentState(); err != nil {
 			return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
 		}

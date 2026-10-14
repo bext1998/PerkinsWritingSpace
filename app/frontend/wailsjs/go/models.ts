@@ -859,6 +859,7 @@ export namespace sessions {
 	    args?: string;
 	    result?: string;
 	    bad?: boolean;
+	    proposalIds?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Turn(source);
@@ -872,6 +873,7 @@ export namespace sessions {
 	        this.args = source["args"];
 	        this.result = source["result"];
 	        this.bad = source["bad"];
+	        this.proposalIds = source["proposalIds"];
 	    }
 	}
 	export class Session {

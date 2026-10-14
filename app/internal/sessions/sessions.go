@@ -44,6 +44,10 @@ type Turn struct {
 	Args   string `json:"args,omitempty"`   // 工具呼叫列:參數(僅顯示)
 	Result string `json:"result,omitempty"` // 工具呼叫列:結果/錯誤/拒絕訊息(僅顯示)
 	Bad    bool   `json:"bad,omitempty"`    // 錯誤或被拒
+	// ProposalIDs 是這個回合的工具呼叫實際建立的提案 id(#124)。
+	// 已處理(已接受/已拒絕)的提案卡靠它留在「建立它的那個對話」的原位,隨會話存檔與接續;
+	// 待審卡片仍是作品層級清單,不靠這個欄位。
+	ProposalIDs []string `json:"proposalIds,omitempty"`
 }
 
 // Session 是一份對話記錄。History 是送給模型的 user/assistant 回合(可能以濃縮摘要開頭),

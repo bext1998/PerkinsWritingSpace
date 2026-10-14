@@ -1976,6 +1976,118 @@ func TestProposalCreatedInTurnRecordedInHistory(t *testing.T) {
 	}
 }
 
+// assertAlternating 檢查送給模型的訊息(扣掉開頭的 system)沒有連續兩則同為 user/assistant:
+// 本機模型的聊天範本遇到 user/assistant 未交替會直接報錯(#124 審查)。連續的 tool 訊息是正常的
+// (一次回覆多個工具呼叫),不算違規。
+func assertAlternating(t *testing.T, msgs []llm.Message) {
+	t.Helper()
+	prev := ""
+	for i, m := range msgs {
+		if m.Role == "system" {
+			continue
+		}
+		if (m.Role == "user" || m.Role == "assistant") && m.Role == prev {
+			t.Fatalf("第 %d 則與前一則同為 %s(不應連續):%+v", i, m.Role, msgs[i-1])
+		}
+		prev = m.Role
+	}
+}
+
+// 意圖(#124 審查):作者不填理由直接拒絕時,被拒的事實一樣要進對話歷史——noteCreated 已經告訴模型
+// 「接受或拒絕會再送一則通知」,沒有通知模型就會以為提案還在待審。但系統訊息的「拒絕原因」清單是
+// 有理由才有的,沒理由不該佔一筆。
+func TestRejectWithoutReasonStillNotifiedInHistory(t *testing.T) {
+	a, s, _ := setup(t)
+	p := &proposal.Proposal{ID: "20261015-010000-norason", Target: "manuscript/第一章.md", Original: "小明走進森林。"}
+	a.NoteRejection(p, "")
+	hist := joined(a.History)
+	if !strings.Contains(hist, "20261015-010000-norason") || !strings.Contains(hist, "已失效") || !strings.Contains(hist, "未填理由") {
+		t.Fatalf("不填理由也要記下提案已失效:%q", hist)
+	}
+	if _, rej := a.Snapshot(); len(rej) != 0 {
+		t.Fatalf("沒理由不應進系統訊息的拒絕原因清單:%q", rej)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(s.reqs[0].Messages[0].Content, "拒絕提案時說明的原因") {
+		t.Fatal("沒理由時不應出現系統訊息的拒絕原因段落")
+	}
+	assertAlternating(t, s.reqs[0].Messages)
+}
+
+// 意圖(#124 審查):對話歷史以「提案狀態通知」(user 角色)結尾時,下一回合送出的訊息要把問題併進去,
+// 不能變成 user(通知)、user(問題)——本機模型的聊天範本遇到未交替會報錯。工具迴圈中的後續請求同樣。
+func TestSentMessagesAlternateAfterProposalNotice(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "我提了一個方向,你審核後再決定。"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改得有畫面感"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(a.History); a.History[n-1].Role != "user" { // 前置條件:歷史以通知結尾
+		t.Fatalf("歷史應以提案狀態通知結尾,實際最後一則 role=%s", a.History[n-1].Role)
+	}
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "read_document",
+			Arguments: `{"path":"manuscript/第一章.md"}`}}},
+		{Role: "assistant", Content: "好"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.reqs) != 4 { // 第一回合 2 次(工具前後)+ 第二回合 2 次
+		t.Fatalf("應送出 4 次請求,得到 %d", len(s.reqs))
+	}
+	for i, r := range s.reqs {
+		if i == 0 {
+			continue // 第一回合:歷史還是空的
+		}
+		assertAlternating(t, r.Messages)
+	}
+	// 問題仍要送出去(不是被通知蓋掉):最後一則 user 訊息要同時含通知與本回合的問題
+	var lastUser llm.Message
+	for _, m := range s.reqs[3].Messages {
+		if m.Role == "user" {
+			lastUser = m
+		}
+	}
+	if !strings.Contains(lastUser.Content, "再改一次") || !strings.Contains(lastUser.Content, "提案狀態通知") {
+		t.Fatalf("問題應與通知併在同一則 user 訊息:%+v", lastUser)
+	}
+}
+
+// 意圖(#124):propose_patch 成功時,工具事件要帶出實際建立的提案 id——前端靠它把卡片留在建立它的對話原位。
+func TestToolEventCarriesCreatedProposalID(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "ok"},
+	}
+	var events []Event
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := a.Proposals.List()
+	if len(list) != 1 {
+		t.Fatalf("應建立一個提案,得到 %d", len(list))
+	}
+	var got string
+	for _, e := range events {
+		if e.Kind == "tool" && e.ProposalID != "" {
+			got = e.ProposalID
+		}
+	}
+	if got != list[0].ID {
+		t.Fatalf("工具事件應帶出建立的提案 id,得到 %q(應為 %q)", got, list[0].ID)
+	}
+}
+
 // 意圖(#124 + SPEC §12.3 對話記錄):提案狀態通知隨會話存檔與接續;接續後送給模型的內容仍帶著
 // 「這個提案已被拒、請重新提案」與接受的事實,不會因為換了一段對話就消失。
 func TestProposalStatusNotesSurviveSnapshotRestore(t *testing.T) {

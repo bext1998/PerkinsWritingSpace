@@ -84,6 +84,9 @@ type Event struct {
 	// Result 是這次工具呼叫的結果(或錯誤、拒絕訊息),在工具執行完才帶上,只顯示給作者看(#34 第 7 項)。
 	// 送給模型的內容不變;過長時顯示端由 displayResult 截斷。
 	Result string `json:"result,omitempty"`
+	// ProposalID 是這次呼叫實際建立的提案 id(propose_patch 成功時才有,#124)。
+	// 前端把它記在該工具列所在的回合上,已處理的提案卡才能留在「建立它的那個對話」的原位。
+	ProposalID string `json:"proposalId,omitempty"`
 }
 
 type Agent struct {
@@ -299,6 +302,14 @@ func (a *Agent) runTool(name, args string, g gate) (string, *proposal.Proposal, 
 		return msg, pr, nil
 	}
 	return "", nil, fmt.Errorf("未實作的工具 %s", name)
+}
+
+// proposalID 回傳這次工具呼叫實際建立的提案 id(失敗或不是提案工具時為空);工具事件的 proposalId 欄位用(#124)。
+func proposalID(p *proposal.Proposal, err error) string {
+	if err != nil || p == nil {
+		return ""
+	}
+	return p.ID
 }
 
 // parseAlternatives 把模型給的 alternatives 參數整形成替代版本(#39;系統邊界驗證):
@@ -593,6 +604,14 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
+	if n := len(msgs); n > 0 && msgs[n-1].Role == "user" {
+		// 對話歷史最後一則是「提案狀態通知」(user 角色)時,本回合的問題併進去而不是再送一則 user:
+		// user/assistant 必須交替,本機模型的聊天範本遇到連續兩則 user 會直接報錯(#124 審查)。
+		// 只改這次送出的副本,a.History 不動(Preview 與 Ask 共用同一條路徑,A6)。
+		out := append([]llm.Message{}, msgs[:n-1]...)
+		out = append(out, llm.Message{Role: "user", Content: msgs[n-1].Content + "\n\n" + user})
+		return out, buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
+	}
 	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
 }
 
@@ -785,13 +804,20 @@ func noteCreated(ps []*proposal.Proposal) string {
 	return b.String()
 }
 
-// NoteRejection 記下作者拒絕提案的原因與事實,之後的請求都帶得上(#40、#124)。兩處:
-// 系統訊息(不受對話壓縮影響)+ 對話歷史(如實記下「這個提案已被拒」,讓模型修正後重新提案)。
+// NoteRejection 記下作者拒絕提案的事實,之後的請求都帶得上(#40、#124)。兩處:
+// 對話歷史(如實記下「這個提案已被拒」,讓模型修正後重新提案)+ 系統訊息的拒絕原因清單(有理由才有;不受對話壓縮影響)。
+// 作者沒填理由時一樣要通知模型「已失效」——noteCreated 已經承諾過「接受或拒絕之後程式會再送一則通知」。
 func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
 	tag := proposalTag(p)
+	why := reason
+	if why == "" {
+		why = "(作者未填理由)"
+	}
 	a.mu.Lock()
-	a.rejections = append(a.rejections, fmt.Sprintf("%s:%s", tag, reason))
-	a.appendNotice(fmt.Sprintf("作者拒絕了提案 %s。作者的理由:%s。這個提案已失效,不要再複述「提案已送出」,也不要重複被拒的方案;請依作者的理由修正後重新提出新的提案。", tag, reason))
+	if reason != "" {
+		a.rejections = append(a.rejections, fmt.Sprintf("%s:%s", tag, reason))
+	}
+	a.appendNotice(fmt.Sprintf("作者拒絕了提案 %s。作者的理由:%s。這個提案已失效,不要再複述「提案已送出」,也不要重複被拒的方案;請依作者的理由修正後重新提出新的提案。", tag, why))
 	a.mu.Unlock()
 }
 
@@ -977,7 +1003,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 				result2 = "錯誤:" + terr.Error()
 			}
 			// 執行完才 emit,帶上回給模型的同一段結果(錯誤也在內),讓作者看得到工具讀到/搜到什麼(#34 第 7 項)。
-			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2)})
+			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2), ProposalID: proposalID(pr, terr)})
 			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
 			if terr == nil && pr != nil {
 				pIDs = append(pIDs, pr.ID)
