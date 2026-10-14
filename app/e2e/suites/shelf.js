@@ -25,6 +25,8 @@ module.exports = {
         check('B6 摘要儲存到 summaries/', fs.existsSync(P('summaries/第一章.md')) && read('summaries/第一章.md').includes('營火旁休息'));
         await page.click('[data-testid=chapter-row]:has-text("第二章")');
         await page.waitForSelector('.cm-line:has-text("天亮了")');
+        // 起始狀態:對話框若被前一組(sessions 結束時留在開啟狀態)留在畫面上,chat-fab 就不 render
+        if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
         await page.click('[data-testid=chat-fab]');
         await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)');
         await page.fill('[data-testid=question]', '測試');
@@ -78,13 +80,20 @@ module.exports = {
         await shot('56-titlebar-settings-logo');
         await shot('52-titlebar-settings');
         await shot('10-settings-models');
+        // 平台輸出為「清單+子頁」(#110):先開平台清單,再進該平台的子頁才有預覽
         await page.click('[data-testid=tab-platforms]');
+        await page.waitForSelector('[data-testid=platform-list]');
+        const kado = await page.evaluate(() => window.go.main.App.GetSettings()
+            .then(s => (s.platforms.find(p => p.name.startsWith('角角者')) || {}).id));
+        await page.click(`[data-testid=platform-card-${kado}]`);
         await page.waitForSelector('[data-testid=platform-preview]');
         await settle(80, 700); // 等 UI 更新(原固定等 300ms)
         const out = await page.textContent('[data-testid=platform-preview]');
         check('平台預覽:兩格縮排、筆記不外流', out.includes('\u3000\u3000清晨的王都很安靜') && !out.includes('伏筆'), JSON.stringify(out));
         await shot('11-settings-platforms');
         await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=subpage-back]');
+        await page.waitForSelector('[data-testid=platform-list]');
         await page.click('[data-testid=tab-appearance]');
         await page.waitForSelector('[data-testid=appearance-visual]');
         await page.click('[data-testid=appearance-mode-light]');
