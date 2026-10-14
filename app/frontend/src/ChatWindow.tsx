@@ -411,7 +411,7 @@ export default function ChatWindow(props: Props) {
         {name: 'compact', desc: '把較早的對話濃縮成摘要,省上下文'},
         {name: 'new', desc: '開始新對話'},
     ];
-    const slashQuery = question.trimStart().startsWith('/') && !question.includes(' ') ? question.trimStart().slice(1) : null;
+    const slashQuery = question.trimStart().startsWith('/') && !/\s/.test(question) ? question.trimStart().slice(1) : null;
     const slashItems = useMemo(() => {
         const all = [...BUILTIN.map(b => ({name: b.name, desc: b.desc, builtin: true})),
             ...skills.map(s => ({name: s.name, desc: s.desc ?? '', builtin: false}))];
@@ -753,7 +753,7 @@ export default function ChatWindow(props: Props) {
                               onChange={e => {
                                   const v = e.target.value;
                                   setQuestion(v);
-                                  if (v.trimStart().startsWith('/') && !v.includes(' ')) openSkillMenu();
+                                  if (v.trimStart().startsWith('/') && !/\s/.test(v)) openSkillMenu(); // 任何空白(含換行)= 已帶問題,不開選單
                               }}
                               onKeyDown={onSlashKey}/>
                     <div className="mt-1.5 flex items-center gap-1">

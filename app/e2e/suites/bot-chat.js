@@ -314,6 +314,12 @@ module.exports = {
             await settle(150, 700);
             check('#114 沒有符合項目時 Esc 關閉選單',
                 noMatch.includes('沒有符合的技能') && !(await page.$('[data-testid=slash-menu]:visible')), noMatch.slice(0, 80));
+            // 名稱後接換行(問題不含一般空格):已帶問題,選單不能開著(SPEC:任何空白都算分隔,#129 審查)
+            await page.fill('[data-testid=question]', '/');
+            await page.waitForSelector('[data-testid=slash-menu]');
+            await page.fill('[data-testid=question]', `/${skillName}\n請檢查這段文字`);
+            await settle(150, 700);
+            check('#114 技能名後接換行時選單關閉', !(await page.$('[data-testid=slash-menu]:visible')));
             // 不存在的技能:明確提示且不送出
             await page.fill('[data-testid=question]', '/沒有這個技能 幫我看');
             await page.keyboard.press('Escape'); // 先關掉可能開著的選單
