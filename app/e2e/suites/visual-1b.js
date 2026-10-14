@@ -385,7 +385,7 @@ module.exports = {
             '#45 Ctrl+Shift+Enter:選取後開啟 Perkins Bot 並帶入選取',
             '#45 返工 CRLF 多行原文:直接顯示與在原文外打字後都能標示',
             '#45 返工 640 寬已修改狀態:頁尾按鈕都在視窗內且可點',
-            '#40 按「拒絕」先出現選填原因列,確認前提案仍待審;確認後原因送進下一次給 Bot 的系統訊息',
+            '#40 按「拒絕」先出現選填原因列,確認前提案仍待審;確認後理由存進提案 JSON(Bot 在送出時讀它)',
             '#124 已接受的提案卡顯示「已接受」、已拒絕的顯示「已拒絕」與理由,留在建立它的回合且不能再審查',
             '#124 重開作品並接續會話後,已處理提案的卡片與狀態、作者理由仍在原位',
         ];
@@ -626,8 +626,12 @@ module.exports = {
             await page.fill('[data-testid=review-reject-reason]', '節奏太快');
             await page.click('[data-testid=review-reject-confirm]');
             await settle(80, 900);
-            const pvSys = await page.evaluate(() => window.go.main.App.PreviewContext({question: 'x'}).then(p => p.messages[0].content));
-            revCheck(REV_CHECKS[22], reasonRow && stillPending && pvSys.includes('節奏太快'), JSON.stringify({reasonRow, stillPending, hasReason: pvSys.includes('節奏太快')}));
+            // #124:理由存進提案 JSON,Bot 那邊的「提案現況」在**送出時**才讀它(E2E 不呼叫模型,
+            // 而且這個提案是本組直接寫檔 seeded 的、本會話並沒有建立它,所以預覽不會列出它——
+            // 送給模型的內容由 Go 測試驗:internal/agent TestRejectionReasonSentUntilReset 等)
+            const rejFile = JSON.parse(read('.perkins/proposals/20261010-150000-reva.json'));
+            revCheck(REV_CHECKS[22], reasonRow && stillPending && rejFile.status === 'rejected' && rejFile.rejectReason === '節奏太快',
+                JSON.stringify({reasonRow, stillPending, status: rejFile.status, reason: rejFile.rejectReason}));
             const endState = await page.evaluate(() => ({
                 win: !!document.querySelector('[data-testid=proposal-review]'),
                 cards: [...document.querySelectorAll('[data-testid=proposal]')].map(e => e.textContent),
