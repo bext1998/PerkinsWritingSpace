@@ -382,6 +382,18 @@ module.exports = {
         ];
         const revDone = new Set();
         const revCheck = (name, ok, detail = '') => { revDone.add(name); check(name, ok, detail); };
+        // #124:讀聊天卡片裡「已處理提案」的狀態與作者理由,並確認已處理的卡沒有審查按鈕(不可再審查/接受)
+        const readDoneCards = () => page.evaluate(() => [...document.querySelectorAll('[data-testid=proposal]')].map(c => ({
+            txt: c.textContent, review: !!c.querySelector('[data-testid=review-open]'),
+            status: c.querySelector('[data-testid=proposal-status]')?.textContent?.trim() || '',
+            reason: c.querySelector('[data-testid=proposal-reject-reason]')?.textContent?.trim() || '',
+        })));
+        const doneOK = (cards) => {
+            const rej = cards.find(c => c.txt.includes('秋風起了'));
+            const acc = cards.find(c => c.txt.includes('春日在望'));
+            return !!rej && rej.status === '已拒絕' && rej.reason.includes('節奏太快') && !rej.review
+                && !!acc && acc.status === '已接受' && !acc.review;
+        };
         const revHead = () => page.evaluate(() => ({
             target: document.querySelector('[data-testid=review-target]')?.textContent,
             count: document.querySelector('[data-testid=review-count]')?.textContent,
@@ -614,16 +626,8 @@ module.exports = {
                 && JSON.parse(read('.perkins/proposals/20261010-150000-reva.json')).status === 'rejected'
                 && !read(revRel).includes('秋風捲起落葉'), JSON.stringify(endState));
             // --- #124 卡片保留並顯示狀態:已拒絕附作者理由、已接受只顯示狀態;已處理的卡不能再審查(G1/G3 不變) ---
-            const doneCards = await page.evaluate(() => [...document.querySelectorAll('[data-testid=proposal]')].map(c => ({
-                txt: c.textContent, review: !!c.querySelector('[data-testid=review-open]'),
-                status: c.querySelector('[data-testid=proposal-status]')?.textContent?.trim() || '',
-                reason: c.querySelector('[data-testid=proposal-reject-reason]')?.textContent?.trim() || '',
-            })));
-            const rejCard = doneCards.find(c => c.txt.includes('秋風起了'));
-            const accCard = doneCards.find(c => c.txt.includes('春日在望'));
-            revCheck(REV_CHECKS[23],
-                !!rejCard && rejCard.status === '已拒絕' && rejCard.reason.includes('節奏太快') && !rejCard.review
-                && !!accCard && accCard.status === '已接受' && !accCard.review, JSON.stringify(doneCards));
+            const doneCards = await readDoneCards();
+            revCheck(REV_CHECKS[23], doneOK(doneCards), JSON.stringify(doneCards));
 
             // --- 返工(PR #64 審查):清單在視窗開著時變動、接受失敗 ---
             const errs = [];
@@ -911,22 +915,18 @@ module.exports = {
         await settle(80, 700);
 
         // ===== #124 重開作品:已處理提案的卡片與狀態、作者理由仍在(資料來自 .perkins/proposals/*.json) =====
-        await page.reload();
-        await settle(80, 1500);
-        await ctx.ensureProject('第一章', 'manuscript');
-        if (!(await page.$('[data-testid=chat-window]:visible]'))) await page.click('[data-testid=chat-fab]');
-        await page.waitForSelector('[data-testid=proposal-status]', {timeout: 10000});
-        await settle(80, 700);
-        const afterReload = await page.evaluate(() => [...document.querySelectorAll('[data-testid=proposal]')].map(c => ({
-            txt: c.textContent, review: !!c.querySelector('[data-testid=review-open]'),
-            status: c.querySelector('[data-testid=proposal-status]')?.textContent?.trim() || '',
-            reason: c.querySelector('[data-testid=proposal-reject-reason]')?.textContent?.trim() || '',
-        })));
-        const rejAgain = afterReload.find(c => c.txt.includes('秋風起了'));
-        const accAgain = afterReload.find(c => c.txt.includes('春日在望'));
-        revCheck(REV_CHECKS[24],
-            !!rejAgain && rejAgain.status === '已拒絕' && rejAgain.reason.includes('節奏太快') && !rejAgain.review
-            && !!accAgain && accAgain.status === '已接受' && !accAgain.review, JSON.stringify(afterReload));
+        try {
+            await page.reload();
+            await settle(80, 1500);
+            await ctx.ensureProject('第一章', 'manuscript');
+            if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            await page.waitForSelector('[data-testid=proposal-status]', {timeout: 10000});
+            await settle(80, 700);
+            const afterReload = await readDoneCards();
+            revCheck(REV_CHECKS[24], doneOK(afterReload), JSON.stringify(afterReload));
+        } catch (e) {
+            revCheck(REV_CHECKS[24], false, e.message);
+        }
 
         // 收合浮窗,不讓開啟中的浮窗擋住後續組的 chat-fab(冒煙組會再開)
         if (await page.isVisible('[data-testid=chat-window]')) await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)');
