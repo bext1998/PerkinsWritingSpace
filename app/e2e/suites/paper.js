@@ -763,13 +763,16 @@ module.exports = {
         const diskBefore = fs.readFileSync(P(FILE), 'utf8').includes('hello world');
         await capKey('S');
         await capUp('S');
-        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
+        // 不用 waitForSelector:等不到「已儲存」也是一種結果,由斷言把關(不會中斷整組)
+        const savedMark = await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 8000})
+            .then(() => true).catch(() => false);
         await settle(150, 800);
         const saveS1 = await st80();
         const diskAfter = fs.readFileSync(P(FILE), 'utf8').includes('hello world');
         check('#80 Caps Lock 下 Ctrl+S(key=S)會存檔:磁碟更新、文件與選取不變',
-            !diskBefore && diskAfter && saveS1.doc === saveS0.doc && saveS1.pos.anchor === saveS0.pos.anchor && saveS1.pos.head === saveS0.pos.head,
-            JSON.stringify({diskBefore, diskAfter, pos0: saveS0.pos, pos1: saveS1.pos}));
+            savedMark && !diskBefore && diskAfter && saveS1.doc === saveS0.doc &&
+            saveS1.pos.anchor === saveS0.pos.anchor && saveS1.pos.head === saveS0.pos.head,
+            JSON.stringify({savedMark, diskBefore, diskAfter, pos0: saveS0.pos, pos1: saveS1.pos}));
 
         // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸。
         // 先把文件與游標帶到中段(上一段是快捷鍵的短測試檔,游標在開頭會被不硬拉的夾住影響量測)
