@@ -79,6 +79,8 @@ export function ListRecent():Promise<Array<main.RecentView>>;
 
 export function ListSessions():Promise<Array<sessions.Meta>>;
 
+export function ListSkills():Promise<Array<agent.Skill>>;
+
 export function ListSnapshots():Promise<Array<snapshot.Meta>>;
 
 export function NewChapter(arg1:string,arg2:number):Promise<string>;

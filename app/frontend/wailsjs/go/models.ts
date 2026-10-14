@@ -38,6 +38,7 @@ export namespace agent {
 	    instructions?: string[];
 	    readable: string[];
 	    mentioned?: string[];
+	    skills?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new Preview(source);
@@ -54,6 +55,7 @@ export namespace agent {
 	        this.instructions = source["instructions"];
 	        this.readable = source["readable"];
 	        this.mentioned = source["mentioned"];
+	        this.skills = source["skills"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -73,6 +75,20 @@ export namespace agent {
 		    }
 		    return a;
 		}
+	}
+	export class Skill {
+	    name: string;
+	    desc: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Skill(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.desc = source["desc"];
+	    }
 	}
 
 }

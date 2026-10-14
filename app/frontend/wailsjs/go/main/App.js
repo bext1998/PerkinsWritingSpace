@@ -134,6 +134,10 @@ export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
 
+export function ListSkills() {
+  return window['go']['main']['App']['ListSkills']();
+}
+
 export function ListSnapshots() {
   return window['go']['main']['App']['ListSnapshots']();
 }

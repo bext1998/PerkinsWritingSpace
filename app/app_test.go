@@ -234,6 +234,42 @@ func TestPreviewContextDoesNotTouchRunningAgent(t *testing.T) {
 	}
 }
 
+// 意圖(#114 返工,G2 相關):「/」選單只讀技能,不能改寫執行中請求的端點設定。
+// 請求進行中時若 ListSkills 呼叫 prepare,而作者剛在聊天模型選單選了尚未確認的雲端端點,
+// Agent.Ask 的下一個工具回合就會改用那個端點,把原本只授權送本機的上下文送往雲端,繞過 begin() 的外流確認。
+func TestListSkillsDoesNotTouchRunningAgent(t *testing.T) {
+	keyring.MockInit() // 隔離憑證庫:prepare 會經 ProfileAPIKey 讀 keyring
+	a := sessionApp(t)
+	a.agent.LLM = previewLLMStub{tag: "running-local"}
+	a.agent.Model = "running-local-model"
+	a.agent.Remote = false
+	a.mu.Lock()
+	a.cancel = func() {} // 模擬 begin() 已取得執行權(請求進行中)
+	a.mu.Unlock()
+	cfg := a.store.Load()
+	cfg.Profiles[0].BaseURL = "https://example.invalid/v1" // 雲端且未經作者確認:prepare 會換掉 LLM 與 Remote
+	cfg.Profiles[0].Model = "unconfirmed-cloud-model"
+	cfg.Active = cfg.Profiles[0].ID
+	if err := a.store.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := a.ListSkills(); err != nil || len(got) != 0 {
+		t.Fatalf("沒有技能目錄應回空清單,不該是錯誤:%v %v", got, err)
+	}
+	a.mu.Lock()
+	ag := a.agent
+	a.mu.Unlock()
+	if _, ok := ag.LLM.(previewLLMStub); !ok {
+		t.Fatalf("ListSkills 換掉了執行中請求的 LLM:%T", ag.LLM)
+	}
+	if ag.Model != "running-local-model" || ag.Remote {
+		t.Fatalf("ListSkills 改寫了執行中的端點:model=%s remote=%v", ag.Model, ag.Remote)
+	}
+	if _, err := (&App{}).ListSkills(); err != errNoProject { // 沒有開作品:照現有慣例回錯
+		t.Fatalf("未開作品應回 errNoProject, got %v", err)
+	}
+}
+
 // 意圖(#32):App.CompactChat 綁定接到 Agent.Compact(手動 /compact):對話太短沒有可壓縮
 // 內容時把明確錯誤原樣回給前端(不靜默不做),結束後釋放執行權,忙碌時照 begin() 拒絕;
 // prepare 要把端點的 disableAutoCompact 套到 Agent。成功路徑會發 chat:event(runtime.EventsEmit),

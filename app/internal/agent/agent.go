@@ -108,6 +108,9 @@ type Agent struct {
 	// GlobalAgentsPath 是全域作者指示(%USERPROFILE%\.perkins\AGENTS.md)的完整路徑。
 	// 空 = 不讀全域層(測試注入用);每次組裝訊息都重新讀取,改檔不必重啟。
 	GlobalAgentsPath string
+	// SkillsDir 是全域技能目錄(%USERPROFILE%\.perkins\skills;空 = 沒有技能,#114)。
+	// 每次列出與叫用都重讀,作者改檔不必重啟。
+	SkillsDir string
 
 	mu      sync.Mutex
 	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭;嚴格交替)
@@ -527,6 +530,8 @@ type buildInfo struct {
 	Notices []string
 	// Mentioned 是「本段提到的設定」(只送名稱與路徑,#104 第 3 項),送出預覽列出。
 	Mentioned []string
+	// Skills 是本次實際放進 system 訊息的技能名稱(SPEC §12.3「技能與 / 指令」,#114),送出預覽列出。
+	Skills []string
 }
 
 // buildMessages 組裝訊息並回報本次送出的作者指示層與未送出原因(Preview 與 Ask 用)。
@@ -598,6 +603,20 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 		return nil, buildInfo{}, err
 	}
 	sys += ai
+	// 技能(SPEC §12.3「技能與 / 指令」):作者以 /技能名 明確叫用,只作用於這一次提問;
+	// 叫不到或讀取失敗直接回錯,不把內容送給模型。歷史照常只記作者打的字,不記技能全文。
+	skillText, skillSent, skillNotice, err := a.resolveSkill(p.Question)
+	if err != nil {
+		return nil, buildInfo{}, err
+	}
+	if skillNotice != "" {
+		notices = append(notices, skillNotice)
+	}
+	sys += skillText
+	var skills []string
+	if skillSent {
+		skills = append(skills, ParseSkillName(p.Question))
+	}
 	a.mu.Lock()
 	if len(a.rejections) > 0 {
 		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】作者拒絕了下列提案;請看過每個提案的編號與作者的理由,修正後重新提出新的提案,不要重複被拒的方案:\n- " + strings.Join(a.rejections, "\n- ")
@@ -615,7 +634,7 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned}, nil
+	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned, Skills: skills}, nil
 }
 
 // mentionLimit 是「本段提到的設定」最多列出的數量。
@@ -721,6 +740,8 @@ type Preview struct {
 	Readable []string `json:"readable"`
 	// Mentioned 是本次附上的「本段提到的設定」(只有名稱與路徑,#104 第 3 項);送出預覽依此列出。
 	Mentioned []string `json:"mentioned,omitempty"`
+	// Skills 是本次實際放進 system 訊息的技能名稱(#114);送出預覽依此列出,前端不自己猜。
+	Skills []string `json:"skills,omitempty"`
 }
 
 func (a *Agent) Preview(p AskParams) (*Preview, error) {
@@ -729,7 +750,7 @@ func (a *Agent) Preview(p AskParams) (*Preview, error) {
 		return nil, err
 	}
 	pv := &Preview{Messages: msgs, Tokens: EstimateTokens(msgs), Budget: a.ContextTokens, Notices: info.Notices, Instructions: info.Instructions,
-		Readable: append([]string{}, a.Readable...), Mentioned: info.Mentioned}
+		Readable: append([]string{}, a.Readable...), Mentioned: info.Mentioned, Skills: info.Skills}
 	if b := a.ContextTokens; b > 0 {
 		pv.Limit = b - replyReserve(b)
 		pv.Over = pv.Tokens > pv.Limit
