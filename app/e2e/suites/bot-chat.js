@@ -269,7 +269,7 @@ module.exports = {
         const skillFile = path.join(skillsDir, 'E2E測試技能.md');
         try {
             fs.mkdirSync(skillsDir, {recursive: true});
-            fs.writeFileSync(skillFile, '# E2E測試技能\n測試用技能:檢查每個場景的步調\n');
+            fs.writeFileSync(skillFile, '# 檢查每個場景的步調\n測試用技能:每個場景結尾先停一拍\n'); // 說明 = 第一個非空行
             if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
             await page.waitForSelector('[data-testid=chat-window]:visible');
             // 輸入「/」:選單列出內建指令與技能(名稱+說明)
@@ -279,7 +279,7 @@ module.exports = {
             const menu = await page.textContent('[data-testid=slash-menu]');
             check('#114 輸入「/」跳出選單:內建指令與技能都列出(含說明)',
                 menu.includes('/compact') && menu.includes('/new') &&
-                menu.includes('/E2E測試技能') && menu.includes('測試用技能:檢查每個場景的步調'), menu.slice(0, 160));
+                menu.includes('/E2E測試技能') && menu.includes('檢查每個場景的步調'), menu.slice(0, 160));
             // 依已輸入的字篩選
             await page.fill('[data-testid=question]', '/E2E');
             await settle(150, 700);
@@ -299,7 +299,7 @@ module.exports = {
             const pvSys = await page.evaluate(() => window.go.main.App.PreviewContext({question: '/E2E測試技能 幫我看第一章的節奏'}).then(p => p.messages[0].content));
             check('#114 送出預覽列出技能,且技能全文進該次請求的 system',
                 pvSkill.includes('技能:E2E測試技能') && pvSys.includes('【作者技能:E2E測試技能】') &&
-                pvSys.includes('測試用技能:檢查每個場景的步調'), pvSkill.slice(0, 120));
+                pvSys.includes('測試用技能:每個場景結尾先停一拍'), pvSkill.slice(0, 120));
             await page.keyboard.press('Escape');
             // 不存在的技能:明確提示且不送出
             await page.fill('[data-testid=question]', '/沒有這個技能 幫我看');
@@ -312,17 +312,39 @@ module.exports = {
             const turnsAfter = (await page.$$('[data-testid=assistant-turn]')).length;
             check('#114 叫不到技能:對話框提示且不送出',
                 errSkill.includes('沒有這個技能或指令:/沒有這個技能') && turnsAfter === turnsBefore, errSkill);
-            // /new 等同「新對話」按鈕
-            await page.click('[data-testid=chat-window] button:has(svg.lucide-square-pen)'); // 先按按鈕,確認兩條路徑一樣
-            await page.evaluate(() => window.__perkinsChatInject([{role: 'user', text: '舊的對話'}]));
-            await page.fill('[data-testid=question]', '/new');
-            await page.keyboard.press('Escape');
-            await page.fill('[data-testid=question]', '/new');
-            await page.click('[data-testid=send]');
-            await settle(200, 900);
-            const afterNew = (await page.$$('[data-testid=assistant-turn]')).length;
-            check('#114 /new 清空對話(等同「新對話」按鈕)', afterNew === 0 && (await page.inputValue('[data-testid=question]')) === '',
-                `afterNew=${afterNew}`);
+            // /new 等同「新對話」按鈕。測試期間先把作用中模型換成死端點:就算這條路徑壞掉,
+            // 壞掉的後果也只是一個連線失敗,不會真的把內容送到作者的端點。
+            const DEAD114 = 'e2e-dead-slash';
+            const orig114 = await page.evaluate(() => window.go.main.App.GetSettings());
+            const origModel114 = orig114.profiles.find(p => p.id === orig114.active).model;
+            let dead114 = false;
+            try {
+                await page.evaluate(id => window.go.main.App.SaveProfile(
+                    {id, name: 'E2E 死端點(/指令)', baseUrl: 'http://127.0.0.1:9/v1', model: 'e2e', contextTokens: 16384}, null), DEAD114);
+                dead114 = true;
+                await page.evaluate(id => window.go.main.App.SetActiveModel(id, 'e2e'), DEAD114);
+                await page.click('[data-testid=open-settings]');
+                await page.waitForSelector('[data-testid=settings-page]');
+                await page.click('[data-testid=close-settings]');
+                if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+                await page.evaluate(() => window.__perkinsChatInject([{role: 'user', text: '舊的對話'}]));
+                await page.fill('[data-testid=question]', '/new');
+                await page.keyboard.press('Escape'); // 關掉可能開著的選單
+                await page.fill('[data-testid=question]', '/new');
+                await page.click('[data-testid=send]');
+                await settle(300, 1500);
+                const turnsTxt = await page.textContent('[data-testid=turns]');
+                check('#114 /new 清空對話(等同「新對話」按鈕)且不送出任何內容',
+                    !turnsTxt.includes('舊的對話') && !turnsTxt.includes('/new') &&
+                    (await page.inputValue('[data-testid=question]')) === '', turnsTxt.slice(0, 80));
+            } finally {
+                await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [orig114.active, origModel114]);
+                if (dead114) await page.evaluate(id => window.go.main.App.DeleteProfile(id), DEAD114);
+                await page.click('[data-testid=open-settings]'); // 重讀設定,還原成原端點
+                await page.waitForSelector('[data-testid=settings-page]');
+                await page.click('[data-testid=close-settings]');
+                if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+            }
             // 640 寬:選單在視窗內、無水平捲軸
             await page.fill('[data-testid=question]', '/');
             await page.waitForSelector('[data-testid=slash-menu]');
