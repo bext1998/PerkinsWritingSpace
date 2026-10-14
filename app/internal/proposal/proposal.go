@@ -97,7 +97,7 @@ func (s *Store) Get(id string) (*Proposal, error) {
 	}
 	b, err := os.ReadFile(filepath.Join(s.dir(), id+".json"))
 	if err != nil {
-		return nil, fmt.Errorf("找不到提案 %s", id)
+		return nil, fmt.Errorf("找不到提案 %s: %w", id, err) // 保留原因:呼叫端要分辨「檔案不存在」與其他讀檔錯誤(#124)
 	}
 	var p Proposal
 	return &p, json.Unmarshal(b, &p)

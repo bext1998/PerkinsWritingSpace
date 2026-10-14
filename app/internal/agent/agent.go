@@ -606,7 +606,11 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	ids := append([]string{}, a.sessionProposals...)
 	a.mu.Unlock()
 	// 提案現況每次送出時即時讀提案檔案組成,不經對話歷史(所以壓縮、跨會話、finish 之後才被處理都不會錯)。
-	msgs[0].Content += proposalStatus(a.Proposals, ids)
+	status, err := proposalStatus(a.Proposals, ids)
+	if err != nil {
+		return nil, buildInfo{}, err
+	}
+	msgs[0].Content += status
 	user := p.Question
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
@@ -796,9 +800,9 @@ const sessionProposalLimit = 20
 // proposalStatus 依本次對話建立過的提案 id,向 Store 讀**當下**狀態組成系統訊息的一段(#124)。
 // 每次送出都重讀,所以不論提案是在這回合之後、壓縮期間、或別的會話處理的,模型看到的都是真實狀態;
 // 事後寫進對話歷史的做法會被壓縮切割、會被舊快照覆蓋、也會把已處理的提案倒回待審,一律不用。
-func proposalStatus(store *proposal.Store, ids []string) string {
+func proposalStatus(store *proposal.Store, ids []string) (string, error) {
 	if store == nil || len(ids) == 0 {
-		return ""
+		return "", nil
 	}
 	if len(ids) > sessionProposalLimit { // 只列最近 sessionProposalLimit 筆
 		ids = ids[len(ids)-sessionProposalLimit:]
@@ -807,8 +811,11 @@ func proposalStatus(store *proposal.Store, ids []string) string {
 	b.WriteString("\n\n【本次對話的提案現況】以下是程式依提案檔案即時讀出的真實狀態;若與你先前提到的說法不一致,以這裡為準:")
 	for _, id := range ids {
 		p, err := store.Get(id)
-		if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			continue // 提案檔已不存在:略過這筆,不讓請求失敗
+		}
+		if err != nil { // 損壞或讀不到:浮出,不能讓真實狀態無聲消失
+			return "", fmt.Errorf("讀取提案 %s 的狀態失敗: %w", id, err)
 		}
 		var state string
 		switch p.Status {
@@ -827,7 +834,7 @@ func proposalStatus(store *proposal.Store, ids []string) string {
 		}
 		fmt.Fprintf(&b, "\n- %s:%s", proposalTag(p), state)
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // 註:拒絕不再寫進對話歷史或 rejections——理由存在提案 JSON,送出時由 proposalStatus 即時讀出(#124)。

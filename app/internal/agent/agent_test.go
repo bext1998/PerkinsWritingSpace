@@ -2195,6 +2195,38 @@ func TestProposalStatusListsOnlyRecentOnes(t *testing.T) {
 	}
 }
 
+// 意圖(#124 審查):提案檔被刪掉時只略過那一筆,請求照常送出;損壞或讀不到時要明確失敗,
+// 不能讓「已拒絕」這個真實狀態無聲消失、模型只剩先前「提案已送出」的說法。
+func TestProposalStatusSkipsMissingButSurfacesCorrupt(t *testing.T) {
+	a, _, _ := setup(t)
+	gone, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "版本甲", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "版本乙", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.recordProposal(gone.ID)
+	a.recordProposal(bad.ID)
+	if _, err := a.Proposals.Reject(bad.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(a.Proj.Root, ".perkins", "proposals")
+	if err := os.Remove(filepath.Join(dir, gone.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+	if all := joined(mustMsgs(t, a, AskParams{Question: "q"})); strings.Contains(all, gone.ID) || !strings.Contains(all, bad.ID) {
+		t.Fatalf("已刪除的提案應略過、其餘照常列出:%q", all)
+	}
+	if err := os.WriteFile(filepath.Join(dir, bad.ID+".json"), []byte(`{"id":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.BuildMessages(AskParams{Question: "q"}); err == nil || !strings.Contains(err.Error(), bad.ID) {
+		t.Fatalf("提案檔損壞時應回報含提案 id 的錯誤,得到 %v", err)
+	}
+}
+
 // 意圖(#124):propose_patch 成功時,工具事件要帶出實際建立的提案 id——前端靠它把卡片留在建立它的對話原位。
 func TestToolEventCarriesCreatedProposalID(t *testing.T) {
 	a, s, _ := setup(t)
