@@ -168,32 +168,56 @@ module.exports = {
         await shot('60-toolbar-640x672');
 
         // 狀態列(SPEC §17.1):640 寬下不換行、每一項不超出 main 右緣;模型名以省略號截斷
-        const sb640 = await page.evaluate(() => {
-            const f = document.querySelector('footer');
-            const main = document.querySelector('main');
-            if (!f || !main) return null;
-            const mainRight = main.getBoundingClientRect().right;
-            const items = [...f.children].map(el => {
-                const r = el.getBoundingClientRect();
-                return {t: (el.textContent || '').trim().slice(0, 16), w: r.width, h: r.height, right: r.right};
-            }).filter(i => i.w > 0 && i.h > 0);
-            const ai = [...f.children].find(el => (el.textContent || '').startsWith('AI:'));
-            const ar = ai ? ai.getBoundingClientRect() : null;
-            return {
-                text: (f.innerText || '').replace(/\s+/g, ' '),
-                mainRight,
-                items,
-                ai: ai ? {scrollW: ai.scrollWidth, clientW: ai.clientWidth, right: ar.right, h: ar.height} : null,
-            };
-        });
-        check('狀態列 640×672 每一項單行且不超出 main 右緣(不換行、不溢出)',
-            !!sb640 && sb640.items.every(i => i.h <= 20 && i.right <= sb640.mainRight + 1),
-            JSON.stringify(sb640 && {mainRight: sb640.mainRight, items: sb640.items}));
-        check('狀態列 640×672 保留本章與已儲存、模型名省略號截斷且在 main 內',
-            !!sb640 && /本章/.test(sb640.text) && /已儲存/.test(sb640.text)
-                && !!sb640.ai && sb640.ai.scrollW > sb640.ai.clientW
-                && sb640.ai.right <= sb640.mainRight + 1 && sb640.ai.h <= 20,
-            JSON.stringify(sb640 && sb640.ai));
+        // 模型名長度取自使用者 settings.json(#78):量測前把作用中的模型名設成受控的長名,
+        // 截斷斷言才不會因本機模型名太短而假失敗(斷言本身不弱化);量測後還原原本的模型名。
+        const LONG_MODEL = 'E2E模型名-刻意超長-abcdefghijklmnopqrstuvwxyz-0123456789';
+        const origCfg = await page.evaluate(() => window.go.main.App.GetSettings());
+        const origModel = (origCfg.profiles.find(p => p.id === origCfg.active) || {}).model || '';
+        // 開關設定頁才會讓 Workspace 重讀設定(GetSettings 不會更新畫面上的狀態列)
+        const rereadSettings = async () => {
+            await page.click('[data-testid=open-settings]');
+            await page.waitForSelector('[data-testid=settings-page]');
+            await page.click('[data-testid=close-settings]');
+            await settle(80, 900);
+        };
+        const waitFooterModel = m => page.waitForFunction(m =>
+            (document.querySelector('footer')?.textContent || '').includes(m), m, {timeout: 5000});
+        // 換名會立即寫入使用者 settings.json:從換名起包 try/finally,等待或量測丟例外時也一定還原持久設定
+        try {
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, LONG_MODEL]);
+            await rereadSettings();
+            await waitFooterModel(LONG_MODEL);
+            const sb640 = await page.evaluate(() => {
+                const f = document.querySelector('footer');
+                const main = document.querySelector('main');
+                if (!f || !main) return null;
+                const mainRight = main.getBoundingClientRect().right;
+                const items = [...f.children].map(el => {
+                    const r = el.getBoundingClientRect();
+                    return {t: (el.textContent || '').trim().slice(0, 16), w: r.width, h: r.height, right: r.right};
+                }).filter(i => i.w > 0 && i.h > 0);
+                const ai = [...f.children].find(el => (el.textContent || '').startsWith('AI:'));
+                const ar = ai ? ai.getBoundingClientRect() : null;
+                return {
+                    text: (f.innerText || '').replace(/\s+/g, ' '),
+                    mainRight,
+                    items,
+                    ai: ai ? {scrollW: ai.scrollWidth, clientW: ai.clientWidth, right: ar.right, h: ar.height} : null,
+                };
+            });
+            check('狀態列 640×672 每一項單行且不超出 main 右緣(不換行、不溢出)',
+                !!sb640 && sb640.items.every(i => i.h <= 20 && i.right <= sb640.mainRight + 1),
+                JSON.stringify(sb640 && {mainRight: sb640.mainRight, items: sb640.items}));
+            check('狀態列 640×672 保留本章與已儲存、模型名省略號截斷且在 main 內',
+                !!sb640 && /本章/.test(sb640.text) && /已儲存/.test(sb640.text)
+                    && !!sb640.ai && sb640.ai.scrollW > sb640.ai.clientW
+                    && sb640.ai.right <= sb640.mainRight + 1 && sb640.ai.h <= 20,
+                JSON.stringify(sb640 && sb640.ai));
+        } finally {
+            await page.evaluate(([id, model]) => window.go.main.App.SetActiveModel(id, model), [origCfg.active, origModel]);
+        }
+        await rereadSettings();
+        await waitFooterModel(origModel || '未選擇模型');
 
         // 「更多」下拉:最窄段把次要功能收進下拉,功能一個都不能少(SPEC §17.1)
         const hasMore = !!(await page.$('[data-testid=toolbar-more]'));
