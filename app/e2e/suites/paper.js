@@ -701,10 +701,10 @@ module.exports = {
                 if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 't' || e.key === 'd')) (window).__capProbe++;
             }, false);
         });
-        const capKey = k => cdp.send('Input.dispatchKeyEvent', {type: 'keyDown', key: k, code: `Key${k.toUpperCase()}`,
-            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 10});
-        const capUp = k => cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code: `Key${k.toUpperCase()}`,
-            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers: 10});
+        const capKey = (k, modifiers = 10) => cdp.send('Input.dispatchKeyEvent', {type: 'keyDown', key: k, code: `Key${k.toUpperCase()}`,
+            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers}); // 預設 10 = Ctrl+Shift
+        const capUp = (k, modifiers = 10) => cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code: `Key${k.toUpperCase()}`,
+            windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers}); // 預設 10 = Ctrl+Shift
         const kb0 = await page.evaluate(() => window.__perkinsEditor.pos());
         const dim0 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
         await capKey('d');
@@ -732,6 +732,61 @@ module.exports = {
         await capKey('t');
         await capUp('t'); // 關回
         await settle(150, 800);
+
+        // ===== #80:Caps Lock 下其餘全域快捷鍵(實測後修正,回歸) =====
+        // Ctrl+Shift+F(key='f')與 Ctrl+Shift+D/T 同一個問題:CM 的 Mod-f 會先把按鍵處理掉並打開
+        // 搜尋面板,所以禪模式也必須在 capture 階段擋。斷言「有切換」且「沒有副作用」
+        // (搜尋面板沒開、文件文字與選取不變)。
+        await setDoc('hello world\n\n第二段。\n');
+        await home();
+        await press('ArrowRight', 2); // 游標在 hello 中間(空選取)
+        const st80 = () => page.evaluate(() => ({
+            zen: !!document.querySelector('[data-testid=zen-exit]'),
+            search: !!document.querySelector('.perkins-search'),
+            doc: window.__perkinsEditor.doc(), pos: window.__perkinsEditor.pos(),
+        }));
+        const zenF0 = await st80();
+        await capKey('f');
+        await capUp('f');
+        await settle(200, 1200);
+        const zenF1 = await st80();
+        check('#80 Caps Lock 下 Ctrl+Shift+F(key=f)只切禪模式:不開搜尋面板、文件與選取不變',
+            !zenF0.zen && zenF1.zen && !zenF1.search && zenF1.doc === zenF0.doc &&
+            zenF1.pos.anchor === zenF0.pos.anchor && zenF1.pos.head === zenF0.pos.head,
+            JSON.stringify({zen0: zenF0.zen, zen1: zenF1.zen, search: zenF1.search, pos0: zenF0.pos, pos1: zenF1.pos}));
+        await capKey('f');
+        await capUp('f'); // 關回禪模式(後續步驟需要側欄)
+        await page.waitForSelector('[data-testid=rail]:visible', {timeout: 5000});
+        await settle(150, 800);
+        // 右鍵選單開著時按 Ctrl+Shift+F:禪模式的 capture 攔截不能讓選單留在稿紙上(#80 審查)
+        const cmBox = await page.locator('.cm-content').boundingBox();
+        await page.mouse.click(cmBox.x + 40, cmBox.y + 10, {button: 'right'});
+        await page.waitForSelector('.ctxmenu');
+        await capKey('f');
+        await capUp('f');
+        await settle(150, 800);
+        const menuAfterZen = await page.evaluate(() => ({
+            menu: !!document.querySelector('.ctxmenu'), zen: !!document.querySelector('[data-testid=zen-exit]')}));
+        check('#80 右鍵選單開著時 Ctrl+Shift+F 切禪模式並收起選單', menuAfterZen.zen && !menuAfterZen.menu, JSON.stringify(menuAfterZen));
+        await capKey('f');
+        await capUp('f'); // 關回禪模式
+        await page.waitForSelector('[data-testid=rail]:visible', {timeout: 5000});
+        await settle(150, 800);
+        // Ctrl+S:Caps Lock 下 key 是大寫 'S',比對不分大小寫才會存檔(setDoc 之後是未存狀態)
+        const saveS0 = await st80();
+        const diskBefore = fs.readFileSync(P(FILE), 'utf8').includes('hello world');
+        await capKey('S', 2); // modifiers 2 = 只有 Ctrl(Caps Lock 下的 Ctrl+S,沒有 Shift)
+        await capUp('S', 2);
+        // 不用 waitForSelector:等不到「已儲存」也是一種結果,由斷言把關(不會中斷整組)
+        const savedMark = await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 8000})
+            .then(() => true).catch(() => false);
+        await settle(150, 800);
+        const saveS1 = await st80();
+        const diskAfter = fs.readFileSync(P(FILE), 'utf8').includes('hello world');
+        check('#80 Caps Lock 下 Ctrl+S(key=S)會存檔:磁碟更新、文件與選取不變',
+            savedMark && !diskBefore && diskAfter && saveS1.doc === saveS0.doc &&
+            saveS1.pos.anchor === saveS0.pos.anchor && saveS1.pos.head === saveS0.pos.head,
+            JSON.stringify({savedMark, diskBefore, diskAfter, pos0: saveS0.pos, pos1: saveS1.pos}));
 
         // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸。
         // 先把文件與游標帶到中段(上一段是快捷鍵的短測試檔,游標在開頭會被不硬拉的夾住影響量測)

@@ -510,6 +510,41 @@ module.exports = {
             }
             await settle(80, 700); // 等 UI 更新(原固定等 300ms)
 
+            // --- #80:Caps Lock 下 Ctrl+F / Ctrl+H 的 key 是大寫且沒有 shift ---
+            // 實測結果:CM 認得(base 名稱比對),面板照常開、文件與選取不變。合成 KeyboardEvent 不會經過
+            // CM 的 keymap,所以這裡用 CDP 送真實 keydown(modifiers:2 = Ctrl)。
+            const cdp80 = await page.context().newCDPSession(page);
+            const capKey80 = async (k) => {
+                for (const type of ['keyDown', 'keyUp']) {
+                    await cdp80.send('Input.dispatchKeyEvent', {type, key: k, code: `Key${k}`, windowsVirtualKeyCode: k.charCodeAt(0), nativeVirtualKeyCode: k.charCodeAt(0), modifiers: 2});
+                }
+            };
+            const st80 = () => page.evaluate(() => ({doc: window.__perkinsEditor.doc(), pos: window.__perkinsEditor.pos()}));
+            const same80 = (a, b) => a.doc === b.doc && a.pos.anchor === b.pos.anchor && a.pos.head === b.pos.head;
+            await page.click('.cm-content');
+            await settle(80, 400);
+            const f80before = await st80();
+            await capKey80('F');
+            await settle(120, 900);
+            const f80open = !!(await page.$('.perkins-search'));
+            const f80after = await st80();
+            check('#80 Caps Lock 下 Ctrl+F(key=F)照常開搜尋面板,文件與選取不變', f80open && same80(f80before, f80after),
+                JSON.stringify({open: f80open, pos0: f80before.pos, pos1: f80after.pos}));
+            await page.keyboard.press('Escape');
+            await settle(80, 600); // 等 UI 更新
+            const h80before = await st80();
+            await capKey80('H');
+            await settle(120, 900);
+            const h80replace = await page.evaluate(() => {
+                const row = document.querySelector('.perkins-replace-row');
+                return !!row && getComputedStyle(row).display !== 'none';
+            });
+            const h80after = await st80();
+            check('#80 Caps Lock 下 Ctrl+H(key=H)照常展開取代列,文件與選取不變', h80replace && same80(h80before, h80after),
+                JSON.stringify({replace: h80replace, pos0: h80before.pos, pos1: h80after.pos}));
+            await page.keyboard.press('Escape');
+            await settle(80, 600); // 等 UI 更新
+
             // --- 長章節:建約 5 萬字章節,量測捲動與輸入延遲(只在有明顯問題時才改程式) ---
             const LONG = 'manuscript/長章測試.md';
             fs.mkdirSync(path.join(PROJ, 'manuscript'), {recursive: true});
