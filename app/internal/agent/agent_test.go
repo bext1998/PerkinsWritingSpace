@@ -1850,7 +1850,7 @@ func TestToolsCannotReachWorkspaceAgentsFile(t *testing.T) {
 	if _, _, err := a.runTool("read_document", `{"path":"./AGENTS.md"}`, gate{}); err == nil {
 		t.Error("相對路徑寫法也不應繞過限制")
 	}
-	if _, prID, err := a.runTool("propose_patch", `{"path":"AGENTS.md","original":"x","replacement":"y","rationale":"r"}`, gate{}); err == nil || prID != "" {
+	if _, pr, err := a.runTool("propose_patch", `{"path":"AGENTS.md","original":"x","replacement":"y","rationale":"r"}`, gate{}); err == nil || pr != nil {
 		t.Error("propose_patch 不應能對作品根目錄的 AGENTS.md 提案")
 	}
 	if r, _, err := a.runTool("search_project", `{"query":"紫斑蝴蝶"}`, gate{}); err != nil || strings.Contains(r, "紫斑蝴蝶") {
@@ -1903,17 +1903,123 @@ func TestRejectionReasonSentUntilReset(t *testing.T) {
 }
 
 // 意圖(G2):拒絕的若是設定集等受保護檔案的提案(可能是先前對話附加時產生的),
-// 本次沒附加就不能把其中的原文片段送出;只送檔名與作者寫的原因。
+// 本次沒附加就不能把其中的原文片段送出;只送編號、檔名、版本數與作者寫的原因。
 func TestRejectionReasonOmitsProtectedOriginal(t *testing.T) {
 	a, s, _ := setup(t)
-	a.NoteRejection(&proposal.Proposal{Target: "canon/secret.md", Original: "祕密設定:反派是小明的哥哥。"}, "語氣太硬")
+	a.NoteRejection(&proposal.Proposal{ID: "20261014-101500-abc123", Target: "canon/secret.md", Original: "祕密設定:反派是小明的哥哥。"}, "語氣太硬")
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
-	sys := s.reqs[0].Messages[0].Content
-	if strings.Contains(sys, "反派") || !strings.Contains(sys, "語氣太硬") {
-		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", sys)
+	all := joined(s.reqs[0].Messages)
+	if strings.Contains(all, "反派") || !strings.Contains(all, "語氣太硬") {
+		t.Fatalf("受保護檔案原文不應送出、原因應送出: %q", all)
+	}
+	if !strings.Contains(all, "20261014-101500-abc123") || !strings.Contains(all, "canon/secret.md") {
+		t.Fatalf("受保護檔案仍應附提案編號與目標檔: %q", all)
+	}
+}
+
+// joined 把送給模型的訊息接成一段,方便檢查「這一回合實際送出的內容」。
+func joined(msgs []llm.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		b.WriteString(m.Content)
+		b.WriteString("\n---\n")
+	}
+	return b.String()
+}
+
+// 意圖(#124):帶理由拒絕後,下一回合送給模型的內容必須讓模型知道「哪個提案被拒(編號、目標檔、版本數)、
+// 作者的理由是什麼」並請它修正後重新提案;只留一句「避免同樣的問題」會讓模型改用純文字回答、不再提案。
+func TestRejectionTellsModelWhichProposalToRepropose(t *testing.T) {
+	a, s, _ := setup(t)
+	a.NoteRejection(&proposal.Proposal{
+		ID: "20261014-102000-def456", Target: "manuscript/第一章.md", Original: "小明走進森林。",
+		Alternatives: []proposal.Version{{Replacement: "A"}, {Replacement: "B"}},
+	}, "太口語")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	all := joined(s.reqs[0].Messages)
+	for _, want := range []string{"20261014-102000-def456", "manuscript/第一章.md", "3 個版本", "太口語", "重新提出"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("下一回合送給模型的內容應含 %q,實際:%q", want, all)
+		}
+	}
+	// 狀態也進了對話歷史(如實記下被拒的是哪一個),不是只存在系統訊息裡
+	if hist := joined(a.History); !strings.Contains(hist, "20261014-102000-def456") || !strings.Contains(hist, "已失效") {
+		t.Fatalf("對話歷史應記下被拒的提案與它的失效: %q", hist)
+	}
+}
+
+// 意圖(#124):每回合實際建立的提案要如實記進對話歷史,模型才看得到真實狀態,
+// 不會只複述自己上一輪那句「提案已送出」。
+func TestProposalCreatedInTurnRecordedInHistory(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"更有畫面感"}`}}},
+		{Role: "assistant", Content: "我提了兩個方向,你審核後再決定要不要用。"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改得有畫面感"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := a.Proposals.List()
+	if len(list) != 1 {
+		t.Fatalf("應建立一個提案,得到 %d", len(list))
+	}
+	hist := joined(a.History)
+	if !strings.Contains(hist, list[0].ID) || !strings.Contains(hist, "等待作者審查") {
+		t.Fatalf("歷史應記下本回合建立的提案與待審狀態: %q", hist)
+	}
+}
+
+// 意圖(#124 + SPEC §12.3 對話記錄):提案狀態通知隨會話存檔與接續;接續後送給模型的內容仍帶著
+// 「這個提案已被拒、請重新提案」與接受的事實,不會因為換了一段對話就消失。
+func TestProposalStatusNotesSurviveSnapshotRestore(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{{Role: "assistant", Content: "提案已送出(N 個版本)"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "改得有畫面感"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "小明獨自闖入森林。", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.NoteRejection(p, "太口語")
+
+	hist, rej := a.Snapshot()
+	restored, s2, _ := setup(t)
+	restored.RestoreSession(hist, rej)
+	msgs := mustMsgs(t, restored, AskParams{Question: "再改一次"})
+	all := joined(msgs)
+	for _, want := range []string{p.ID, "太口語", "重新提出", "已失效"} {
+		if !strings.Contains(all, want) {
+			t.Fatalf("接續後送給模型的內容應仍含 %q,實際:%q", want, all)
+		}
+	}
+	if len(s2.reqs) != 0 {
+		t.Fatal("測試只需要組裝訊息,不應送出請求")
+	}
+}
+
+// 意圖(#124):接受的事實也要如實記進對話歷史——模型知道提案已寫入,就不會再說「等你審核」。
+func TestAcceptedProposalRecordedInHistory(t *testing.T) {
+	a, _, _ := setup(t)
+	p, err := a.Proposals.Create("m", "manuscript/第一章.md", "小明走進森林。", "小明獨自闖入森林。", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := a.Proposals.Accept(p.ID, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.NoteAccepted(accepted)
+	hist := joined(a.History)
+	if !strings.Contains(hist, p.ID) || !strings.Contains(hist, "已寫入") || !strings.Contains(hist, "不再是待審") {
+		t.Fatalf("歷史應記下提案已接受並寫入: %q", hist)
 	}
 }
 

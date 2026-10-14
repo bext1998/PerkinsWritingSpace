@@ -234,32 +234,32 @@ func (g gate) ok(path string) bool {
 	return g[top+"/"]
 }
 
-func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 回傳 (結果, proposalID, 錯誤)
+func (a *Agent) runTool(name, args string, g gate) (string, *proposal.Proposal, error) { // 回傳 (結果, 本次建立的提案, 錯誤)
 	switch name {
 	case "read_document":
 		var p struct {
 			Path string `json:"path"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", nil, fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", "", errNotShared
+			return "", nil, errNotShared
 		}
 		text, err := a.Proj.ReadFile(p.Path)
-		return text, "", err
+		return text, nil, err
 	case "search_project":
 		var p struct {
 			Query string `json:"query"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil || strings.TrimSpace(p.Query) == "" {
-			return "", "", fmt.Errorf("需要非空的 query")
+			return "", nil, fmt.Errorf("需要非空的 query")
 		}
 		r, err := a.search(p.Query, g)
-		return r, "", err
+		return r, nil, err
 	case "list_files":
 		r, err := a.listFiles(g)
-		return r, "", err
+		return r, nil, err
 	case "propose_patch":
 		var p struct {
 			Path         string          `json:"path"`
@@ -271,16 +271,16 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 			Assumptions  []string        `json:"assumptions"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", nil, fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", "", errNotShared
+			return "", nil, errNotShared
 		}
 		if project.KindOf(p.Path) == project.SummariesDir {
-			return "", "", fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
+			return "", nil, fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
 		}
 		if a.Proposals == nil {
-			return "", "", fmt.Errorf("提案功能未啟用")
+			return "", nil, fmt.Errorf("提案功能未啟用")
 		}
 		alts, notes := parseAlternatives(p.Alternatives, p.Original, p.Replacement)
 		var label string
@@ -290,15 +290,15 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		pr, err := a.Proposals.CreateVersions(a.Model, p.Path, p.Original,
 			proposal.Version{Label: strings.TrimSpace(label), Replacement: p.Replacement}, p.Rationale, p.Assumptions, alts)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		msg := fmt.Sprintf("提案 %s 已建立(%d 個版本),等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", pr.ID, len(pr.Versions()))
 		for _, n := range notes {
 			msg += " " + n
 		}
-		return msg, pr.ID, nil
+		return msg, pr, nil
 	}
-	return "", "", fmt.Errorf("未實作的工具 %s", name)
+	return "", nil, fmt.Errorf("未實作的工具 %s", name)
 }
 
 // parseAlternatives 把模型給的 alternatives 參數整形成替代版本(#39;系統邊界驗證):
@@ -585,7 +585,7 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	sys += ai
 	a.mu.Lock()
 	if len(a.rejections) > 0 {
-		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】之後的提案請避免同樣的問題:\n- " + strings.Join(a.rejections, "\n- ")
+		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】作者拒絕了下列提案;請看過每個提案的編號與作者的理由,修正後重新提出新的提案,不要重複被拒的方案:\n- " + strings.Join(a.rejections, "\n- ")
 	}
 	msgs := append([]llm.Message{{Role: "system", Content: sys}}, a.History...)
 	a.mu.Unlock()
@@ -739,19 +739,67 @@ func (a *Agent) RestoreSession(history []llm.Message, rejections []string) {
 	a.mu.Unlock()
 }
 
-// NoteRejection 記下作者拒絕提案的原因,本次會話之後的請求都會帶上(#40)。原因屬 Interpretation,只當參考。
-// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段:它可能來自先前對話的附加,本次未附加就不能送出(G2)。
-func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
-	note := fmt.Sprintf("%s 的提案:%s", p.Target, reason)
+// proposalTag 是提案在對話中的識別:編號、目標檔與版本數(#124)。模型要知道自己該修正哪一個提案。
+// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段(G2:本次未附加就不能送出);改寫內容一律不附——
+// 待審或被拒的 Proposal 永遠不是 Canon(§2.1 G2)。
+func proposalTag(p *proposal.Proposal) string {
+	tag := fmt.Sprintf("%s(%s,共 %d 個版本)", p.ID, p.Target, len(p.Versions()))
 	if !Protected(p.Target) {
 		orig := []rune(p.Original)
 		if len(orig) > 40 {
 			orig = append(orig[:40], '…')
 		}
-		note = fmt.Sprintf("%s 的提案(原文「%s」):%s", p.Target, string(orig), reason)
+		tag += fmt.Sprintf(",原文「%s」", string(orig))
 	}
+	return tag
+}
+
+// appendHistory 往對話歷史加一則訊息;與上一則同角色時併進去(Messages API 的 user/assistant 要交替,
+// 連續同角色會被合併)。呼叫端須持有 a.mu。
+func (a *Agent) appendHistory(role, content string) {
+	if n := len(a.History); n > 0 && a.History[n-1].Role == role {
+		a.History[n-1].Content += "\n\n" + content
+		return
+	}
+	a.History = append(a.History, llm.Message{Role: role, Content: content})
+}
+
+// appendNotice 把「提案狀態通知」寫進對話歷史(#124):如實記下提案建立與後續被接受／拒絕的事實,
+// 讓模型看到真實狀態,不會複述舊的「提案已送出」。以 user 角色送(事件由作者的操作造成),
+// 開頭標明是程式記錄的通知,不是作者說的話;聊天畫面顯示的是前端的 turns,不會顯示這些。
+func (a *Agent) appendNotice(content string) {
+	a.appendHistory("user", "【提案狀態通知】(程式記錄,不是作者打的字)"+content)
+}
+
+// noteCreated 記下本回合實際建立的提案(待審)。
+func noteCreated(ps []*proposal.Proposal) string {
+	var b strings.Builder
+	b.WriteString("你在本回合建立提案:")
+	for i, p := range ps {
+		if i > 0 {
+			b.WriteString(";")
+		}
+		fmt.Fprintf(&b, " %s", proposalTag(p))
+	}
+	b.WriteString("。目前的狀態是等待作者審查,尚未寫入任何檔案;作者接受或拒絕之後程式會再送一則通知。在收到通知前不要說提案已寫入或已完成。")
+	return b.String()
+}
+
+// NoteRejection 記下作者拒絕提案的原因與事實,之後的請求都帶得上(#40、#124)。兩處:
+// 系統訊息(不受對話壓縮影響)+ 對話歷史(如實記下「這個提案已被拒」,讓模型修正後重新提案)。
+func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
+	tag := proposalTag(p)
 	a.mu.Lock()
-	a.rejections = append(a.rejections, note)
+	a.rejections = append(a.rejections, fmt.Sprintf("%s:%s", tag, reason))
+	a.appendNotice(fmt.Sprintf("作者拒絕了提案 %s。作者的理由:%s。這個提案已失效,不要再複述「提案已送出」,也不要重複被拒的方案;請依作者的理由修正後重新提出新的提案。", tag, reason))
+	a.mu.Unlock()
+}
+
+// NoteAccepted 記下作者接受提案的事實(#124):建議文字已寫入,這個提案不再是待審。
+func (a *Agent) NoteAccepted(p *proposal.Proposal) {
+	a.mu.Lock()
+	a.appendNotice(fmt.Sprintf("作者接受了提案 %s 的第 %d 個版本,已寫入 %s。這個提案不再是待審,不要複述「提案已送出」;之後以檔案現況為準。",
+		proposalTag(p), p.AcceptedVersion+1, p.Target))
 	a.mu.Unlock()
 }
 
@@ -825,7 +873,8 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	var ( // 本次 ask 的研究記錄資料
 		requests       []researchRequest // 依序列出每次實際送出的請求
 		toolCalls      []researchToolCall
-		pIDs           []string // 本次建立的提案 id
+		pIDs           []string // 本次建立的提案 id(研究記錄用)
+		created        []*proposal.Proposal
 		replyText      string
 		result, errMsg string
 	)
@@ -875,12 +924,15 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	rejectedIDs := map[string]bool{}
 	// finish 把一次文字回覆寫成正常回合:存進對話歷史、必要時濃縮後回傳。
 	// 工具迴圈內的文字回覆與達上限後的收尾回覆都走這條路徑(研究記錄照常)。
+	// 本回合實際建立的提案也如實記進歷史(#124):模型看得到提案目前的真實狀態。
 	finish := func(content string) (string, error) {
 		replyText = content // 已由上方保存到對應 request
 		a.mu.Lock()
-		a.History = append(a.History,
-			llm.Message{Role: "user", Content: p.Question},
-			llm.Message{Role: "assistant", Content: content})
+		a.appendHistory("user", p.Question)
+		a.appendHistory("assistant", content)
+		if len(created) > 0 {
+			a.appendNotice(noteCreated(created))
+		}
 		a.mu.Unlock()
 		// 對話變長時在回合結束後就先濃縮,讓下一次的預覽 = 實際送出(B7);自動壓縮關閉時不做(#32)
 		if b := a.ContextTokens; b > 0 && !a.DisableAutoCompact && a.historyTokens() > b*2/5 {
@@ -919,7 +971,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: denyMsg})
 				continue
 			}
-			result2, prID, terr := a.runTool(tc.Name, tc.Arguments, g)
+			result2, pr, terr := a.runTool(tc.Name, tc.Arguments, g)
 			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
 			if terr != nil {
 				result2 = "錯誤:" + terr.Error()
@@ -927,8 +979,9 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			// 執行完才 emit,帶上回給模型的同一段結果(錯誤也在內),讓作者看得到工具讀到/搜到什麼(#34 第 7 項)。
 			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2)})
 			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
-			if terr == nil && prID != "" {
-				pIDs = append(pIDs, prID)
+			if terr == nil && pr != nil {
+				pIDs = append(pIDs, pr.ID)
+				created = append(created, pr)
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}

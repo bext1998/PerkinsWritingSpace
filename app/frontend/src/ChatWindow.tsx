@@ -466,6 +466,9 @@ export default function ChatWindow(props: Props) {
     }, [open, pos]);
 
     const openProposals = proposals.filter(p => p.status === 'pending' || p.status === 'conflict');
+    // 卡片清單(#124 方案 A):提案被處理後卡片留在對話中,只改顯示狀態(已拒絕附作者理由／已接受),
+    // 不再另做一份「已處理提案」清單。審查視窗的切換與「第 i / n 個」仍只用 openProposals(待審)。
+    const doneProposals = proposals.filter(p => p.status !== 'pending' && p.status !== 'conflict');
 
     const pickable = useMemo(() => {
         const groups: {label: string; items: project.Entry[]}[] = [
@@ -607,34 +610,66 @@ export default function ChatWindow(props: Props) {
                     ))}
                     {busy && <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin"/>思考中…</div>}
 
-                    {openProposals.length > 0 && (
+                    {(openProposals.length > 0 || doneProposals.length > 0) && (
                         <div className="mt-3 space-y-2" data-testid="proposals">
-                            <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
-                            {openProposals.map(p => {
-                                // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
-                                // edited 以「提案#版本」為鍵(#39):任一版本被編輯過就顯示已修改
-                                const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
-                                const changed = versions.some((v, i) =>
-                                    edited[`${p.id}#${i}`] !== undefined && edited[`${p.id}#${i}`] !== v.replacement);
-                                return (
-                                    <div key={p.id} data-testid="proposal"
-                                         className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
-                                        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                            <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
-                                            {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
-                                            <span className="ml-auto shrink-0">{p.model}</span>
-                                        </div>
-                                        <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
-                                        {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
-                                        {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
-                                        {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
-                                        <div className="mt-1.5 flex justify-end">
-                                            <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
-                                                    onClick={() => setReviewId(p.id)}><Maximize2/>審查</Button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                            {openProposals.length > 0 && (
+                                <>
+                                    <div className="text-xs font-semibold text-muted-foreground">待審提案({openProposals.length})</div>
+                                    {openProposals.map(p => {
+                                        // 卡片只做通知(#45 方案 A):比對、修改、接受/拒絕一律在審查視窗做,做決定的地方只有一個
+                                        // edited 以「提案#版本」為鍵(#39):任一版本被編輯過就顯示已修改
+                                        const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
+                                        const changed = versions.some((v, i) =>
+                                            edited[`${p.id}#${i}`] !== undefined && edited[`${p.id}#${i}`] !== v.replacement);
+                                        return (
+                                            <div key={p.id} data-testid="proposal"
+                                                 className={cn('border-t border-border pt-2 text-sm', p.status === 'conflict' && 'border-warning')}>
+                                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                    <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                                    {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
+                                                    <span className="ml-auto shrink-0">{p.model}</span>
+                                                </div>
+                                                <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                                {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
+                                                {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
+                                                {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
+                                                <div className="mt-1.5 flex justify-end">
+                                                    <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
+                                                            onClick={() => setReviewId(p.id)}><Maximize2/>審查</Button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </>
+                            )}
+                            {doneProposals.length > 0 && (
+                                <>
+                                    <div className="text-xs font-semibold text-muted-foreground">已處理提案({doneProposals.length})</div>
+                                    {doneProposals.map(p => {
+                                        const versions = [{replacement: p.replacement}, ...(p.alternatives ?? [])];
+                                        // 已處理的提案不可再審查或接受(G1:寫入只能來自作者的當下點擊;G3:回溯點已建立)
+                                        return (
+                                            <div key={p.id} data-testid="proposal"
+                                                 className="border-t border-border pt-2 text-sm opacity-80">
+                                                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                                    <FileText className="h-3 w-3 shrink-0"/><span className="truncate">{titleOf(p.target)}</span>
+                                                    {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
+                                                    <span className="ml-auto shrink-0">{p.model}</span>
+                                                </div>
+                                                <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                                <p data-testid="proposal-status"
+                                                   className={cn('mt-0.5 text-xs font-medium', p.status === 'rejected' ? 'text-destructive' : 'text-muted-foreground')}>
+                                                    {p.status === 'rejected' ? '已拒絕' : '已接受'}
+                                                </p>
+                                                {p.status === 'rejected' && p.rejectReason && (
+                                                    <p className="truncate text-xs text-muted-foreground" data-testid="proposal-reject-reason"
+                                                       title={p.rejectReason}>作者理由:{p.rejectReason}</p>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </>
+                            )}
                         </div>
                     )}
                     <div ref={bottom}/>

@@ -1177,7 +1177,7 @@ func (a *App) ListProposals() ([]*proposal.Proposal, error) {
 }
 
 // AcceptProposal 回傳更新後的提案;version 是作者選的版本序號(0 = 主版本,#39);
-// edited 非 nil 表示作者編輯過建議文字(部分採用)。
+// edited 非 nil 表示作者編輯過建議文字(部分採用)。接受的事實會回到對話歷史給模型看到(#124)。
 func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.Proposal, error) {
 	if a.agent == nil {
 		return nil, errNoProject
@@ -1185,32 +1185,38 @@ func (a *App) AcceptProposal(id string, version int, edited *string) (*proposal.
 	p, err := a.agent.Proposals.Accept(id, version, edited)
 	if err == nil && p != nil {
 		proposal.LogAccept(a.research, p)
-	}
-	return p, err
-}
-
-// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),非空時本次會話的 Bot 會記住。
-func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
-	if a.agent == nil {
-		return nil, errNoProject
-	}
-	reason = strings.TrimSpace(reason)
-	p, err := a.agent.Proposals.Reject(id)
-	if err == nil && p != nil {
-		proposal.LogReject(a.research, p, reason)
-		if reason != "" {
-			a.agent.NoteRejection(p, reason)
-			if err := a.saveRejections(); err != nil {
-				return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
-			}
+		a.agent.NoteAccepted(p)
+		if err := a.saveAgentState(); err != nil {
+			return p, fmt.Errorf("已接受,但對話記錄保存失敗: %w", err)
 		}
 	}
 	return p, err
 }
 
-// saveRejections 把目前的拒絕原因寫進已保存的目前會話(#33):拒絕常發生在回合存檔之後,
-// 不寫回的話作者接著開新對話或關閉程式,接續時就會遺失(PR #89 審查)。尚未存過的會話不處理。
-func (a *App) saveRejections() error {
+// RejectProposal 拒絕提案並記錄研究事件;reason 是作者選填的原因(#40),存進提案 JSON(卡片顯示得出來,#124),
+// 非空時本次會話的 Bot 會記住並依它重新提案。
+func (a *App) RejectProposal(id, reason string) (*proposal.Proposal, error) {
+	if a.agent == nil {
+		return nil, errNoProject
+	}
+	reason = strings.TrimSpace(reason)
+	p, err := a.agent.Proposals.Reject(id, reason)
+	if err == nil && p != nil {
+		proposal.LogReject(a.research, p, reason)
+		if reason != "" {
+			a.agent.NoteRejection(p, reason)
+		}
+		if err := a.saveAgentState(); err != nil {
+			return p, fmt.Errorf("已拒絕,但對話記錄保存失敗: %w", err)
+		}
+	}
+	return p, err
+}
+
+// saveAgentState 把目前的對話歷史與拒絕原因寫進已保存的目前會話(#33):接受/拒絕常發生在回合存檔之後,
+// 不寫回的話作者接著開新對話或關閉程式,接續時就會遺失(PR #89 審查)。接受與拒絕都會動到 History(#124),一起存。
+// 尚未存過的會話不處理。
+func (a *App) saveAgentState() error {
 	ag, st, root, err := a.sessionCtx()
 	if err != nil {
 		return err
@@ -1225,7 +1231,7 @@ func (a *App) saveRejections() error {
 	if err != nil {
 		return err
 	}
-	_, sess.Rejections = ag.Snapshot()
+	sess.History, sess.Rejections = ag.Snapshot()
 	return st.Save(root, sess)
 }
 

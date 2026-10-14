@@ -291,3 +291,48 @@ func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
 		t.Fatalf("接續後 Agent 應載回拒絕原因,得到 %q", rej)
 	}
 }
+
+// #124 意圖:接受與拒絕都會改動對話歷史(提案狀態通知)。回合存檔之後才處理提案時,
+// 這些狀態也要跟著會話存檔與接續——否則換了一段對話,模型會以為被拒的提案還在待審。
+func TestProposalStatusHistorySurvivesResume(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original second"); err != nil {
+		t.Fatal(err)
+	}
+	rejected, err := a.agent.Proposals.Create("m", rel, "original", "第一版", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := a.agent.Proposals.Create("m", rel, "second", "第二版", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}, nil)
+	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "q"}, {Role: "assistant", Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RejectProposal(rejected.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AcceptProposal(accepted.ID, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	a.ResetChat()
+	s, err := a.ResumeSession(m.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined strings.Builder
+	for _, h := range s.History {
+		joined.WriteString(h.Content)
+	}
+	hist := joined.String()
+	if !strings.Contains(hist, rejected.ID) || !strings.Contains(hist, "重新提出") {
+		t.Fatalf("接續後的 History 應仍記得哪個提案被拒、請重新提案:%q", hist)
+	}
+	if !strings.Contains(hist, accepted.ID) || !strings.Contains(hist, "不再是待審") {
+		t.Fatalf("接續後的 History 應仍記得哪個提案已接受:%q", hist)
+	}
+}

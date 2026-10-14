@@ -714,6 +714,7 @@ export namespace proposal {
 	    acceptedVersion?: number;
 	    authorEdited?: boolean;
 	    final?: string;
+	    rejectReason?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Proposal(source);
@@ -740,6 +741,7 @@ export namespace proposal {
 	        this.acceptedVersion = source["acceptedVersion"];
 	        this.authorEdited = source["authorEdited"];
 	        this.final = source["final"];
+	        this.rejectReason = source["rejectReason"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
