@@ -493,34 +493,33 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
 
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            // Caps Lock 開啟時 Ctrl+S 的 key 是大寫 'S'(#80),比對要不分大小寫,否則不會存檔
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 saveNow();
-            }
-            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-                e.preventDefault();
-                setZen(z => !z);
             }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [saveNow]);
 
-    // 打字機捲動 Ctrl+Shift+T、專注模式 Ctrl+Shift+D(進出同鍵);IME 組字中不動作。
-    // 必須在 CodeMirror keymap 之前攔截(PR #79 返工):Caps Lock 下這兩個組合的 key 是小寫
-    // 'd'/'t',CM 的 Mod-d(selectNextOccurrence)會先把游標所在的英文字選起來,之後輸入就
-    // 取代被選的字;CM 處理後 bubble 到 window 時 preventDefault 救不回已發生的選字。
+    // 打字機捲動 Ctrl+Shift+T、專注模式 Ctrl+Shift+D(進出同鍵)、禪模式 Ctrl+Shift+F、IME 組字中不動作。
+    // 必須在 CodeMirror keymap 之前攔截(PR #79 返工、#80):Caps Lock 下這幾個組合的 key 是小寫
+    // 'd'/'t'/'f',CM 的 Mod-d(selectNextOccurrence)與 Mod-f(開搜尋面板)會先把按鍵處理掉——
+    // Ctrl+Shift+D 會把游標所在的英文字選起來(之後輸入就取代被選的字),Ctrl+Shift+F 會順手把
+    // 搜尋面板打開;CM 處理後 bubble 到 window 時 preventDefault 救不回已發生的事。
     // 所以用 capture 階段的 listener 攔截並 stopPropagation,事件根本到不了 CM。
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
             const k = e.key.toLowerCase();
-            if (k !== 't' && k !== 'd') return;
+            if (k !== 't' && k !== 'd' && k !== 'f') return;
             if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
             e.preventDefault();
             e.stopPropagation();
             if (k === 't') setTypewriter(v => !v);
-            else setFocusMode(v => !v);
+            else if (k === 'd') setFocusMode(v => !v);
+            else setZen(z => !z);
         };
         window.addEventListener('keydown', onKey, true);
         return () => window.removeEventListener('keydown', onKey, true);
