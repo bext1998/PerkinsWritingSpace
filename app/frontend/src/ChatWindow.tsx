@@ -300,16 +300,11 @@ export default function ChatWindow(props: Props) {
     });
 
     const send = async () => {
+        // /new:等同「新對話」按鈕,同一條路徑(包含請求進行中時的行為都一樣);不送出任何內容,不需外流確認
+        if (question.trim() === '/new') { reset(); setQuestion(''); return; }
         if (!question.trim() || busy) return;
         // 雲端外流確認在斜線指令之前:壓縮也會把對話送到目前端點
         if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
-        // /new:等同「新對話」按鈕(同一條路徑,含請求進行中的限制;#114)
-        if (question.trim() === '/new') {
-            if (busy) { setError('有請求進行中,請先停止再開新對話。'); return; }
-            reset();
-            setQuestion('');
-            return;
-        }
         // 手動壓縮(#32):/compact 不送給模型、不進對話歷史,直接請後端壓縮一次(通知照舊出現)
         if (question.trim() === '/compact') {
             setBusy(true);
