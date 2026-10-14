@@ -815,10 +815,12 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         if (!menu) return;
         const close = () => setMenu(null);
         window.addEventListener('click', close);
-        window.addEventListener('keydown', close);
+        // keydown 用 capture:Workspace 在 capture 階段攔下的快捷鍵(Ctrl+Shift+F/T/D)會 stopPropagation,
+        // bubble 收不到,選單會留在畫面上(#80 審查)
+        window.addEventListener('keydown', close, true);
         return () => {
             window.removeEventListener('click', close);
-            window.removeEventListener('keydown', close);
+            window.removeEventListener('keydown', close, true);
         };
     }, [menu]);
 
