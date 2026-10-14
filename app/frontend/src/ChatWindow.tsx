@@ -1,11 +1,11 @@
-import {useEffect, useMemo, useRef, useState} from 'react';
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
     AlertTriangle, Bot, Check, ChevronDown, ChevronRight, Eye, FileText, GripHorizontal, History, Loader2, Maximize2, MessageCircle,
     Minus, Paperclip, Plus, RefreshCw, ScrollText, SendHorizontal, Square, SquarePen, TextSelect, X,
 } from 'lucide-react';
 import {
-    AckRemote, AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, PreviewContext,
-    PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel,
+    AckRemote, AcceptProposal, ArchiveSession, AskAI, CancelAsk, CompactChat, DeleteSession, ListModels, ListProposals, ListSessions, ListSkills,
+    PreviewContext, PurgeSession, RejectProposal, ResetChat, RestoreSession, ResumeSession, SaveSession, SetActiveModel,
 } from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
 import {agent, main, project, proposal, sessions} from '../wailsjs/go/models';
@@ -121,6 +121,10 @@ export default function ChatWindow(props: Props) {
     const [selFrom, setSelFrom] = useState<string | null>(null);
     const [keepSel, setKeepSel] = useState(false); // 作者明確點「仍要附加」後為 true
     const [mode, setMode] = useState<'' | 'report'>('');
+    // 「/」指令選單(SPEC §12.3「技能與 / 指令」,#114):技能由後端列出(每次開單元重讀,改檔不必重啟)
+    const [skills, setSkills] = useState<agent.Skill[]>([]);
+    const [skillIdx, setSkillIdx] = useState(0);
+    const [skillOpen, setSkillOpen] = useState(false);
     const [prior, setPrior] = useState(false);
     const [proposals, setProposals] = useState<proposal.Proposal[]>([]);
     const [edited, setEdited] = useState<Record<string, string>>({});
@@ -297,8 +301,15 @@ export default function ChatWindow(props: Props) {
 
     const send = async () => {
         if (!question.trim() || busy) return;
-        // 雲端外流確認在 /compact 之前:壓縮也會把對話送到目前端點
+        // 雲端外流確認在斜線指令之前:壓縮也會把對話送到目前端點
         if (needsConfirm) { setError('目前的端點在本機之外:送出前請先勾選確認。'); return; }
+        // /new:等同「新對話」按鈕(同一條路徑,含請求進行中的限制;#114)
+        if (question.trim() === '/new') {
+            if (busy) { setError('有請求進行中,請先停止再開新對話。'); return; }
+            reset();
+            setQuestion('');
+            return;
+        }
         // 手動壓縮(#32):/compact 不送給模型、不進對話歷史,直接請後端壓縮一次(通知照舊出現)
         if (question.trim() === '/compact') {
             setBusy(true);
@@ -310,6 +321,19 @@ export default function ChatWindow(props: Props) {
             } catch (e) { setError(errText(e)); } // 對話太短沒有可壓縮內容等:明確告知,不靜默不做
             finally { setBusy(false); setUsageTick(t => t + 1); } // 歷史變了,用量要重算
             return;
+        }
+        // 技能叫用(#114):以 /技能名 開頭。找不到技能就不送給模型,在對話框明確提示。
+        const q0 = question.trim();
+        if (q0.startsWith('/')) {
+            const name = q0.slice(1).split(/\s/)[0];
+            if (name && !BUILTIN.some(b => b.name === name)) {
+                const list = await ListSkills().catch(() => null); // 讀取失敗不擋送出,交給後端回錯
+                if (list && !list.some(s => s.name === name)) {
+                    setError(`沒有這個技能或指令:/${name}`);
+                    setSkillOpen(false);
+                    return;
+                }
+            }
         }
         try {
             await beforeAsk();
@@ -382,7 +406,48 @@ export default function ChatWindow(props: Props) {
         setPrior(false);
         setQuickId(undefined);
         setQuickQ('');
+        setSkillOpen(false);
         setUsageTick(t => t + 1); // 後端 History 已清空,重算用量
+    };
+
+    // ---- 「/」指令選單與技能(#114)----
+    // 內建指令 + 技能合成同一份清單;技能名稱即叫用時的 /名稱,內建指令名不可被技能佔用(後端已擋)。
+    const BUILTIN: {name: string; desc: string}[] = [
+        {name: 'compact', desc: '把較早的對話濃縮成摘要,省上下文'},
+        {name: 'new', desc: '開始新對話'},
+    ];
+    const slashQuery = question.trimStart().startsWith('/') && !question.includes(' ') ? question.trimStart().slice(1) : null;
+    const slashItems = useMemo(() => {
+        const all = [...BUILTIN.map(b => ({name: b.name, desc: b.desc, builtin: true})),
+            ...skills.map(s => ({name: s.name, desc: s.desc ?? '', builtin: false}))];
+        if (slashQuery === null) return [];
+        const q = slashQuery.toLowerCase();
+        return all.filter(i => i.name.toLowerCase().startsWith(q));
+    }, [slashQuery, skills]);
+    // 開單時重讀技能(作者可能剛加檔);顯示中不打擾輸入。
+    const openSkillMenu = useCallback(async () => {
+        setSkillOpen(true);
+        setSkillIdx(0);
+        try { setSkills(await ListSkills() ?? []); }
+        catch (e) { setError(errText(e)); }
+    }, [setError]);
+    useEffect(() => { if (slashQuery === null) setSkillOpen(false); }, [slashQuery]);
+    useEffect(() => { if (skillIdx < slashItems.length) return; setSkillIdx(0); }, [slashItems.length, skillIdx]);
+    // 帶入:技能補一個空白讓作者接著打問題;內建指令帶入後直接可送(/compact、/new 不接受後綴)
+    const applySlashItem = (i: typeof slashItems[number]) => {
+        setQuestion(i.builtin ? `/${i.name}` : `/${i.name} `);
+        setSkillOpen(false);
+        input.current?.focus();
+    };
+    const onSlashKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return; // IME 組字中不處理
+        if (skillOpen && slashItems.length > 0) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx(i => (i + 1) % slashItems.length); return; }
+            if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx(i => (i - 1 + slashItems.length) % slashItems.length); return; }
+            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applySlashItem(slashItems[skillIdx] ?? slashItems[0]); return; }
+            if (e.key === 'Escape') { e.preventDefault(); setSkillOpen(false); return; }
+        }
+        if (e.ctrlKey && e.key === 'Enter') send();
     };
 
     // ---- 對話記錄(#33):存在使用者設定目錄(依作品分開);過往內容只當對話上下文參考,不會成為設定 ----
@@ -669,11 +734,31 @@ export default function ChatWindow(props: Props) {
                         ))}
                         {mode === 'report' && <Chip onRemove={() => setMode('')} className="border-warning/40 text-warning">檢查報告</Chip>}
                     </div>
+                    {skillOpen && slashQuery !== null && (
+                        // 「/」指令選單(#114):輸入框上方;↑↓ 移動、Enter/Tab 帶入、Esc 關閉、滑鼠可點
+                        <div className="mb-1.5 max-h-56 overflow-y-auto rounded-md border bg-popover p-1 text-sm" data-testid="slash-menu">
+                            {slashItems.length === 0
+                                ? <p className="px-2 py-1.5 text-xs text-muted-foreground">沒有符合的技能</p>
+                                : slashItems.map((i, n) => (
+                                    <button key={i.name} type="button" data-testid="slash-item"
+                                            className={cn('flex w-full items-baseline gap-2 rounded px-2 py-1 text-left hover:bg-secondary',
+                                                          n === skillIdx && 'bg-secondary')}
+                                            onMouseEnter={() => setSkillIdx(n)} onClick={() => applySlashItem(i)}>
+                                        <span className="shrink-0 font-medium">/{i.name}</span>
+                                        {i.desc && <span className="truncate text-xs text-muted-foreground">{i.desc}</span>}
+                                    </button>
+                                ))}
+                        </div>
+                    )}
                     <Textarea ref={input} value={question} data-testid="question"
                               placeholder={mode === 'report' ? '要檢查什麼?(Ctrl+Enter 送出)' : '問問看…(Ctrl+Enter 送出)'}
                               className="max-h-40 min-h-[4.5rem] resize-none text-sm"
-                              onChange={e => setQuestion(e.target.value)}
-                              onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') send(); }}/>
+                              onChange={e => {
+                                  const v = e.target.value;
+                                  setQuestion(v);
+                                  if (v.trimStart().startsWith('/') && !v.includes(' ')) openSkillMenu();
+                              }}
+                              onKeyDown={onSlashKey}/>
                     <div className="mt-1.5 flex items-center gap-1">
                         <Popover onOpenChange={o => o && setPickQ('')}>
                             <Tip label="附加檔案:本次一定要看、整份送出" side="top">
@@ -774,6 +859,8 @@ export default function ChatWindow(props: Props) {
                             <div className="space-y-1 p-2 text-xs">
                                 {/* 本次送出的作者指示(Issue #38):由後端 Preview.instructions 回報實際放進 system 的層,前端不自己猜 */}
                                 {preview?.instructions?.map(name => <p key={name} data-testid="preview-instructions">· 作者指示:{name}</p>)}
+                                {/* 本次叫用的技能(#114):由後端 Preview.skills 回報實際放進 system 的技能,前端不自己猜 */}
+                                {preview?.skills?.map(name => <p key={name} data-testid="preview-skills">· 技能:{name}</p>)}
                                 {withDoc && doc && <p>· 目前文件:{titleOf(doc)}(全文)</p>}
                                 {selSent && <p>· 選取 {selSent.length} 字{selStale && keepSel ? `(來自〈${titleOf(selFrom!)}〉,你選擇仍要附加)` : ''}:{selSent.length <= 40 ? selSent : selSent.slice(0, 40) + '…'}</p>}
                                 {!withDoc && <p className="text-muted-foreground">· 目前文件:未附加</p>}

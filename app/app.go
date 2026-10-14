@@ -125,6 +125,7 @@ func (a *App) setProject(p *project.Project) {
 	a.agent = &agent.Agent{Proj: p, Proposals: &proposal.Store{Proj: p}, Research: a.research}
 	if a.store != nil { // 全域作者指示(%USERPROFILE%\.perkins\AGENTS.md,與 settings.json 同目錄)
 		a.agent.GlobalAgentsPath = filepath.Join(a.store.Dir, "AGENTS.md")
+		a.agent.SkillsDir = filepath.Join(a.store.Dir, "skills") // 全域技能(#114)
 	}
 	a.mu.Unlock()
 	if p != nil && a.store != nil {
@@ -1227,6 +1228,16 @@ func (a *App) saveRejections() error {
 	}
 	_, sess.Rejections = ag.Snapshot()
 	return st.Save(root, sess)
+}
+
+// ListSkills 回傳「/」選單要列的技能(名稱+說明;SPEC §12.3「技能與 / 指令」,#114)。
+// 沒有技能目錄不是錯誤;讀取失敗回錯,不吞掉。每次呼叫都重讀,作者改檔不必重啟。
+func (a *App) ListSkills() ([]agent.Skill, error) {
+	ag, _, err := a.prepare()
+	if err != nil {
+		return nil, err
+	}
+	return ag.ListSkills()
 }
 
 // ---- 版本(G3) ----
