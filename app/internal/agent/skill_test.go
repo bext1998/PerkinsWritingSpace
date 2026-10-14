@@ -239,7 +239,7 @@ func TestSkillComesAfterAuthorInstructions(t *testing.T) {
 	}
 }
 
-// 意圖(#114 護欄,G1–G4):技能叫用只能讀技能目錄裡的檔案。名稱帶路徑/磁碟語法時,後端在读檔前
+// 意圖(#114 護欄,G1–G4):技能叫用只能讀技能目錄裡的檔案。名稱帶路徑/磁碟語法時,後端在讀檔前
 // 就擋下並回錯——不能只靠前端(前端以清單名稱擋住叫用),Ask 與 Preview 都不得讀出技能目錄外的 Markdown。
 func TestSkillNameOutsideSkillsDirIsNotRead(t *testing.T) {
 	a, s, dir := setupSkills(t)

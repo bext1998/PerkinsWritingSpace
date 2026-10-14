@@ -111,7 +111,7 @@ func ParseSkillCall(question string) (name string, ok bool) {
 
 // isSkillName 判斷名稱是否可作為技能叫用:必須是單一檔名。
 // 不得含 /、\、磁碟代號 :、連續點 ..、單獨 . 或任何空白字元。
-// 後端在读檔前自己檢查(G1–G4:前端檢查不作為檔案存取邊界),
+// 後端在讀檔前自己檢查(G1–G4:前端檢查不作為檔案存取邊界),
 // 否則 /../outside 這類名稱會經 filepath.Join 逃出技能目錄讀到其他 Markdown。
 func isSkillName(name string) bool {
 	if name == "" || name == "." || strings.Contains(name, "..") || strings.ContainsAny(name, `/\:`) {
