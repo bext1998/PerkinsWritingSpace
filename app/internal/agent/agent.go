@@ -84,6 +84,9 @@ type Event struct {
 	// Result 是這次工具呼叫的結果(或錯誤、拒絕訊息),在工具執行完才帶上,只顯示給作者看(#34 第 7 項)。
 	// 送給模型的內容不變;過長時顯示端由 displayResult 截斷。
 	Result string `json:"result,omitempty"`
+	// ProposalID 是這次呼叫實際建立的提案 id(propose_patch 成功時才有,#124)。
+	// 前端把它記在該工具列所在的回合上,已處理的提案卡才能留在「建立它的那個對話」的原位。
+	ProposalID string `json:"proposalId,omitempty"`
 }
 
 type Agent struct {
@@ -107,9 +110,13 @@ type Agent struct {
 	GlobalAgentsPath string
 
 	mu      sync.Mutex
-	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭)
-	// rejections 是本次會話作者拒絕提案時附的原因(#40);放在系統訊息,不受對話壓縮影響,Reset 清空。
+	History []llm.Message // 只含 user/assistant 文字回合(可能以濃縮摘要開頭;嚴格交替)
+	// rejections 是舊會話記錄下來的拒絕原因(#40);只讀回、相容用(#124:新的拒絕理由存在提案 JSON,
+	// 由「提案現況」段落帶出,不再寫進這裡)。
 	rejections []string
+	// sessionProposals 是本次對話建立過的提案 id(propose_patch 成功當下加入,#124)。
+	// 送出時依這份清單向 Store 讀**當下**狀態組成「提案現況」,所以不會有「事後被壓縮/被倒回待審」的問題。
+	sessionProposals []string
 }
 
 // rlog 記錄研究事件(關閉或 nil 時為 no-op;失敗只留內部訊息,不影響 AI 流程)。
@@ -234,32 +241,32 @@ func (g gate) ok(path string) bool {
 	return g[top+"/"]
 }
 
-func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 回傳 (結果, proposalID, 錯誤)
+func (a *Agent) runTool(name, args string, g gate) (string, *proposal.Proposal, error) { // 回傳 (結果, 本次建立的提案, 錯誤)
 	switch name {
 	case "read_document":
 		var p struct {
 			Path string `json:"path"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", nil, fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", "", errNotShared
+			return "", nil, errNotShared
 		}
 		text, err := a.Proj.ReadFile(p.Path)
-		return text, "", err
+		return text, nil, err
 	case "search_project":
 		var p struct {
 			Query string `json:"query"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil || strings.TrimSpace(p.Query) == "" {
-			return "", "", fmt.Errorf("需要非空的 query")
+			return "", nil, fmt.Errorf("需要非空的 query")
 		}
 		r, err := a.search(p.Query, g)
-		return r, "", err
+		return r, nil, err
 	case "list_files":
 		r, err := a.listFiles(g)
-		return r, "", err
+		return r, nil, err
 	case "propose_patch":
 		var p struct {
 			Path         string          `json:"path"`
@@ -271,16 +278,16 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 			Assumptions  []string        `json:"assumptions"`
 		}
 		if err := json.Unmarshal([]byte(args), &p); err != nil {
-			return "", "", fmt.Errorf("參數格式錯誤: %w", err)
+			return "", nil, fmt.Errorf("參數格式錯誤: %w", err)
 		}
 		if !g.ok(p.Path) {
-			return "", "", errNotShared
+			return "", nil, errNotShared
 		}
 		if project.KindOf(p.Path) == project.SummariesDir {
-			return "", "", fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
+			return "", nil, fmt.Errorf("摘要由作者自行確認與編輯,不接受提案")
 		}
 		if a.Proposals == nil {
-			return "", "", fmt.Errorf("提案功能未啟用")
+			return "", nil, fmt.Errorf("提案功能未啟用")
 		}
 		alts, notes := parseAlternatives(p.Alternatives, p.Original, p.Replacement)
 		var label string
@@ -290,15 +297,23 @@ func (a *Agent) runTool(name, args string, g gate) (string, string, error) { // 
 		pr, err := a.Proposals.CreateVersions(a.Model, p.Path, p.Original,
 			proposal.Version{Label: strings.TrimSpace(label), Replacement: p.Replacement}, p.Rationale, p.Assumptions, alts)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		msg := fmt.Sprintf("提案 %s 已建立(%d 個版本),等待作者審核。你無法套用它;請告訴作者你提了什麼以及理由。", pr.ID, len(pr.Versions()))
 		for _, n := range notes {
 			msg += " " + n
 		}
-		return msg, pr.ID, nil
+		return msg, pr, nil
 	}
-	return "", "", fmt.Errorf("未實作的工具 %s", name)
+	return "", nil, fmt.Errorf("未實作的工具 %s", name)
+}
+
+// proposalID 回傳這次工具呼叫實際建立的提案 id(失敗或不是提案工具時為空);工具事件的 proposalId 欄位用(#124)。
+func proposalID(p *proposal.Proposal, err error) string {
+	if err != nil || p == nil {
+		return ""
+	}
+	return p.ID
 }
 
 // parseAlternatives 把模型給的 alternatives 參數整形成替代版本(#39;系統邊界驗證):
@@ -585,10 +600,17 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	sys += ai
 	a.mu.Lock()
 	if len(a.rejections) > 0 {
-		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】之後的提案請避免同樣的問題:\n- " + strings.Join(a.rejections, "\n- ")
+		sys += "\n\n【作者在本次對話拒絕提案時說明的原因】作者拒絕了下列提案;請看過每個提案的編號與作者的理由,修正後重新提出新的提案,不要重複被拒的方案:\n- " + strings.Join(a.rejections, "\n- ")
 	}
 	msgs := append([]llm.Message{{Role: "system", Content: sys}}, a.History...)
+	ids := append([]string{}, a.sessionProposals...)
 	a.mu.Unlock()
+	// 提案現況每次送出時即時讀提案檔案組成,不經對話歷史(所以壓縮、跨會話、finish 之後才被處理都不會錯)。
+	status, err := proposalStatus(a.Proposals, ids)
+	if err != nil {
+		return nil, buildInfo{}, err
+	}
+	msgs[0].Content += status
 	user := p.Question
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
@@ -719,41 +741,104 @@ func (a *Agent) Reset() {
 	a.mu.Lock()
 	a.History = nil
 	a.rejections = nil
+	a.sessionProposals = nil // 新對話:提案現況從頭算(這次對話還沒建立任何提案)
 	a.mu.Unlock()
 }
 
-// Snapshot 回傳對話歷史與拒絕原因的副本(對話記錄保存用,#33)。
-func (a *Agent) Snapshot() ([]llm.Message, []string) {
+// Snapshot 回傳對話歷史、拒絕原因與本次對話建立過的提案 id 的副本(對話記錄保存用,#33、#124)。
+func (a *Agent) Snapshot() ([]llm.Message, []string, []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return append([]llm.Message{}, a.History...), append([]string{}, a.rejections...)
+	return append([]llm.Message{}, a.History...), append([]string{}, a.rejections...), append([]string{}, a.sessionProposals...)
 }
 
 // RestoreSession 以保存的對話內容取代目前的對話歷史與拒絕原因(接續對話記錄,#33)。
 // 過往會話屬 Interpretation:只當對話上下文參考,不會成為 Canon(SPEC §0 第 3 條);
 // 接續後送出的內容照常計入上下文預算並在送出預覽可見(A6)。
-func (a *Agent) RestoreSession(history []llm.Message, rejections []string) {
+// sessionProposals 是該會話建立過的提案 id(舊會話 JSON 沒有這個欄位 = nil):接續後仍能組出提案現況,
+// 就算作者是在別的會話處理的(#124)。
+func (a *Agent) RestoreSession(history []llm.Message, rejections []string, sessionProposals []string) {
 	a.mu.Lock()
 	a.History = append([]llm.Message{}, history...)
 	a.rejections = append([]string{}, rejections...)
+	a.sessionProposals = append([]string{}, sessionProposals...)
 	a.mu.Unlock()
 }
 
-// NoteRejection 記下作者拒絕提案的原因,本次會話之後的請求都會帶上(#40)。原因屬 Interpretation,只當參考。
-// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段:它可能來自先前對話的附加,本次未附加就不能送出(G2)。
-func (a *Agent) NoteRejection(p *proposal.Proposal, reason string) {
-	note := fmt.Sprintf("%s 的提案:%s", p.Target, reason)
+// proposalTag 是提案在對話中的識別:編號、目標檔與版本數(#124)。模型要知道自己該修正哪一個提案。
+// 受保護資料夾(設定、大綱、筆記)的提案不附原文片段(G2:本次未附加就不能送出);改寫內容一律不附——
+// 待審或被拒的 Proposal 永遠不是 Canon(§2.1 G2)。
+func proposalTag(p *proposal.Proposal) string {
+	tag := fmt.Sprintf("%s(%s,共 %d 個版本)", p.ID, p.Target, len(p.Versions()))
 	if !Protected(p.Target) {
 		orig := []rune(p.Original)
 		if len(orig) > 40 {
 			orig = append(orig[:40], '…')
 		}
-		note = fmt.Sprintf("%s 的提案(原文「%s」):%s", p.Target, string(orig), reason)
+		tag += fmt.Sprintf(",原文「%s」", string(orig))
 	}
-	a.mu.Lock()
-	a.rejections = append(a.rejections, note)
-	a.mu.Unlock()
+	return tag
 }
+
+// recordProposal 記下本次對話建立過的提案(工具成功當下就記,不等回合結束):送出時依這份清單
+// 向 Store 讀當下狀態組成「提案現況」(#124)。不管作者在回合結束前、或別的會話裡處理的提案,
+// 現況都是即時讀出來的。
+func (a *Agent) recordProposal(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, got := range a.sessionProposals {
+		if got == id {
+			return
+		}
+	}
+	a.sessionProposals = append(a.sessionProposals, id)
+}
+
+// sessionProposalLimit 是「提案現況」最多列出的筆數:只列最近這些,舊的不再佔上下文。
+const sessionProposalLimit = 20
+
+// proposalStatus 依本次對話建立過的提案 id,向 Store 讀**當下**狀態組成系統訊息的一段(#124)。
+// 每次送出都重讀,所以不論提案是在這回合之後、壓縮期間、或別的會話處理的,模型看到的都是真實狀態;
+// 事後寫進對話歷史的做法會被壓縮切割、會被舊快照覆蓋、也會把已處理的提案倒回待審,一律不用。
+func proposalStatus(store *proposal.Store, ids []string) (string, error) {
+	if store == nil || len(ids) == 0 {
+		return "", nil
+	}
+	if len(ids) > sessionProposalLimit { // 只列最近 sessionProposalLimit 筆
+		ids = ids[len(ids)-sessionProposalLimit:]
+	}
+	var b strings.Builder
+	b.WriteString("\n\n【本次對話的提案現況】以下是程式依提案檔案即時讀出的真實狀態;若與你先前提到的說法不一致,以這裡為準:")
+	for _, id := range ids {
+		p, err := store.Get(id)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // 提案檔已不存在:略過這筆,不讓請求失敗
+		}
+		if err != nil { // 損壞或讀不到:浮出,不能讓真實狀態無聲消失
+			return "", fmt.Errorf("讀取提案 %s 的狀態失敗: %w", id, err)
+		}
+		var state string
+		switch p.Status {
+		case proposal.Accepted:
+			state = fmt.Sprintf("作者已接受第 %d 個版本並寫入;之後以檔案現況為準", p.AcceptedVersion+1)
+		case proposal.Rejected:
+			why := p.RejectReason
+			if why == "" {
+				why = "(作者未填理由)"
+			}
+			state = fmt.Sprintf("作者已拒絕;理由:%s。已失效,請依理由修正後重新提出新的提案,不要重複被拒的方案", why)
+		case proposal.Conflict:
+			state = "檔案在提案後已被作者修改,提案無法套用,目前尚未處理"
+		default: // pending
+			state = "等待作者審查,尚未寫入任何檔案"
+		}
+		fmt.Fprintf(&b, "\n- %s:%s", proposalTag(p), state)
+	}
+	return b.String(), nil
+}
+
+// 註:拒絕不再寫進對話歷史或 rejections——理由存在提案 JSON,送出時由 proposalStatus 即時讀出(#124)。
+// 舊會話記錄裡的 Rejections 仍會讀回並照舊附在系統訊息(相容用)。
 
 const compactKeep = 4 // 最近 2 個回合原文保留
 
@@ -825,7 +910,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	var ( // 本次 ask 的研究記錄資料
 		requests       []researchRequest // 依序列出每次實際送出的請求
 		toolCalls      []researchToolCall
-		pIDs           []string // 本次建立的提案 id
+		pIDs           []string // 本次建立的提案 id(研究記錄用)
 		replyText      string
 		result, errMsg string
 	)
@@ -875,6 +960,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	rejectedIDs := map[string]bool{}
 	// finish 把一次文字回覆寫成正常回合:存進對話歷史、必要時濃縮後回傳。
 	// 工具迴圈內的文字回覆與達上限後的收尾回覆都走這條路徑(研究記錄照常)。
+	// 歷史維持嚴格 user/assistant 交替:提案狀態不寫進歷史,而是送出時即時組出(見 proposalStatus,#124)。
 	finish := func(content string) (string, error) {
 		replyText = content // 已由上方保存到對應 request
 		a.mu.Lock()
@@ -919,16 +1005,17 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: denyMsg})
 				continue
 			}
-			result2, prID, terr := a.runTool(tc.Name, tc.Arguments, g)
+			result2, pr, terr := a.runTool(tc.Name, tc.Arguments, g)
 			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
 			if terr != nil {
 				result2 = "錯誤:" + terr.Error()
 			}
 			// 執行完才 emit,帶上回給模型的同一段結果(錯誤也在內),讓作者看得到工具讀到/搜到什麼(#34 第 7 項)。
-			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2)})
+			emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: true, Result: displayResult(result2), ProposalID: proposalID(pr, terr)})
 			toolCalls = append(toolCalls, researchToolCall{Name: tc.Name, Args: tc.Arguments, Err: errText(terr), Denied: rejectedIDs[tc.ID]})
-			if terr == nil && prID != "" {
-				pIDs = append(pIDs, prID)
+			if terr == nil && pr != nil {
+				pIDs = append(pIDs, pr.ID)
+				a.recordProposal(pr.ID)
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: result2})
 		}

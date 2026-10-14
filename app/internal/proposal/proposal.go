@@ -62,6 +62,9 @@ type Proposal struct {
 	// 部分採用(SPEC §12.3):作者在接受前編輯過建議文字時,實際寫入的是 Final。
 	AuthorEdited bool   `json:"authorEdited,omitempty"`
 	Final        string `json:"final,omitempty"`
+	// RejectReason 是作者拒絕時填的原因(選填,#40、#124);存進提案 JSON,
+	// 聊天卡片重開作品後仍顯示得出來。舊提案 JSON 沒有這個欄位,照常可讀。
+	RejectReason string `json:"rejectReason,omitempty"`
 }
 
 // Versions 回傳所有改寫版本(主版本 + Alternatives,#39);舊提案只有一個版本。
@@ -94,7 +97,7 @@ func (s *Store) Get(id string) (*Proposal, error) {
 	}
 	b, err := os.ReadFile(filepath.Join(s.dir(), id+".json"))
 	if err != nil {
-		return nil, fmt.Errorf("找不到提案 %s", id)
+		return nil, fmt.Errorf("找不到提案 %s: %w", id, err) // 保留原因:呼叫端要分辨「檔案不存在」與其他讀檔錯誤(#124)
 	}
 	var p Proposal
 	return &p, json.Unmarshal(b, &p)
@@ -168,8 +171,9 @@ func (s *Store) List() ([]*Proposal, error) {
 	return out, nil
 }
 
-// Reject 拒絕提案;回傳提案供呼叫端記錄研究事件。
-func (s *Store) Reject(id string) (*Proposal, error) {
+// Reject 拒絕提案,reason 是作者選填的原因(存進提案 JSON,聊天卡片才顯示得出來,#124);
+// 回傳提案供呼叫端記錄研究事件。
+func (s *Store) Reject(id, reason string) (*Proposal, error) {
 	p, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -178,6 +182,7 @@ func (s *Store) Reject(id string) (*Proposal, error) {
 		return nil, ErrNotPending
 	}
 	p.Status = Rejected
+	p.RejectReason = reason
 	return p, s.save(p)
 }
 

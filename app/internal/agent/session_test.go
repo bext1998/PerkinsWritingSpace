@@ -16,7 +16,7 @@ func TestRestoredSessionFeedsNextRequest(t *testing.T) {
 	a.RestoreSession([]llm.Message{
 		{Role: "user", Content: "舊問題:幫我把開頭改得更緊湊"},
 		{Role: "assistant", Content: "舊回答:我建議把背景移到後面。"},
-	}, []string{"canon/characters.md 的提案(原文「小明走進森林。」):不要改動敘事視角"})
+	}, []string{"canon/characters.md 的提案(原文「小明走進森林。」):不要改動敘事視角"}, nil)
 
 	s.replies = []llm.Message{{Role: "assistant", Content: "新的回答"}}
 	if _, err := a.Ask(context.Background(), AskParams{Question: "那第二段呢?"}, func(Event) {}); err != nil {
@@ -48,15 +48,16 @@ func TestRestoredSessionFeedsNextRequest(t *testing.T) {
 // 破壞驗證:Snapshot 回傳共用 slice(呼叫端改動會污染保存內容),本測試會失敗。
 func TestSnapshotRestoreSymmetry(t *testing.T) {
 	a, _, _ := setup(t)
-	a.RestoreSession([]llm.Message{{Role: "user", Content: "q1"}, {Role: "assistant", Content: "a1"}}, []string{"r1"})
-	hist, rej := a.Snapshot()
-	if len(hist) != 2 || hist[0].Content != "q1" || len(rej) != 1 || rej[0] != "r1" {
-		t.Fatalf("Snapshot 應回傳載回的內容: %+v / %+v", hist, rej)
+	a.RestoreSession([]llm.Message{{Role: "user", Content: "q1"}, {Role: "assistant", Content: "a1"}}, []string{"r1"}, []string{"p1"})
+	hist, rej, ids := a.Snapshot()
+	if len(hist) != 2 || hist[0].Content != "q1" || len(rej) != 1 || rej[0] != "r1" || len(ids) != 1 || ids[0] != "p1" {
+		t.Fatalf("Snapshot 應回傳載回的內容: %+v / %+v / %+v", hist, rej, ids)
 	}
 	hist[0].Content = "被改掉"
 	rej[0] = "被改掉"
-	hist2, rej2 := a.Snapshot()
-	if hist2[0].Content != "q1" || rej2[0] != "r1" {
+	ids[0] = "被改掉"
+	hist2, rej2, ids2 := a.Snapshot()
+	if hist2[0].Content != "q1" || rej2[0] != "r1" || ids2[0] != "p1" {
 		t.Fatal("Snapshot 應回傳副本,呼叫端的修改不得影響保存內容")
 	}
 }

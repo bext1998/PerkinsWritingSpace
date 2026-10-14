@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"perkins/internal/agent"
 	"perkins/internal/llm"
 	"perkins/internal/project"
 	"perkins/internal/sessions"
@@ -37,8 +38,12 @@ func TestSessionSaveResumeRoundTrip(t *testing.T) {
 	a.agent.RestoreSession([]llm.Message{
 		{Role: "user", Content: "舊問題"},
 		{Role: "assistant", Content: "舊回答"},
-	}, []string{"拒絕原因 A"})
-	turns := []sessions.Turn{{Role: "user", Text: "舊問題"}, {Role: "assistant", Text: "舊回答"}}
+	}, []string{"拒絕原因 A"}, nil)
+	turns := []sessions.Turn{
+		{Role: "user", Text: "舊問題"},
+		{Role: "tool", Text: "· 提出修改提案 第一章.md", ProposalIDs: []string{"20261015-010000-abc123"}},
+		{Role: "assistant", Text: "舊回答"},
+	}
 
 	m, err := a.SaveSession(turns)
 	if err != nil {
@@ -70,14 +75,18 @@ func TestSessionSaveResumeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resumed.Turns) != 2 || resumed.Turns[0].Text != "舊問題" || resumed.Turns[1].Text != "舊回答" {
+	if len(resumed.Turns) != 3 || resumed.Turns[0].Text != "舊問題" || resumed.Turns[2].Text != "舊回答" {
 		t.Fatalf("接續應載回 turns: %+v", resumed.Turns)
+	}
+	// #124:回合上建立的提案 id 要隨會話存檔與接續(已處理的提案卡靠它留在原對話的原位)
+	if len(resumed.Turns[1].ProposalIDs) != 1 || resumed.Turns[1].ProposalIDs[0] != "20261015-010000-abc123" {
+		t.Fatalf("接續應載回回合建立的提案 id: %+v", resumed.Turns[1])
 	}
 	if len(resumed.History) != 2 || resumed.History[1].Content != "舊回答" || len(resumed.Rejections) != 1 || resumed.Rejections[0] != "拒絕原因 A" {
 		t.Fatalf("接續應載回 History 與拒絕原因: %+v / %+v", resumed.History, resumed.Rejections)
 	}
-	hist, rej := a.agent.Snapshot()
-	if len(hist) != 2 || len(rej) != 1 {
+	hist, rej, ids := a.agent.Snapshot()
+	if len(hist) != 2 || len(rej) != 1 || len(ids) != 0 {
 		t.Fatalf("History 與拒絕原因應載回 Agent: %+v / %+v", hist, rej)
 	}
 	list, _ = a.ListSessions()
@@ -233,7 +242,7 @@ func TestDeleteCurrentSessionStartsNew(t *testing.T) {
 // 接續期間不能開始新請求:否則接續完成時會把執行中請求的 History 換成舊會話(PR #89 審查)。
 func TestResumeHoldsRunSlotUntilDone(t *testing.T) {
 	a := sessionApp(t)
-	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "old"}, {Role: "assistant", Content: "old answer"}}, nil)
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "old"}, {Role: "assistant", Content: "old answer"}}, nil, nil)
 	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "old"}})
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +269,8 @@ func TestResumeHoldsRunSlotUntilDone(t *testing.T) {
 	}
 }
 
-// 回合存檔之後才拒絕提案(實際常見順序),接著開新對話再接續,拒絕原因仍要在(PR #89 審查)。
+// 回合存檔之後才拒絕提案(實際常見順序),接著開新對話再接續,作者的理由仍要帶給模型。
+// #124 起理由存在提案 JSON、送出時由「提案現況」即時讀出,不再另存一份到會話記錄。
 func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
 	a := sessionApp(t)
 	rel := "manuscript/test.md"
@@ -271,7 +281,7 @@ func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}, nil)
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}}, nil, []string{p.ID})
 	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "q"}, {Role: "assistant", Text: "a"}})
 	if err != nil {
 		t.Fatal(err)
@@ -280,14 +290,137 @@ func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.ResetChat()
+	if _, err := a.ResumeSession(m.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	sent := previewSent(t, a)
+	if !strings.Contains(sent, "保持敘事口吻") || !strings.Contains(sent, "作者已拒絕") {
+		t.Fatalf("接續後送給模型的內容應帶著作者的拒絕理由:%q", sent)
+	}
+}
+
+// previewSent 組出「下一回合會送給模型的完整內容」(預覽與實際送出同一條路徑,A6)。
+func previewSent(t *testing.T, a *App) string {
+	t.Helper()
+	pv, err := a.PreviewContext(agent.AskParams{Question: "再改一次"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b strings.Builder
+	for _, m := range pv.Messages {
+		b.WriteString(m.Content)
+		b.WriteString("\n---\n")
+	}
+	return b.String()
+}
+
+// #124 審查 4:會話 A 建立提案並存檔,切到 B 拒絕該提案,接續 A——
+// A 送給模型的內容要依提案檔案的當下狀態顯示已拒絕與理由,不能仍說待審。
+func TestProposalHandledInOtherSessionShownOnResume(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.agent.Proposals.Create("m", rel, "original", "replacement", "r", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 會話 A:建立提案、存檔(回合上的 proposalIds 一併存下)
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "qA"}, {Role: "assistant", Content: "aA"}}, nil, []string{p.ID})
+	first, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "qA"}, {Role: "tool", Text: "· 提出修改提案 test.md", ProposalIDs: []string{p.ID}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 切到 B,在 B 裡拒絕 A 的提案(待審清單是作品層級,作者可以在任何對話處理)
+	a.ResetChat()
+	if _, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "qB"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RejectProposal(p.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	// 接續 A:現況要反映磁碟上的真實狀態
+	if _, err := a.ResumeSession(first.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	sent := previewSent(t, a)
+	if !strings.Contains(sent, p.ID) || !strings.Contains(sent, "作者已拒絕") || !strings.Contains(sent, "太口語") {
+		t.Fatalf("接續後送給模型的內容應顯示該提案已拒絕與理由:%q", sent)
+	}
+}
+
+// #124:不填理由直接拒絕時,送給模型的內容也要說明提案已失效並請模型重新提案——
+// 否則模型會以為提案還在待審,繼續複述「等你審核」。
+func TestRejectWithoutReasonStillShowsInvalidated(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.agent.Proposals.Create("m", rel, "original", "replacement", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}}, nil, []string{p.ID})
+	if _, err := a.RejectProposal(p.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	sent := previewSent(t, a)
+	for _, want := range []string{p.ID, "作者已拒絕", "(作者未填理由)", "已失效", "重新提出"} {
+		if !strings.Contains(sent, want) {
+			t.Fatalf("不填理由的拒絕也要讓模型知道已失效,應含 %q,實際:%q", want, sent)
+		}
+	}
+}
+
+// #124 意圖:本會話建立過的提案 id 隨會話存檔與接續(舊 JSON 沒有這個欄位照常可讀);
+// 接受與拒絕的事實不寫進 History,而是接續後依提案檔案的當下狀況即時組出。
+func TestProposalStatusSurvivesResume(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original second"); err != nil {
+		t.Fatal(err)
+	}
+	rejected, err := a.agent.Proposals.Create("m", rel, "original", "第一版", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := a.agent.Proposals.Create("m", rel, "second", "第二版", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}, {Role: "assistant", Content: "a"}},
+		nil, []string{rejected.ID, accepted.ID})
+	m, err := a.SaveSession([]sessions.Turn{{Role: "user", Text: "q"}, {Role: "assistant", Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RejectProposal(rejected.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.AcceptProposal(accepted.ID, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	a.ResetChat()
 	s, err := a.ResumeSession(m.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Rejections) != 1 || !strings.Contains(s.Rejections[0], "保持敘事口吻") {
-		t.Fatalf("拒絕原因應隨會話保存,得到 %q", s.Rejections)
+	if len(s.ProposalIds) != 2 || s.ProposalIds[0] != rejected.ID || s.ProposalIds[1] != accepted.ID {
+		t.Fatalf("接續後應載回本會話建立過的提案 id:%+v", s.ProposalIds)
 	}
-	if _, rej := a.agent.Snapshot(); len(rej) != 1 {
-		t.Fatalf("接續後 Agent 應載回拒絕原因,得到 %q", rej)
+	sent := previewSent(t, a)
+	if !strings.Contains(sent, rejected.ID) || !strings.Contains(sent, "作者已拒絕") || !strings.Contains(sent, "重新提出") {
+		t.Fatalf("接續後送給模型的內容應顯示被拒的提案與重新提案指示:%q", sent)
+	}
+	if !strings.Contains(sent, accepted.ID) || !strings.Contains(sent, "作者已接受第 1 個版本並寫入") {
+		t.Fatalf("接續後送給模型的內容應顯示已接受的提案:%q", sent)
+	}
+	// 提案狀態不寫進對話歷史(舊做法會被壓縮切掉、被快照覆蓋)
+	for _, h := range s.History {
+		if strings.Contains(h.Content, rejected.ID) || strings.Contains(h.Content, accepted.ID) {
+			t.Fatalf("對話歷史不應含提案狀態通知:%q", h.Content)
+		}
 	}
 }

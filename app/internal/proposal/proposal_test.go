@@ -170,7 +170,7 @@ func TestRejectNeverTouchesFile(t *testing.T) {
 	s, rel, _ := setup(t)
 	before := read(t, s, rel)
 	p, _ := s.Create("m", rel, "天很黑。", "X", "", nil)
-	if _, err := s.Reject(p.ID); err != nil {
+	if _, err := s.Reject(p.ID, "語氣不對"); err != nil {
 		t.Fatal(err)
 	}
 	if read(t, s, rel) != before {
@@ -182,6 +182,42 @@ func TestRejectNeverTouchesFile(t *testing.T) {
 	list, _ := s.List()
 	if len(list) != 1 || list[0].Status != Rejected {
 		t.Fatalf("list = %+v", list)
+	}
+}
+
+// #124 意圖:拒絕理由要存進提案 JSON——重開作品時聊天卡片才顯示得出作者的理由;
+// 舊提案 JSON 沒有這個欄位時照常可讀(不能因為欄位新增就打不開舊資料)。
+func TestRejectStoresReasonAndOldJSONStillReadable(t *testing.T) {
+	s, rel, _ := setup(t)
+	p, _ := s.Create("m", rel, "天很黑。", "X", "", nil)
+	rj, err := s.Reject(p.ID, "節奏太快")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rj.RejectReason != "節奏太快" {
+		t.Fatalf("Reject 應回傳帶理由的提案:%+v", rj)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(s.dir(), p.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(onDisk), `"rejectReason": "節奏太快"`) {
+		t.Fatalf("提案 JSON 應存有拒絕理由:%s", onDisk)
+	}
+	again, err := s.Get(p.ID) // 重開作品時是從磁碟讀的
+	if err != nil || again.RejectReason != "節奏太快" || again.Status != Rejected {
+		t.Fatalf("重讀應拿到狀態與理由:%+v err=%v", again, err)
+	}
+
+	// 舊格式 JSON(手寫一份沒有 rejectReason 的舊提案檔):照常讀得出來
+	old, _ := s.Create("m", rel, "他很害怕。", "Y", "", nil)
+	legacy := fmt.Sprintf(`{"id":%q,"createdAt":"2026-09-01T10:00:00+08:00","model":"m","target":%q,"original":"他很害怕。","replacement":"Y","rationale":"","assumptions":[],"baseHash":"h","start":0,"end":5,"status":"pending"}`, old.ID, rel)
+	if err := os.WriteFile(filepath.Join(s.dir(), old.ID+".json"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(old.ID)
+	if err != nil || got.RejectReason != "" || got.Status != Pending {
+		t.Fatalf("舊格式 JSON 應照常可讀:%+v err=%v", got, err)
 	}
 }
 
