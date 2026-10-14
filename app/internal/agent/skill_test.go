@@ -238,3 +238,47 @@ func TestSkillComesAfterAuthorInstructions(t *testing.T) {
 		t.Fatalf("技能應在作者指示之後:%q", sys)
 	}
 }
+
+// 意圖(#114 護欄,G1–G4):技能叫用只能讀技能目錄裡的檔案。名稱帶路徑/磁碟語法時,後端在读檔前
+// 就擋下並回錯——不能只靠前端(前端以清單名稱擋住叫用),Ask 與 Preview 都不得讀出技能目錄外的 Markdown。
+func TestSkillNameOutsideSkillsDirIsNotRead(t *testing.T) {
+	a, s, dir := setupSkills(t)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(dir), "outside.md"), []byte("PRIVATE-OUTSIDE-SKILL"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "不該被呼叫"}}
+	for _, q := range []string{"/../outside 幫我看", `/..\outside 幫我看`, "/子目錄/../outside 幫我看", "/C:outside 幫我看"} {
+		if _, err := a.Ask(context.Background(), AskParams{Question: q}, func(Event) {}); err == nil {
+			t.Fatalf("非法技能名稱應回錯,不讀技能目錄外的檔:%q", q)
+		} else if !strings.Contains(err.Error(), "沒有這個技能或指令") {
+			t.Fatalf("錯誤訊息要明確指出叫用不到,得到 %v", err)
+		}
+		if _, err := a.Preview(AskParams{Question: q}); err == nil {
+			t.Fatalf("預覽同樣應回錯:%q", q)
+		}
+	}
+	if len(s.reqs) != 0 {
+		t.Fatalf("非法技能名稱不應送出任何請求:%d", len(s.reqs))
+	}
+}
+
+// 意圖(#114):名稱與問題以「任何空白字元」分隔,含換行——多行輸入框貼上「/校稿\n問題」常見。
+// 前後端都以空白前的一個詞當名稱(前端 split(/\s/),後端 unicode.IsSpace)。
+func TestNewlineSeparatesSkillFromQuestion(t *testing.T) {
+	a, s, dir := setupSkills(t)
+	writeSkill(t, dir, "校稿.md", "技能內容標記\n")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	pv, err := a.Preview(AskParams{Question: "/校稿\n請檢查這段文字"})
+	if err != nil {
+		t.Fatalf("換行應被當成名稱與問題的分隔:%v", err)
+	}
+	if len(pv.Skills) != 1 || pv.Skills[0] != "校稿" {
+		t.Fatalf("預覽應列出技能:%+v", pv.Skills)
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "/校稿\n請檢查這段文字"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if sys := s.reqs[0].Messages[0].Content; !strings.Contains(sys, "【作者技能:校稿】") {
+		t.Fatalf("換行叫用的技能應放進 system:%q", sys)
+	}
+}

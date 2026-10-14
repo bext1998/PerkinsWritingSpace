@@ -436,11 +436,13 @@ export default function ChatWindow(props: Props) {
     };
     const onSlashKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return; // IME 組字中不處理
-        if (skillOpen && slashItems.length > 0) {
-            if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx(i => (i + 1) % slashItems.length); return; }
-            if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx(i => (i - 1 + slashItems.length) % slashItems.length); return; }
-            if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applySlashItem(slashItems[skillIdx] ?? slashItems[0]); return; }
-            if (e.key === 'Escape') { e.preventDefault(); setSkillOpen(false); return; }
+        if (skillOpen) {
+            if (e.key === 'Escape') { e.preventDefault(); setSkillOpen(false); return; } // 沒有符合項目時也要能關掉
+            if (slashItems.length > 0) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); setSkillIdx(i => (i + 1) % slashItems.length); return; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); setSkillIdx(i => (i - 1 + slashItems.length) % slashItems.length); return; }
+                if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applySlashItem(slashItems[skillIdx] ?? slashItems[0]); return; }
+            }
         }
         if (e.ctrlKey && e.key === 'Enter') send();
     };

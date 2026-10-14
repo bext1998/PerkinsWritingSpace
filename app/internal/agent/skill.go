@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // SkillsLimit 是單份技能檔的長度上限(估算 tokens,與 AGENTS.md 同一個 AgentsLimit)。
@@ -38,7 +39,7 @@ func IsBuiltinCommand(name string) bool {
 
 // ListSkills 讀取技能目錄,回傳可叫用的技能(依名稱排序)。
 // 目錄不存在 = 沒有技能,不是錯誤;其他讀取錯誤回錯不吞掉。
-// 名稱含空白、內建指令名與非 .md 檔一律略過(不可叫用也不列出)。
+// 不可叫用的名稱(含空白或路徑/磁碟語法)、內建指令名與非 .md 檔一律略過:不列出也不讀內容。
 // 每次呼叫都重讀:作者改檔不必重啟。
 func (a *Agent) ListSkills() ([]Skill, error) {
 	if a.SkillsDir == "" {
@@ -57,7 +58,7 @@ func (a *Agent) ListSkills() ([]Skill, error) {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), ".md")
-		if strings.ContainsAny(name, " \t") || IsBuiltinCommand(name) {
+		if !isSkillName(name) || IsBuiltinCommand(name) {
 			continue // 叫用是以空白前的一個詞,含空白的叫不到;內建指令優先
 		}
 		blob, err := os.ReadFile(filepath.Join(a.SkillsDir, e.Name()))
@@ -88,7 +89,7 @@ func ParseSkillName(question string) string {
 	return name
 }
 
-// ParseSkillCall 解析送出內容開頭的 `/技能名`(後面可接空白與問題)。
+// ParseSkillCall 解析送出內容開頭的 `/技能名`(後面可接空白與問題;任何空白字元都算分隔,含換行)。
 // ok=false 表示不是斜線叫用(沒有「/」開頭、名稱為空,或那是內建指令)。
 func ParseSkillCall(question string) (name string, ok bool) {
 	q := strings.TrimSpace(question)
@@ -96,7 +97,7 @@ func ParseSkillCall(question string) (name string, ok bool) {
 		return "", false
 	}
 	rest := q[1:]
-	if i := strings.IndexAny(rest, " \t"); i >= 0 {
+	if i := strings.IndexFunc(rest, unicode.IsSpace); i >= 0 {
 		name, rest = rest[:i], rest[i:]
 	} else {
 		name = rest
@@ -108,6 +109,17 @@ func ParseSkillCall(question string) (name string, ok bool) {
 	return name, true
 }
 
+// isSkillName 判斷名稱是否可作為技能叫用:必須是單一檔名。
+// 不得含 /、\、磁碟代號 :、連續點 ..、單獨 . 或任何空白字元。
+// 後端在读檔前自己檢查(G1–G4:前端檢查不作為檔案存取邊界),
+// 否則 /../outside 這類名稱會經 filepath.Join 逃出技能目錄讀到其他 Markdown。
+func isSkillName(name string) bool {
+	if name == "" || name == "." || strings.Contains(name, "..") || strings.ContainsAny(name, `/\:`) {
+		return false
+	}
+	return strings.IndexFunc(name, unicode.IsSpace) < 0
+}
+
 // resolveSkill 依作者叫用的技能名讀取技能全文,只給這一次提問用。
 // 回傳(放進 system 的文字, 是否實際送出, 預覽要列出的名稱, 沒送出的原因, 錯誤)。
 // 叫不到技能或讀取失敗都回錯(呼叫端不把內容送給模型);超過上限不算錯誤,只在 notices 說明。
@@ -115,6 +127,9 @@ func (a *Agent) resolveSkill(question string) (text string, sent bool, notice st
 	name, ok := ParseSkillCall(question)
 	if !ok {
 		return "", false, "", nil
+	}
+	if !isSkillName(name) {
+		return "", false, "", fmt.Errorf("沒有這個技能或指令:/%s", name) // 非法名稱:不讀技能目錄外的檔
 	}
 	if a.SkillsDir == "" {
 		return "", false, "", fmt.Errorf("沒有這個技能或指令:/%s", name)
