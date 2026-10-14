@@ -1,5 +1,12 @@
 # PROGRESS.md
 
+## 2026-10-14 — E2E 修正合併(#125、#126)
+
+- **#125 shelf 組**(#113,MiniMax M3.1 Flash Preview 實作):平台輸出改走清單 → 子頁 → 返回;組開頭先收合前組留下的對話框(`--all` 時 `chat-fab` 不 render 的中斷點)。Codex 審查無發現。
+- **#126 layout-half 模型名截斷**(#78,同上實作):量測前以 `SetActiveModel` 換成受控長模型名,不再依賴本機 settings.json。Codex 審出 1 Major(換名後無 try/finally,等待或量測丟例外時作者 settings.json 留下假模型名)+ 1 Minor(等待受控長名的逾時被吞掉,可能誤報通過),Orchestrator 修(7dbb997);破壞驗證:換名後立即 throw,settings.json 仍還原。複審 Approve。
+- **觀察**:兩項皆中等難度;診斷與重現設計佳,弱點在失敗路徑與 PR 宣稱(#126 內文聲稱「失敗不殘留」與程式不符)。
+- **仍未解決**:`bot-chat`「#32 雲端端點未確認時 /compact 被外流確認擋下」在 main 上失敗;`layout-half` 單獨執行依賴 `polish` U7 建立的長章名章節(組間隱含相依)。
+
 ## 2026-10-14 — 合併與重新編譯(#119、#121、#123)
 
 - **#119 設定集**(#117,子代理實作):視窗回到前景時重讀檔案樹/索引/字數;點到已不存在的檔案提示並更新清單;設定集刪除按兩次確認、移到回收區。Codex 審出 2 Major(刪除目前檔案未先存檔、讀檔失敗路徑繞過未存內容保護),Orchestrator 修:刪除前先存檔(大綱/筆記同修),未存內容保護移到 tree effect。
