@@ -300,6 +300,36 @@ func TestRejectionAfterSaveSurvivesNewChat(t *testing.T) {
 	}
 }
 
+// #124 審查:作者不填理由直接拒絕時,被拒的事實一樣要回到對話歷史——noteCreated 已經告訴模型
+// 「接受或拒絕會再送一則通知」;沒有通知,模型會以為提案還在待審,繼續複述「等你審核」。
+// 但系統訊息的「拒絕原因」清單是給有理由時用的,沒理由不該佔一筆。
+func TestRejectWithoutReasonStillNotifiesBot(t *testing.T) {
+	a := sessionApp(t)
+	rel := "manuscript/test.md"
+	if err := a.proj.WriteFile(rel, "original"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := a.agent.Proposals.Create("m", rel, "original", "replacement", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.agent.RestoreSession([]llm.Message{{Role: "user", Content: "q"}}, nil)
+	if _, err := a.RejectProposal(p.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	hist, rej := a.agent.Snapshot()
+	var joined strings.Builder
+	for _, h := range hist {
+		joined.WriteString(h.Content)
+	}
+	if !strings.Contains(joined.String(), p.ID) || !strings.Contains(joined.String(), "已失效") {
+		t.Fatalf("不填理由的拒絕也要讓模型知道提案已失效:%q", joined.String())
+	}
+	if len(rej) != 0 {
+		t.Fatalf("沒理由不應進系統訊息的拒絕原因清單:%q", rej)
+	}
+}
+
 // #124 意圖:接受與拒絕都會改動對話歷史(提案狀態通知)。回合存檔之後才處理提案時,
 // 這些狀態也要跟著會話存檔與接續——否則換了一段對話,模型會以為被拒的提案還在待審。
 func TestProposalStatusHistorySurvivesResume(t *testing.T) {
