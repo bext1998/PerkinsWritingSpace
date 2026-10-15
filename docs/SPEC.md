@@ -81,7 +81,7 @@ MVP 成功的判斷不是「AI 寫得多好」,而是:
 | 桌面框架 | **Wails v2.12**(Go + WebView2) | 本機已安裝;體積小;強制邏輯放 Go 側,前端無法繞過。風險:WebView2 版本差異;若中文輸入法或右鍵選單出問題再評估 Electron |
 | 前端 | React + TypeScript + Vite | Wails 官方模板支援;shadcn/ui 生態 |
 | UI | shadcn/ui + Radix + Tailwind | 沿用 `PROTOTYPE.md` |
-| 編輯器 | **CodeMirror 6**(純 Markdown)+ `@codemirror/merge` | 稿件即純文字檔;內建行內 diff 可直接顯示 Proposal;較 ProseMirror/TipTap 不需處理富文本與 Markdown 的往返轉換。**待驗證**:中文 IME 組字行為 |
+| 編輯器 | **CodeMirror 6**(純 Markdown)+ `@codemirror/merge` | 稿件即純文字檔;內建行內 diff 可直接顯示 Proposal;較 ProseMirror/TipTap 不需處理富文本與 Markdown 的往返轉換。中文 IME:注音已實機確認,倉頡未實測(§17.3) |
 | 模型接入 | OpenAI 相容 `/v1/chat/completions`(串流 + tool calls) | 一套 adapter 涵蓋 LM Studio 與雲端。本機 LM Studio 已可用(localhost:1234) |
 | 儲存 | 專案資料夾:Markdown + JSON;快照為專案內內容定址檔(不依賴使用者裝 git) | 稿件可用任何工具開啟、可備份、不被鎖定 |
 | API 金鑰 | 系統憑證庫(Windows Credential Manager),不寫入專案資料夾 | 避免金鑰隨稿件被備份或分享 |
@@ -431,9 +431,8 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   - **效能(第二階段(一),2026-10-11 實測)**:約 7.6 萬字章節,打字機捲動與專注模式同時開啟,按鍵到畫面更新中位數 14.8ms、最大 21.3ms(40 次),不低於既有基準(中位數約 20ms、最大約 30ms)。
   - **版心寬度、字級、段距可調(#44 第二階段(二),2026-10-11)**:作者的全域偏好(不是作品設定),入口與主題(夜間書房／白紙)同一處——設定頁「外觀」頁(Issue #88;原本在導覽欄底部,2026-10-12 搬入)「稿紙版面」三個預設檔下拉(版心寬度:窄 36rem／標準 44rem／寬 52rem;字級:小 0.95rem／標準 1.08rem／大 1.25rem／特大 1.45rem;段距:緊 0.35em／標準 0.7em／寬 1.15em),**不做任意數值輸入**,非預設檔的值一律回到預設。與主題一樣即按即存(全域 `settings.json` 的 `paperWidth`/`paperFontSize`/`paperParaGap`,`SetPaperLayout`)並立即套用到開著的編輯器(前端 CSS 變數 `--paper-width`/`--paper-font-size`/`--paper-gap`),不需重開;舊設定檔沒有欄位時載入預設值,其他欄位不變。預設值等於第一階段的畫面,作者沒動設定時外觀完全相同。只改呈現:檔案內容、存檔、匯出全部不變,段落判定與 Enter/Backspace 行為不變。**版心**是正文欄(`.cm-content`)的最大寬度,視窗比版心窄時照常填滿可用寬度(640 寬不出水平捲軸);**字級**是正文(`.cm-scroller`)字體大小,標題(1.5em／1.2em)與場景分隔行以 `em` 等比縮放,段首縮排維持兩個全形字寬(`2em`,隨字級變);**段距**是段落的 `padding-top`(`em`,隨字級等比)。版面變更時內容高度會變,游標穩定的縮放保護(`Editor.tsx`)一併觀察內容高度,字級調大時原本可見的游標不會被推出畫面。
   - **效能(2026-10-10 實測)**:約 7.6 萬字章節(2212 行),按鍵到畫面更新中位數 13.2ms、最大 20.1ms(40 次),捲到中段 149ms;不低於下面的既有基準。decoration 只算可見範圍前後各 60 行;藏空行的 block decoration 只能由 state 提供(CM 不允許 plugin 提供 block decoration),所以那部分整份文件算一次空行。
-  - 中文 IME 的真實注音/倉頡手感同樣待作者實機確認(Issue #47)。
 - **效能基準**(2026-10-08 實測):約 7.7 萬字章節,輸入到畫面更新中位數約 20ms、最大約 30ms,捲動定位約 16–27ms。
-- **中文 IME 實機驗證(A9)**:無頭環境只能以模擬組字事件驗證,真實注音/倉頡待作者實機確認(Issue #47)。
+- **中文 IME 實機驗證(A9)**:注音已由作者實機確認無問題(2026-10-15,含稿紙化後;#47)。**已知限制**:倉頡未經實機驗證(作者不使用倉頡),只有模擬組字事件的自動測試;有倉頡使用者回報問題時另開 Issue。
 
 ### 17.4 作品健康檢查(2026-10-10,#41)
 
