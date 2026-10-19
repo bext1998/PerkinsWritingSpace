@@ -160,7 +160,7 @@ module.exports = {
             await page.click('[data-testid=restore-confirm-go]');
             await page.waitForTimeout(1000);
             const dlg = await page.textContent('.max-w-5xl');
-            check('U3b 來源紀錄失敗仍顯示已還原並警告', dlg.includes('已還原') && dlg.includes('來源紀錄寫入失敗'), dlg.slice(0, 200));
+            check('U3b 來源紀錄失敗仍顯示已還原並警告', dlg.includes('還原前的內容也自動備份') && dlg.includes('來源紀錄寫入失敗'), dlg.slice(0, 200));
             check('U3b 來源紀錄失敗時磁碟已還原', read(ch2Path) === baseU3b);
             check('U3b 來源紀錄失敗時編輯器已重載', (await editorText()) === baseU3b);
             await page.keyboard.press('Escape');
