@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -398,5 +400,44 @@ func TestAcceptSelectedVersionWritesThatVersion(t *testing.T) {
 	if read(t, s, rel) != "小明走進森林。夜色張牙舞爪。他很害怕。\n" || !got2.AuthorEdited ||
 		got2.Final != mine || got2.AcceptedVersion != 1 {
 		t.Fatalf("編輯第 2 個版本應寫入作者版本並記錄版本: %+v %q", got2, read(t, s, rel))
+	}
+}
+
+// makeDirLink 建立資料夾連結(Windows 用 junction,不需要管理員;其他平台用符號連結),#132 測試用。
+func makeDirLink(t *testing.T, link, target string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+		if err != nil {
+			t.Fatalf("mklink /J %s: %v: %s", link, err, out)
+		}
+		return
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+}
+
+// 意圖(#132):Accept 是全系統唯一會因 AI 提案寫入稿件的路徑;目標經過連結時,
+// 實際讀寫的可能是作者排除的資料夾或作品外的檔案,讀稿前就要拒絕、不寫入、不改狀態。
+func TestAcceptRejectsTargetThroughLink(t *testing.T) {
+	s, _, dir := setup(t)
+	if err := s.Proj.WriteFile("canon/hidden.md", "秘密內容\n"); err != nil {
+		t.Fatal(err)
+	}
+	makeDirLink(t, filepath.Join(dir, "manuscript", "link"), filepath.Join(dir, "canon"))
+	p, err := s.Create("m", "manuscript/link/hidden.md", "秘密內容", "改寫後", "", nil)
+	if err != nil {
+		t.Fatal(err) // 提案建立本身不寫入;這裡只要能建出「目標經過連結」的提案
+	}
+	if _, err := s.Accept(p.ID, 0, nil); !errors.Is(err, project.ErrLinkPath) {
+		t.Fatalf("Accept 應拒絕經過連結的目標: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "canon", "hidden.md"))
+	if err != nil || string(b) != "秘密內容\n" {
+		t.Fatalf("目標檔案不得被改動: %q %v", b, err)
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Pending {
+		t.Fatalf("失敗的 Accept 不得改變提案狀態: %+v %v", q, err)
 	}
 }

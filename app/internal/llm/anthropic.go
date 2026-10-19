@@ -41,7 +41,7 @@ func (c *Anthropic) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return http.DefaultClient
+	return httpClient // 同 OpenAI 相容客戶端:共用、限制跨來源重新導向(#132)
 }
 
 func (c *Anthropic) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
@@ -58,7 +58,7 @@ func (c *Anthropic) do(ctx context.Context, method, path string, body []byte) (*
 	req.Header.Set("anthropic-version", anthropicVersion)
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, redirectErr(err)
 	}
 	if resp.StatusCode/100 != 2 {
 		defer resp.Body.Close()
