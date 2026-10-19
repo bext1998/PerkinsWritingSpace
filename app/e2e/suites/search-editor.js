@@ -1198,6 +1198,281 @@ module.exports = {
             await page.keyboard.press('Escape');
             await page.click('.cm-content').catch(() => {});
         }
+        // ===== 格式子選單與快捷鍵(#130):專用章節,不動其他組依賴的章節內容 =====
+        await page.setViewportSize({width: 1440, height: 900});
+        fs.writeFileSync(P('manuscript/格式測試.md'), '# 格式測試\n\n第一段\n');
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('x');
+        await page.keyboard.press('Backspace');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=chapter-row]:has-text("格式測試")', {timeout: 15000});
+        await page.click('[data-testid=chapter-row]:has-text("格式測試")');
+        await page.waitForSelector('.cm-content:has-text("第一段")', {timeout: 15000});
+        await settle(80, 800);
+        // 右鍵開「格式」子選單(可選靠右緣,驗證往左開)
+        const openFormatMenu = async (atRight = false) => {
+            if (atRight) {
+                const box = await page.locator('.cm-content').boundingBox();
+                await page.mouse.click(box.x + box.width - 40, box.y + 100, {button: 'right'});
+            } else {
+                await page.click('.cm-content', {button: 'right', position: {x: 200, y: 120}});
+            }
+            await page.waitForSelector('.ctxmenu', {timeout: 5000});
+            await page.hover('[data-testid=format-submenu]');
+            await page.waitForSelector('[data-testid=format-item-h1]', {timeout: 5000});
+        };
+        // 右鍵點在指定文字那一行(Windows Chromium 右鍵會先把游標移到點擊處,選單動作作用在該行)
+        const openFormatMenuOn = async lineText => {
+            const at = await page.evaluate(t => {
+                const line = [...document.querySelectorAll('.cm-content .cm-line')].find(l => l.textContent.includes(t));
+                const box = line.getBoundingClientRect();
+                const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+                let last = null;
+                for (let n = walker.nextNode(); n; n = walker.nextNode()) if (n.textContent.trim()) last = n;
+                const range = document.createRange();
+                range.selectNodeContents(last);
+                const tr = range.getBoundingClientRect();
+                return {x: Math.round(tr.right - 2), y: Math.round(box.top + box.height / 2)};
+            }, lineText);
+            await page.mouse.click(at.x, at.y, {button: 'right'});
+            await page.waitForSelector('.ctxmenu', {timeout: 5000});
+            await page.hover('[data-testid=format-submenu]');
+            await page.waitForSelector('[data-testid=format-item-h1]', {timeout: 5000});
+        };
+        // 多行選取:游標到 fromLine 行首後,Shift+↓/Shift+End 擴到 toLine 行尾。
+        // 稿紙化藏掉段落空行(方向鍵會跳過),逐次核對游標行號決定何時停,不假設按鍵次數
+        const selectToLine = async (fromLine, toLine) => {
+            await cursorToLine(fromLine);
+            for (let i = 0; i < 60; i++) {
+                const c = await caretAt();
+                if (c.line >= toLine) break;
+                await page.keyboard.press('Shift+ArrowDown');
+                await settle(30, 150);
+            }
+            await page.keyboard.press('Shift+End');
+            await settle(50, 250);
+        };
+
+        // --- 右鍵選單「格式」子選單:7 項、標示快捷鍵、不提語法字眼、可點用 ---
+        await setDoc('# 章名\n\n第一段\n\n第二段');
+        const fmtItemsCheck = '#130 右鍵選單格式:7 項且標示快捷鍵(介面文字不提 Markdown/#)';
+        const fmtClickCheck = '#130 右鍵選單點「標題 2(場景)」可用(該行變 `## ` 且游標跟著文字走、選單關閉)';
+        try {
+            await openFormatMenu();
+            const fmtItems = await page.$$eval('[data-testid^="format-item-"]', els => els.map(e => e.textContent));
+            const fmtText = await page.$eval('[data-testid=format-submenu] > div', e => e.textContent);
+            check(fmtItemsCheck,
+                fmtItems.length === 7
+                && fmtItems[0].includes('標題 1') && fmtItems[0].includes('Ctrl+1')
+                && fmtItems[1].includes('標題 2') && fmtItems[1].includes('場景') && fmtItems[1].includes('Ctrl+2')
+                && fmtItems[2].includes('標題 3') && fmtItems[2].includes('Ctrl+3')
+                && fmtItems[3].includes('內文') && fmtItems[3].includes('Ctrl+0')
+                && fmtItems[4].includes('粗體') && fmtItems[4].includes('Ctrl+B')
+                && fmtItems[5].includes('斜體') && fmtItems[5].includes('Ctrl+I')
+                && fmtItems[6].includes('插入場景分隔') && fmtItems[6].includes('◇◇◇') && !fmtItems[6].includes('Ctrl')
+                && !/Markdown|#/.test(fmtText), JSON.stringify(fmtItems));
+            await page.keyboard.press('Escape'); // 關閉選單(640 寬時選單蓋住 .cm-content,直接點內容會被擋)
+            await settle(80, 400);
+            await openFormatMenuOn('第一段');
+            await page.click('[data-testid=format-item-h2]');
+            await settle(80, 500);
+            const mc = await caretAt(), mt = await docText();
+            // 右鍵先把游標移到點擊處(行尾附近),套用後游標照前綴位移量調整(col 3–6)
+            check(fmtClickCheck,
+                mt === '# 章名\n\n## 第一段\n\n第二段' && mc.line === 3 && mc.text === '## 第一段' && mc.col >= 3 && mc.col <= 6 && !(await page.$('.ctxmenu')),
+                JSON.stringify({txt: mt, caret: mc}));
+            await undoOnce();
+        } catch (e) {
+            check(fmtItemsCheck, false, e.message);
+            check(fmtClickCheck, false, e.message);
+            await page.keyboard.press('Escape');
+            await page.click('.cm-content').catch(() => {});
+        }
+
+        // --- Ctrl+2 標題 2(場景)/ Ctrl+0 內文:游標所在行、游標跟著文字走、走正常 dirty/存檔 ---
+        await setDoc('# 章名\n\n第一段\n\n第二段');
+        await cursorToLine(3);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(3, 2)); // 游標在「第一段」中間
+        await settle(50, 250);
+        await page.keyboard.press('Control+2');
+        await settle(80, 500);
+        const h2doc = await docText(), h2c = await caretAt();
+        check('#130 Ctrl+2 標題 2(場景):該行變 `## ` 且游標跟著文字走',
+            h2doc === '# 章名\n\n## 第一段\n\n第二段' && h2c.line === 3 && h2c.text === '## 第一段' && h2c.col === 5,
+            JSON.stringify({txt: h2doc, caret: h2c}));
+        const h2dirty = (await page.textContent('[data-testid=save-button]')).trim();
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
+        check('#130 標題 2 走正常 dirty/存檔(存檔後磁碟內容已更新)',
+            h2dirty === '儲存' && read('manuscript/格式測試.md') === '# 章名\n\n## 第一段\n\n第二段',
+            `label=${h2dirty} disk=${JSON.stringify(read('manuscript/格式測試.md'))}`);
+        await undoOnce();
+        check('#130 標題 2 後 Ctrl+Z 一次復原', (await docText()) === '# 章名\n\n第一段\n\n第二段', JSON.stringify(await docText()));
+        // 已是同一層級就不變(不做切換)
+        await page.keyboard.press('Control+2');
+        await settle(80, 400);
+        await page.keyboard.press('Control+2');
+        await settle(80, 400);
+        check('#130 已是同一層級再按 Ctrl+2 不切換(內容不變)',
+            (await docText()) === '# 章名\n\n## 第一段\n\n第二段', JSON.stringify(await docText()));
+        await page.keyboard.press('Control+0');
+        await settle(80, 500);
+        const h0doc = await docText(), h0c = await caretAt();
+        check('#130 Ctrl+0 內文(取消標題):拿掉行首前綴、游標跟著文字走',
+            h0doc === '# 章名\n\n第一段\n\n第二段' && h0c.line === 3 && h0c.text === '第一段' && h0c.col === 2,
+            JSON.stringify({txt: h0doc, caret: h0c}));
+
+        // --- 多行選取標題 1:跳過空白行與程式碼區塊內的行 ---
+        await setDoc('# 章名\n\n段一\n\n段二\n\n```\n### 註解\n```\n\n段三');
+        await selectToLine(3, 11);
+        await page.keyboard.press('Control+1');
+        await settle(80, 500);
+        const h1m = await docText();
+        check('#130 多行選取標題 1:非空白行都套用、跳過空白行',
+            h1m === '# 章名\n\n# 段一\n\n# 段二\n\n```\n### 註解\n```\n\n# 段三', JSON.stringify(h1m));
+        check('#130 多行選取標題 1:跳過程式碼區塊內的行',
+            h1m.includes('```\n### 註解\n```'), JSON.stringify(h1m));
+
+        // --- Ctrl+B 粗體(切換):包住選取、選取保持在內文;再按一次拿掉 ---
+        await setDoc('甲乙丙丁');
+        await cursorToLine(1);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(1, 1));
+        await page.keyboard.press('Shift+ArrowRight');
+        await page.keyboard.press('Shift+ArrowRight');
+        await settle(50, 250);
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        const b1 = await docText(), b1pos = await editorPos();
+        check('#130 Ctrl+B 粗體:包住選取且選取保持在內文',
+            b1 === '甲**乙丙**丁' && b1pos.anchor === 3 && b1pos.head === 5, JSON.stringify({txt: b1, pos: b1pos}));
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        const b2 = await docText(), b2pos = await editorPos();
+        check('#130 Ctrl+B 再按一次拿掉粗體記號',
+            b2 === '甲乙丙丁' && b2pos.anchor === 1 && b2pos.head === 3, JSON.stringify({txt: b2, pos: b2pos}));
+
+        // --- Ctrl+I 斜體:不是 CodeMirror 預設的 selectParentSyntax(選取父節點) ---
+        await setDoc('甲乙丙丁');
+        await cursorToLine(1);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(1, 1));
+        await page.keyboard.press('Shift+ArrowRight');
+        await page.keyboard.press('Shift+ArrowRight');
+        await settle(50, 250);
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        const i1 = await docText(), i1pos = await editorPos();
+        check('#130 Ctrl+I 是斜體(不是選取父節點)',
+            i1 === '甲*乙丙*丁' && i1pos.anchor === 2 && i1pos.head === 4, JSON.stringify({txt: i1, pos: i1pos}));
+        // `**粗**` 選取內文按 Ctrl+I:不把粗體星號當斜體記號
+        await setDoc('**粗**');
+        await cursorToLine(1);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(1, 2));
+        await page.keyboard.press('Shift+ArrowRight');
+        await settle(50, 250);
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        const i2 = await docText(), i2pos = await editorPos();
+        check('#130 `**粗**` 選取內文按 Ctrl+I:不把粗體星號當斜體記號',
+            i2 === '***粗***' && i2pos.anchor === 3 && i2pos.head === 4, JSON.stringify({txt: i2, pos: i2pos}));
+        // 同一選取再按一次 Ctrl+I:只拿掉斜體,保留粗體(PR #139 審查:原本會堆成 ****粗****)
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        const i3 = await docText(), i3pos = await editorPos();
+        check('#130 粗斜體再按 Ctrl+I 只取消斜體、保留粗體',
+            i3 === '**粗**' && i3pos.anchor === 2 && i3pos.head === 3, JSON.stringify({txt: i3, pos: i3pos}));
+        // 粗斜體按 Ctrl+B:只拿掉粗體,留下斜體
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        const i4 = await docText(), i4pos = await editorPos();
+        check('#130 粗斜體按 Ctrl+B 只取消粗體、保留斜體',
+            i4 === '*粗*' && i4pos.anchor === 1 && i4pos.head === 2, JSON.stringify({txt: i4, pos: i4pos}));
+        await setDoc('**粗**');
+
+        // --- 插入場景分隔(◇◇◇):前後各留一個空白行(已有就沿用)、游標在分隔行之後的下一行開頭 ---
+        await setDoc('# 章名\n\n第一段\n\n第二段');
+        await openFormatMenuOn('第一段');
+        await page.click('[data-testid=format-item-break]');
+        await settle(80, 500);
+        const br1 = await docText(), brc = await caretAt();
+        check('#130 插入場景分隔:前後各一個空白行、游標在分隔行之後的下一行行首',
+            br1 === '# 章名\n\n第一段\n\n◇◇◇\n\n第二段' && brc.line === 6 && brc.col === 0 && brc.text === '',
+            JSON.stringify({txt: br1, caret: brc}));
+        check('#130 插入場景分隔後選單關閉', !(await page.$('.ctxmenu')));
+        await undoOnce();
+        check('#130 插入場景分隔後 Ctrl+Z 一次復原', (await docText()) === '# 章名\n\n第一段\n\n第二段', JSON.stringify(await docText()));
+        // 後面已有空白行就沿用(不重複加)
+        await setDoc('# 章名\n\n第一段\n\n\n第二段');
+        await openFormatMenuOn('第一段');
+        await page.click('[data-testid=format-item-break]');
+        await settle(80, 500);
+        const br2 = await docText();
+        check('#130 插入場景分隔:已有空白行沿用、不重複加',
+            br2 === '# 章名\n\n第一段\n\n◇◇◇\n\n第二段', JSON.stringify(br2));
+        await undoOnce();
+
+        // --- IME 組字中 Ctrl+B 不動作(與 #46 同一情境),組字結束後恢復 ---
+        await setDoc('甲乙丙丁');
+        await cursorToLine(1);
+        await page.evaluate(() => window.__perkinsEditor.setCursor(1, 1));
+        await page.keyboard.press('Shift+ArrowRight');
+        await page.keyboard.press('Shift+ArrowRight');
+        await settle(50, 250);
+        const imeBDoc = await docText();
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionstart', {bubbles: true, data: ''}));
+        });
+        await settle(80, 300);
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        check('#130 IME 組字中 Ctrl+B 不動作', (await docText()) === imeBDoc, JSON.stringify(await docText()));
+        await page.evaluate(() => {
+            document.querySelector('.cm-content').dispatchEvent(new CompositionEvent('compositionend', {bubbles: true, data: ''}));
+        });
+        await settle(80, 300);
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        check('#130 組字結束後 Ctrl+B 恢復(不會永久擋住)', (await docText()) === '甲**乙丙**丁', JSON.stringify(await docText()));
+        await undoOnce();
+
+        // --- Ctrl+0 攔下縮放重設;既有快捷鍵(Ctrl+F)不受影響 ---
+        await setDoc('甲乙丙');
+        await cursorToLine(1);
+        const zoomBefore = await page.evaluate(() => ({w: window.innerWidth, dpr: window.devicePixelRatio}));
+        await page.keyboard.press('Control+0');
+        await settle(80, 500);
+        const zoomAfter = await page.evaluate(() => ({w: window.innerWidth, dpr: window.devicePixelRatio}));
+        check('#130 Ctrl+0 不觸發縮放重設(尺寸與像素比不變、無標題時內容不變)',
+            zoomAfter.w === zoomBefore.w && zoomAfter.dpr === zoomBefore.dpr && (await docText()) === '甲乙丙',
+            JSON.stringify({before: zoomBefore, after: zoomAfter}));
+        await page.keyboard.press('Control+f');
+        await page.waitForSelector('.perkins-search', {timeout: 5000});
+        check('#130 Ctrl+F 仍開啟搜尋面板(與格式快捷鍵不衝突)', !!(await page.$('.perkins-search')));
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('.perkins-search', {state: 'detached', timeout: 5000});
+
+        // --- 截圖與版面:640×672 與 1280×800 右鍵「格式」子選單打開,不出水平捲軸、子選單不被裁掉 ---
+        await setDoc('# 章名\n\n第一段\n\n第二段\n\n第三段\n\n第四段\n\n第五段');
+        for (const [w, h, name] of [[640, 672, '85-format-menu-640'], [1280, 800, '86-format-menu-1280']]) {
+            await page.setViewportSize({width: w, height: h});
+            await settle(80, 900);
+            await openFormatMenu(true);
+            const fbox = await page.evaluate(() => {
+                const sub = document.querySelector('[data-testid=format-submenu] > div').getBoundingClientRect();
+                return {left: sub.left, right: sub.right, top: sub.top, bottom: sub.bottom,
+                        sw: document.documentElement.scrollWidth, cw: window.innerWidth};
+            });
+            check(`#130 ${w}×${h} 格式子選單不被裁掉且不出水平捲軸`,
+                fbox.left >= 0 && fbox.right <= w && fbox.top >= 0 && fbox.bottom <= h && fbox.sw <= fbox.cw, JSON.stringify(fbox));
+            await shot(name);
+            await page.keyboard.press('Escape'); // 關閉選單(同上:640 寬時選單蓋住 .cm-content)
+            await settle(80, 400);
+        }
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(80, 800);
+
         await page.keyboard.press('Control+s');
         await page.waitForSelector('[data-testid=save-button]:has-text("已儲存")', {timeout: 10000});
     },

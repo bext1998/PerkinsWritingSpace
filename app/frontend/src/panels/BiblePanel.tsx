@@ -174,7 +174,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                 <DialogContent className="max-w-md">
                     <DialogHeader>
                         <DialogTitle>新增設定</DialogTitle>
-                        <DialogDescription>名稱就是檔名,建立後是一份只有標題的 Markdown,內容自由撰寫。</DialogDescription>
+                        <DialogDescription>名稱就是檔名,建立後是一份只有標題的文件,內容自由撰寫。</DialogDescription>
                     </DialogHeader>
                     <form className="grid gap-3" onSubmit={e => { e.preventDefault(); create(); }}>
                         <div className="grid gap-1.5">
