@@ -3,12 +3,14 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -152,4 +154,73 @@ func (h rewriteHost) RoundTrip(r *http.Request) (*http.Response, error) {
 	r2.URL.Scheme = h.base.Scheme
 	r2.URL.Host = h.base.Host
 	return http.DefaultTransport.RoundTrip(r2)
+}
+
+// ---- 重新導向政策(#132)----
+
+// 意圖(#132):端點用 307/308 把整份請求(含稿件)重送到別台主機時,內容會送往設定中未確認的位置,
+// 繞過 #99 的外流確認。跨來源重新導向必須中止,另一台主機不得收到任何請求;
+// OpenAI 相容與 Anthropic 兩條路徑都要。測試走不設 HTTP 的 client() 路徑,才測得到修補。
+func TestCrossOriginRedirectStopped(t *testing.T) {
+	var hitsB int32
+	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hitsB, 1)
+		fmt.Fprint(w, streamOK)
+	}))
+	t.Cleanup(b.Close)
+	a := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", b.URL+r.URL.Path) // 跨來源:不同 host(含 port)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(a.Close)
+
+	for _, c := range []Service{
+		&OpenAI{BaseURL: a.URL + "/v1"},
+		&Anthropic{BaseURL: a.URL + "/v1", APIKey: "sk-x"},
+	} {
+		_, err := c.Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+		if err == nil {
+			t.Fatalf("%T 應拒絕跨來源重新導向", c)
+		}
+		if !errors.Is(err, ErrOffOriginRedirect) {
+			t.Fatalf("%T 錯誤應可辨識為跨來源重新導向: %v", c, err)
+		}
+		if msg := err.Error(); !strings.Contains(msg, "已停止") || !strings.Contains(msg, "請確認設定中的端點網址") {
+			t.Fatalf("%T 錯誤訊息應說明原因與處理方式: %q", c, msg)
+		} else if strings.Contains(msg, `Post "`) || strings.Contains(msg, `Get "`) {
+			t.Fatalf("%T 錯誤不得被包成 url.Error 的一長串,要讓作者直接看到原因: %q", c, msg)
+		}
+	}
+	if n := atomic.LoadInt32(&hitsB); n != 0 {
+		t.Fatalf("另一台主機收到 %d 個請求,稿件不得被送出", n)
+	}
+}
+
+// 意圖(#132):同來源的重新導向是端點內部的正常行為(例如 /v1 轉址),照常跟隨,不能因此擋掉可用的端點。
+func TestSameOriginRedirectFollowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			w.Header().Set("Location", "/v2/chat/completions")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		case "/v2/chat/completions":
+			fmt.Fprint(w, streamOK)
+		case "/v1/messages":
+			w.Header().Set("Location", "/v2/messages")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		case "/v2/messages":
+			fmt.Fprint(w, anthropicStreamOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	msg, err := (&OpenAI{BaseURL: srv.URL + "/v1"}).Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, nil)
+	if err != nil || msg.Content != "ok" {
+		t.Fatalf("同來源 307 應照常跟隨: msg=%+v err=%v", msg, err)
+	}
+	if _, err := (&Anthropic{BaseURL: srv.URL + "/v1", APIKey: "sk-x"}).Chat(context.Background(), Request{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}}, nil); err != nil {
+		t.Fatalf("Anthropic 同來源 307 應照常跟隨: %v", err)
+	}
 }

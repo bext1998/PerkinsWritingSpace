@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,11 +89,43 @@ func isOpenRouter(baseURL string) bool {
 	return err == nil && u.Hostname() == "openrouter.ai"
 }
 
+// ErrOffOriginRedirect 是跨來源重新導向的哨兵錯誤(#132),呼叫端可用 errors.Is 辨識。
+var ErrOffOriginRedirect = errors.New("跨來源重新導向已停止")
+
+// CheckRedirect 是模型請求的重新導向政策(#132):只允許同來源(scheme + host,含 port)的重新導向。
+// 端點用 307/308 把整份請求(含稿件)重送到別台主機時,內容會送往設定中未確認的位置,
+// 繞過 #99 的外流確認(確認的只是設定中的網址),一律中止。同來源照常跟隨,
+// 上限沿用 Go 預設的 10 次。
+func CheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("重新導向次數過多,已停止")
+	}
+	orig := via[0].URL
+	if req.URL.Scheme != orig.Scheme || req.URL.Host != orig.Host {
+		return fmt.Errorf("%w:模型端點要求重新導向到 %s://%s,為避免稿件送往未確認的位置已停止;請確認設定中的端點網址",
+			ErrOffOriginRedirect, req.URL.Scheme, req.URL.Host)
+	}
+	return nil
+}
+
+// httpClient 是未注入 HTTP 時共用的客戶端:套用 CheckRedirect,不每次 new。
+var httpClient = &http.Client{CheckRedirect: CheckRedirect}
+
+// redirectErr 把 *url.Error 包住的 CheckRedirect 錯誤解開,讓作者直接看到中止原因,
+// 而不是被包成 Get "…": 一長串(#132)。
+func redirectErr(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) && errors.Is(uerr.Err, ErrOffOriginRedirect) {
+		return uerr.Err
+	}
+	return err
+}
+
 func (c *OpenAI) client() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return http.DefaultClient
+	return httpClient
 }
 
 func (c *OpenAI) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
@@ -106,7 +139,7 @@ func (c *OpenAI) do(ctx context.Context, method, path string, body []byte) (*htt
 	}
 	resp, err := c.client().Do(req)
 	if err != nil {
-		return nil, err
+		return nil, redirectErr(err)
 	}
 	if resp.StatusCode/100 != 2 {
 		defer resp.Body.Close()

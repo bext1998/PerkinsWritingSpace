@@ -236,6 +236,18 @@ type gate map[string]bool
 
 var errNotShared = fmt.Errorf("這個檔案不在作者允許你讀取的範圍內,本次也沒有附加;如需要,請請作者附加它或在設定頁開放該資料夾")
 
+// errLinkPath 是路徑經過資料夾連結時回給模型的拒絕理由(#132):連結指向的內容可能是作者排除的資料夾或作品外。
+var errLinkPath = fmt.Errorf("這個路徑經過資料夾連結,為了保護作者排除的內容,Bot 不能經由連結讀取,也不能對它建立提案;請用作品內的一般路徑")
+
+// checkNoLink 把 project.CheckNoLink 的連結錯誤轉成模型看得懂的訊息(#132);其他錯誤照原樣回。
+func (a *Agent) checkNoLink(rel string) error {
+	err := a.Proj.CheckNoLink(rel)
+	if errors.Is(err, project.ErrLinkPath) {
+		return errLinkPath
+	}
+	return err
+}
+
 func (g gate) ok(path string) bool {
 	if !Protected(path) || g[path] {
 		return true
@@ -255,6 +267,9 @@ func (a *Agent) runTool(name, args string, g gate) (string, *proposal.Proposal, 
 		}
 		if !g.ok(p.Path) {
 			return "", nil, errNotShared
+		}
+		if err := a.checkNoLink(p.Path); err != nil {
+			return "", nil, err
 		}
 		text, err := a.Proj.ReadFile(p.Path)
 		return text, nil, err
@@ -291,6 +306,9 @@ func (a *Agent) runTool(name, args string, g gate) (string, *proposal.Proposal, 
 		}
 		if a.Proposals == nil {
 			return "", nil, fmt.Errorf("提案功能未啟用")
+		}
+		if err := a.checkNoLink(p.Path); err != nil { // 提案建立前也會讀目標檔,連結路徑一律拒絕(#132)
+			return "", nil, err
 		}
 		alts, notes := parseAlternatives(p.Alternatives, p.Original, p.Replacement)
 		var label string
@@ -368,7 +386,7 @@ func (a *Agent) search(q string, g gate) (string, error) {
 	var hits []string
 	total := 0
 	for _, f := range files {
-		if !g.ok(f) {
+		if !g.ok(f) || a.Proj.CheckNoLink(f) != nil { // 經過連結的檔案不搜(#132);作者側欄照常列出,所以在 Bot 這裡擋
 			continue
 		}
 		text, err := a.Proj.ReadFile(f)
@@ -414,6 +432,9 @@ func (a *Agent) listFiles(g gate) (string, error) {
 			fmt.Fprintf(&b, "◆ %s\n", v.Title)
 		}
 		for _, e := range v.Chapters {
+			if a.Proj.CheckNoLink(e.Path) != nil { // 經過連結的章節不列給 Bot(#132;Tree 是作者側欄共用的,不在那裡過濾)
+				continue
+			}
 			title := baseTitle(e.Path)
 			words := ""
 			if text, err := a.Proj.ReadFile(e.Path); err == nil {
@@ -431,6 +452,9 @@ func (a *Agent) listFiles(g gate) (string, error) {
 	}
 	var sums, prot []string
 	for _, f := range files {
+		if a.Proj.CheckNoLink(f) != nil { // 同上:經過連結的檔案不列給 Bot(#132)
+			continue
+		}
 		switch project.KindOf(f) {
 		case project.SummariesDir:
 			sums = append(sums, f)
