@@ -36,6 +36,40 @@ func TestParseStreamAssemblesFragmentedToolCalls(t *testing.T) {
 	}
 }
 
+// 意圖(#133):連線在沒有 [DONE] 也沒有 finish_reason 的情況下結束,不能把已累積的
+// 文字或工具呼叫當成正常回覆(否則半截的工具參數會被執行)。
+func TestParseStreamRejectsEOFWithoutDoneOrFinishReason(t *testing.T) {
+	stream := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"propose_patch","arguments":"{}"}}]}}]}`
+	msg, err := parseStream(strings.NewReader(stream), nil)
+	if err == nil || !strings.Contains(err.Error(), "模型串流未正常結束(連線中斷)") {
+		t.Fatalf("應回報串流未正常結束, msg=%+v err=%v", msg, err)
+	}
+}
+
+// 意圖(#133):finish_reason=length 代表回覆被輸出上限截斷,不能當成正常回覆。
+func TestParseStreamRejectsTruncatedReply(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"半句"}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"length"}]}`,
+	}, "\n\n")
+	if _, err := parseStream(strings.NewReader(stream), nil); err == nil ||
+		!strings.Contains(err.Error(), "模型回覆被截斷:達到輸出上限") {
+		t.Fatalf("length 應回報被截斷, err=%v", err)
+	}
+}
+
+// 意圖(#133):有些本機伺服器不送 [DONE],只送 finish_reason;這仍是正常結束。
+func TestParseStreamAcceptsFinishReasonWithoutDone(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"choices":[{"delta":{"content":"好"}}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+	}, "\n\n")
+	msg, err := parseStream(strings.NewReader(stream), nil)
+	if err != nil || msg.Content != "好" {
+		t.Fatalf("只有 finish_reason=stop 應視為正常結束, msg=%+v err=%v", msg, err)
+	}
+}
+
 func TestChatSendsAuthAndSurfacesHTTPErrors(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

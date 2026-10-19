@@ -147,19 +147,22 @@ type auditRecord struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-func (a *Agent) audit(r auditRecord) {
+func (a *Agent) audit(r auditRecord) error {
 	r.Time = time.Now().Format(time.RFC3339)
 	dir := filepath.Join(a.Proj.Root, ".perkins")
-	if os.MkdirAll(dir, 0o755) != nil {
-		return
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "audit.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
 	b, _ := json.Marshal(r)
-	f.Write(append(b, '\n'))
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ---- 工具白名單 ----
@@ -532,6 +535,8 @@ type buildInfo struct {
 	Mentioned []string
 	// Skills 是本次實際放進 system 訊息的技能名稱(SPEC §12.3「技能與 / 指令」,#114),送出預覽列出。
 	Skills []string
+	// SystemBase 是不含「提案現況」的 system 內容;Ask 在每次送出前用當下的提案狀態重新組(§12.3,#133)。
+	SystemBase string
 }
 
 // buildMessages 組裝訊息並回報本次送出的作者指示層與未送出原因(Preview 與 Ask 用)。
@@ -629,12 +634,13 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	if err != nil {
 		return nil, buildInfo{}, err
 	}
+	base := msgs[0].Content
 	msgs[0].Content += status
 	user := p.Question
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned, Skills: skills}, nil
+	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned, Skills: skills, SystemBase: base}, nil
 }
 
 // mentionLimit 是「本段提到的設定」最多列出的數量。
@@ -911,7 +917,9 @@ func (a *Agent) compactCollect(ctx context.Context, emit func(Event), collect fu
 		{Role: "assistant", Content: "好的,我會以這份摘要為前提繼續。"},
 	}, keep...)
 	a.mu.Unlock()
-	a.audit(auditRecord{Event: "compact", Detail: fmt.Sprintf("濃縮 %d 則訊息", len(old))})
+	if err := a.audit(auditRecord{Event: "compact", Detail: fmt.Sprintf("濃縮 %d 則訊息", len(old))}); err != nil {
+		emit(Event{Kind: "notice", Text: fmt.Sprintf("稽核紀錄寫入失敗:%v。這次的工具呼叫可能沒有留下紀錄。", err)})
+	}
 	emit(Event{Kind: "notice", Text: fmt.Sprintf("為了節省上下文,較早的 %d 則對話已濃縮成摘要;AI 可能不記得其中的細節。", len(old))})
 	return nil
 }
@@ -962,7 +970,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			requests = append(requests, researchRequest{Purpose: purpose, Messages: append([]llm.Message{}, msgs...), Reply: reply, Ok: &ok})
 		}
 		if err := a.compactCollect(ctx, emit, collect); err == nil {
-			if msgs, _, err = a.buildMessages(p); err != nil {
+			if msgs, info, err = a.buildMessages(p); err != nil {
 				result, errMsg = "error", errText(err)
 				return "", err
 			}
@@ -972,7 +980,27 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 			return "", fmt.Errorf("%s", errMsg)
 		}
 	}
-	a.audit(auditRecord{Event: "request", Detail: fmt.Sprintf("doc=%s selection=%d字元 attachments=%v mode=%s summaries=%v tokens≈%d",
+	// 稽核寫入失敗要讓作者看得到(一次 Ask 只提示一次),但不中斷回答。
+	auditNoticed := false
+	audit := func(r auditRecord) {
+		if err := a.audit(r); err != nil && !auditNoticed {
+			auditNoticed = true
+			emit(Event{Kind: "notice", Text: fmt.Sprintf("稽核紀錄寫入失敗:%v。這次的工具呼叫可能沒有留下紀錄。", err)})
+		}
+	}
+	// 提案現況每次送出前重讀:同一次詢問內剛處理的提案,後續工具回合與收尾請求都要看到(§12.3,#133)。
+	refreshStatus := func() error {
+		a.mu.Lock()
+		ids := append([]string{}, a.sessionProposals...)
+		a.mu.Unlock()
+		status, err := proposalStatus(a.Proposals, ids)
+		if err != nil {
+			return err
+		}
+		msgs[0].Content = info.SystemBase + status
+		return nil
+	}
+	audit(auditRecord{Event: "request", Detail: fmt.Sprintf("doc=%s selection=%d字元 attachments=%v mode=%s summaries=%v tokens≈%d",
 		p.Doc, len([]rune(p.Selection)), p.Attachments, p.Mode, p.PriorSummaries, EstimateTokens(msgs))})
 
 	g := gateFor(p, a.Readable)
@@ -999,6 +1027,13 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		return content, nil
 	}
 	for i := 0; i < a.maxIter(); i++ {
+		// 第一次的訊息剛組好;之後每次送出前重讀提案現況,才看得到同一次詢問內剛被拒絕的提案(#133)。
+		if i > 0 {
+			if err := refreshStatus(); err != nil {
+				result, errMsg = "error", errText(err)
+				return "", err
+			}
+		}
 		// 在真正呼叫 Chat 的邊界保存請求快照(不可變副本)
 		req.Messages = msgs
 		snapshot := append([]llm.Message{}, msgs...)
@@ -1018,7 +1053,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		msgs = append(msgs, reply)
 		for _, tc := range reply.ToolCalls {
 			if !allowed(tc.Name, tools) {
-				a.audit(auditRecord{Event: "tool_denied", Tool: tc.Name, Args: tc.Arguments, Detail: "mode=" + p.Mode})
+				audit(auditRecord{Event: "tool_denied", Tool: tc.Name, Args: tc.Arguments, Detail: "mode=" + p.Mode})
 				denyMsg := "錯誤:此工具不存在或本次不被允許。你只能使用: " + strings.Join(names(tools), ", ")
 				emit(Event{Kind: "tool", Tool: tc.Name, Args: tc.Arguments, Allowed: false, Result: displayResult(denyMsg)})
 				rejectedIDs[tc.ID] = true
@@ -1027,7 +1062,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 				continue
 			}
 			result2, pr, terr := a.runTool(tc.Name, tc.Arguments, g)
-			a.audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
+			audit(auditRecord{Event: "tool_call", Tool: tc.Name, Args: tc.Arguments, Detail: errText(terr)})
 			if terr != nil {
 				result2 = "錯誤:" + terr.Error()
 			}
@@ -1043,9 +1078,14 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 	}
 	// 到達硬上限:不再進入工具迴圈。先留審計痕跡並告知介面,再送一次「不提供任何工具」的收尾請求,
 	// 讓模型就目前已知的內容回答作者(這次讀到的工具結果與說明不白費)。
-	a.audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
+	audit(auditRecord{Event: "iter_limit", Detail: fmt.Sprintf("已達上限 %d", a.maxIter())})
 	emit(Event{Kind: "notice", Text: fmt.Sprintf("已達單次對話的工具迭代上限(%d 次),已請 AI 就目前已知的內容收尾回答。", a.maxIter())})
 
+	// 收尾請求前同樣重讀提案現況(#133)。
+	if err := refreshStatus(); err != nil {
+		result, errMsg = "error", errText(err)
+		return "", err
+	}
 	wrapMsgs := append(append([]llm.Message{}, msgs...), llm.Message{Role: "user", Content: iterLimitPrompt})
 	snapshot := append([]llm.Message{}, wrapMsgs...)
 	// 不帶 Tools:收尾請求本身不會再要求工具,上限仍是硬上限。
@@ -1125,7 +1165,9 @@ func (a *Agent) DraftSummary(ctx context.Context, chapter string, emit func(Even
 	if err != nil {
 		return "", err
 	}
-	a.audit(auditRecord{Event: "summary_draft", Detail: chapter})
+	if err := a.audit(auditRecord{Event: "summary_draft", Detail: chapter}); err != nil {
+		emit(Event{Kind: "notice", Text: fmt.Sprintf("稽核紀錄寫入失敗:%v。這次的工具呼叫可能沒有留下紀錄。", err)})
+	}
 	reply, err := a.LLM.Chat(ctx, llm.Request{Model: a.Model, Messages: []llm.Message{
 		{Role: "system", Content: summaryPrompt},
 		{Role: "user", Content: "【章節】" + chapter + "\n" + text},

@@ -239,6 +239,29 @@ func TestAcceptRefusedWhenSnapshotFails(t *testing.T) {
 	}
 }
 
+// 意圖(#133/G3):稿件已寫入但 provenance 寫不進去時要回錯,且訊息不能讓人誤以為沒寫入。
+func TestAcceptReportsProvenanceFailure(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 讓 provenance.jsonl 變成資料夾,寫入必定失敗。
+	if err := os.MkdirAll(filepath.Join(dir, ".perkins", "provenance.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Accept(p.ID, 0, nil)
+	if err == nil || !strings.Contains(err.Error(), "已寫入") || !strings.Contains(err.Error(), "來源紀錄") {
+		t.Fatalf("provenance 失敗應回錯並說明稿件已寫入, got %v", err)
+	}
+	if got == nil || got.Status != Accepted {
+		t.Fatalf("回傳的提案應是已接受, got %+v", got)
+	}
+	if read(t, s, rel) != "小明走進森林。夜濃得化不開。他很害怕。\n" {
+		t.Fatalf("稿件應已寫入, got %q", read(t, s, rel))
+	}
+}
+
 // B4 意圖:作者改過建議文字後接受,寫進稿件的必須是作者的版本(不是 AI 原版),
 // 且紀錄能分辨這次有人類修改,之後才能判斷哪些文字是作者的貢獻。
 func TestAcceptWithAuthorEdit(t *testing.T) {

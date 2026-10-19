@@ -241,10 +241,12 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	if err := s.save(p); err != nil {
 		return nil, err
 	}
-	snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
+	if err := snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
 		"version": version, "versions": len(versions),
-		"authorEdited": p.AuthorEdited, "final": final})
+		"authorEdited": p.AuthorEdited, "final": final}); err != nil {
+		return p, fmt.Errorf("稿件已寫入,但來源紀錄寫入失敗: %w", err)
+	}
 	return p, nil
 }
 
