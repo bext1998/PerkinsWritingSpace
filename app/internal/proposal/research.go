@@ -17,10 +17,10 @@ func decisionElapsedMs(p *Proposal) int64 {
 	return time.Since(t).Milliseconds()
 }
 
-// LogAccept 在 Accept 成功後呼叫:proposal id、target、選了第幾個版本與版本總數(#39)、
+// LogAccept 在 Accept 回傳後呼叫(只記實際套用的):proposal id、target、選了第幾個版本與版本總數(#39)、
 // 是否作者修改、原/最終文字、耗時。
 func LogAccept(r *research.Recorder, p *Proposal) {
-	if r == nil {
+	if r == nil || p.Status != Accepted || p.NotApplied != "" { // 沒套用(例如外部改稿,PR #140 審查)不記成接受
 		return
 	}
 	versions := p.Versions()

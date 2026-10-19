@@ -4,9 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"perkins/internal/project"
 	"perkins/internal/research"
@@ -239,6 +242,33 @@ func TestAcceptRefusedWhenSnapshotFails(t *testing.T) {
 	}
 }
 
+// 意圖(#133/G3):稿件已寫入但 provenance 寫不進去時要回錯,且訊息不能讓人誤以為沒寫入。
+func TestAcceptReportsProvenanceFailure(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 讓 provenance.jsonl 變成資料夾,寫入必定失敗。
+	if err := os.MkdirAll(filepath.Join(dir, ".perkins", "provenance.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Accept(p.ID, 0, nil)
+	// 不回錯:前端要照「已接受」重載稿件,否則作者接著存檔會把舊內容寫回(PR #136 審查)
+	if err != nil {
+		t.Fatalf("稿件已寫入時不應回錯, got %v", err)
+	}
+	if !strings.Contains(got.RecordError, "已寫入") || !strings.Contains(got.RecordError, "來源紀錄") {
+		t.Fatalf("RecordError 應說明稿件已寫入、來源紀錄失敗, got %q", got.RecordError)
+	}
+	if got.Status != Accepted {
+		t.Fatalf("回傳的提案應是已接受, got %+v", got)
+	}
+	if read(t, s, rel) != "小明走進森林。夜濃得化不開。他很害怕。\n" {
+		t.Fatalf("稿件應已寫入, got %q", read(t, s, rel))
+	}
+}
+
 // B4 意圖:作者改過建議文字後接受,寫進稿件的必須是作者的版本(不是 AI 原版),
 // 且紀錄能分辨這次有人類修改,之後才能判斷哪些文字是作者的貢獻。
 func TestAcceptWithAuthorEdit(t *testing.T) {
@@ -371,5 +401,204 @@ func TestAcceptSelectedVersionWritesThatVersion(t *testing.T) {
 	if read(t, s, rel) != "小明走進森林。夜色張牙舞爪。他很害怕。\n" || !got2.AuthorEdited ||
 		got2.Final != mine || got2.AcceptedVersion != 1 {
 		t.Fatalf("編輯第 2 個版本應寫入作者版本並記錄版本: %+v %q", got2, read(t, s, rel))
+	}
+}
+
+// makeDirLink 建立資料夾連結(Windows 用 junction,不需要管理員;其他平台用符號連結),#132 測試用。
+func makeDirLink(t *testing.T, link, target string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+		if err != nil {
+			t.Fatalf("mklink /J %s: %v: %s", link, err, out)
+		}
+		return
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+}
+
+// 意圖(#132):Accept 是全系統唯一會因 AI 提案寫入稿件的路徑;目標經過連結時,
+// 實際讀寫的可能是作者排除的資料夾或作品外的檔案,讀稿前就要拒絕、不寫入、不改狀態。
+func TestAcceptRejectsTargetThroughLink(t *testing.T) {
+	s, _, dir := setup(t)
+	if err := s.Proj.WriteFile("canon/hidden.md", "秘密內容\n"); err != nil {
+		t.Fatal(err)
+	}
+	makeDirLink(t, filepath.Join(dir, "manuscript", "link"), filepath.Join(dir, "canon"))
+	p, err := s.Create("m", "manuscript/link/hidden.md", "秘密內容", "改寫後", "", nil)
+	if err != nil {
+		t.Fatal(err) // 提案建立本身不寫入;這裡只要能建出「目標經過連結」的提案
+	}
+	if _, err := s.Accept(p.ID, 0, nil); !errors.Is(err, project.ErrLinkPath) {
+		t.Fatalf("Accept 應拒絕經過連結的目標: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "canon", "hidden.md"))
+	if err != nil || string(b) != "秘密內容\n" {
+		t.Fatalf("目標檔案不得被改動: %q %v", b, err)
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Pending {
+		t.Fatalf("失敗的 Accept 不得改變提案狀態: %+v %v", q, err)
+	}
+}
+
+// #131 意圖:比對、快照之後,外部程式(雲端同步、其他編輯器)又改了稿件時,Accept 絕不能用先前
+// 讀到的內容覆寫——新文字連快照裡都沒有,G3 救不回。稿件保持外部修改後的內容,提案仍是待審。
+func TestAcceptRefusedWhenFileChangedDuringAccept(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := read(t, s, rel) + "【外部同步後加的一段】\n"
+	orig := takeSnapshot
+	takeSnapshot = func(st *snapshot.Store, label, reason string, files []string) (*snapshot.Meta, error) {
+		m, err := orig(st, label, reason, files)
+		if err != nil {
+			return m, err
+		}
+		// 快照完成後、寫入前,模擬外部程式改稿
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(ext), 0o644); err != nil {
+			t.Error(err)
+		}
+		return m, nil
+	}
+	defer func() { takeSnapshot = (*snapshot.Store).Take }()
+
+	if got, err := s.Accept(p.ID, 0, nil); err != nil || got.NotApplied != ErrChangedDuringAccept.Error() || got.Status != Pending {
+		t.Fatalf("應回待審提案並帶 NotApplied(不回錯,前端才會重載), got %+v %v", got, err)
+	}
+	if read(t, s, rel) != ext {
+		t.Fatalf("不得覆寫外部修改: %q", read(t, s, rel))
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Pending {
+		t.Fatalf("提案應維持待審,作者再按一次才重新定位或衝突: %+v %v", q, err)
+	}
+}
+
+// #131 意圖(PR #140 審查後改為先存狀態再寫稿):提案狀態存不成時什麼都不寫、明確回錯。
+// 不能留下「稿件已寫、提案仍待審」:切換作品或重開後它又能被接受,改寫保留原文時會被重複套用。
+func TestAcceptWritesNothingWhenProposalCannotBeSaved(t *testing.T) {
+	s, rel, dir := setup(t)
+	// 改寫保留原文(原文仍唯一):若稿件先寫,重開後再接受會重複套用
+	p, err := s.Create("m", rel, "天很黑。", "天很黑。雨下起來了。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pj := filepath.Join(dir, ".perkins", "proposals", p.ID+".json")
+	if err := os.Chmod(pj, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(pj, 0o644) // 改回可寫,TempDir 才清得掉
+
+	if _, err := s.Accept(p.ID, 0, nil); err == nil || !strings.Contains(err.Error(), "未套用") {
+		t.Fatalf("提案狀態存不成應回錯並說明未套用, got %v", err)
+	}
+	if read(t, s, rel) != "小明走進森林。天很黑。他很害怕。\n" {
+		t.Fatalf("狀態沒存成就不得寫稿, got %q", read(t, s, rel))
+	}
+	// 等同切換作品/重開:新的 Store 看到的是待審,而稿件也確實沒動,兩者一致
+	if g, err := (&Store{Proj: s.Proj}).Get(p.ID); err != nil || g.Status != Pending {
+		t.Fatalf("提案應仍是待審, got %+v %v", g, err)
+	}
+	// 恢復可寫後再接受只套用一次
+	os.Chmod(pj, 0o644)
+	if _, err := s.Accept(p.ID, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, s, rel); got != "小明走進森林。天很黑。雨下起來了。他很害怕。\n" {
+		t.Fatalf("應只套用一次, got %q", got)
+	}
+	if _, err := (&Store{Proj: s.Proj}).Accept(p.ID, 0, nil); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("新的 Store 不得再次接受已套用的提案, got %v", err)
+	}
+}
+
+// #131 意圖:狀態已存成已接受、但稿件寫入失敗時,提案要改回待審(稿件沒變),作者可以再試;
+// 不能留下「顯示已接受、稿件其實沒改」。
+func TestAcceptRevertsProposalWhenManuscriptWriteFails(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.Chmod(target, 0o444); err != nil { // 稿件唯讀:寫入必定失敗(讀取照常)
+		t.Fatal(err)
+	}
+	defer os.Chmod(target, 0o644)
+	if _, err := s.Accept(p.ID, 0, nil); err == nil {
+		t.Fatal("稿件寫入失敗應回錯")
+	}
+	if read(t, s, rel) != "小明走進森林。天很黑。他很害怕。\n" {
+		t.Fatalf("稿件不應改變, got %q", read(t, s, rel))
+	}
+	if g, err := (&Store{Proj: s.Proj}).Get(p.ID); err != nil || g.Status != Pending || g.SnapshotID != "" {
+		t.Fatalf("提案應改回待審, got %+v %v", g, err)
+	}
+}
+
+// PR #140 審查:沒套用的結果(外部改稿,NotApplied)不得記成 proposal_accept。
+func TestLogAcceptSkipsNotApplied(t *testing.T) {
+	s, rel, dir := setup(t)
+	if err := s.Proj.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.NotApplied = ErrChangedDuringAccept.Error() // Status 仍是 Pending,與 Accept 回傳的未套用結果相同
+	LogAccept(research.New(s.Proj, "sess"), p)
+	res, _ := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if strings.Contains(string(res), "proposal_accept") {
+		t.Fatalf("未套用不得記成接受: %s", res)
+	}
+}
+
+// #131 意圖:接受還在進行中(快照當下)時,同一提案不得被 Reject 插隊;兩個決定要序列化,
+// 後到的拒絕等 Accept 完成後回 ErrNotPending,最終狀態是 Accepted。
+func TestAcceptRejectSerialized(t *testing.T) {
+	s, rel, _ := setup(t)
+	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
+	orig := takeSnapshot
+	rejectDone := make(chan struct{})
+	var rejectErr error
+	takeSnapshot = func(st *snapshot.Store, label, reason string, files []string) (*snapshot.Meta, error) {
+		m, err := orig(st, label, reason, files)
+		if err != nil {
+			return m, err
+		}
+		go func() {
+			_, rejectErr = s.Reject(p.ID, "改主意了")
+			close(rejectDone)
+		}()
+		select {
+		case <-rejectDone:
+			t.Error("Reject 在 Accept 進行中就完成了,兩個決定沒有被序列化")
+		case <-time.After(200 * time.Millisecond):
+		}
+		return m, nil
+	}
+	defer func() { takeSnapshot = (*snapshot.Store).Take }()
+
+	got, err := s.Accept(p.ID, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-rejectDone:
+		if !errors.Is(rejectErr, ErrNotPending) {
+			t.Fatalf("Accept 完成後 Reject 應回 ErrNotPending, got %v", rejectErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Reject 沒有在 Accept 完成後結束(死鎖?)")
+	}
+	if got.Status != Accepted {
+		t.Fatalf("Accept 回傳狀態應為 Accepted: %v", got.Status)
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Accepted {
+		t.Fatalf("最終狀態應為 Accepted: %+v %v", q, err)
 	}
 }

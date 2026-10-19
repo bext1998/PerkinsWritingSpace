@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -109,6 +110,65 @@ func TestDeniedToolsDoNotTouchFilesAndAreAudited(t *testing.T) {
 	denied := second[len(second)-3]
 	if !strings.Contains(denied.Content, "read_document") {
 		t.Errorf("拒絕訊息應列出允許的工具: %q", denied.Content)
+	}
+}
+
+// 意圖(#133/G4):稽核紀錄寫不進去時不能靜默——作者要在對話中看到通知,但回答照常完成;
+// 同一次 Ask 只提示一次,不因每個工具呼叫重複洗版。
+func TestAuditWriteFailureNotifiesOncePerAsk(t *testing.T) {
+	a, s, dir := setup(t)
+	// 在 .perkins 的位置放一個同名檔案,讓 MkdirAll/OpenFile 失敗。
+	if err := os.WriteFile(filepath.Join(dir, ".perkins"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "read_document", Arguments: `{"path":"manuscript/第一章.md"}`}}},
+		{Role: "assistant", Content: "好"},
+	}
+	var notices []string
+	reply, err := a.Ask(context.Background(), AskParams{Question: "?"}, func(e Event) {
+		if e.Kind == "notice" {
+			notices = append(notices, e.Text)
+		}
+	})
+	if err != nil || reply != "好" {
+		t.Fatalf("稽核寫入失敗不應中斷回答: reply=%q err=%v", reply, err)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "稽核紀錄寫入失敗") {
+		t.Fatalf("同一次 Ask 應只收到一次稽核失敗通知, got %q", notices)
+	}
+}
+
+// errorToolClient 模擬串流異常結束:回錯時仍帶著已累積的工具呼叫,Ask 不得執行它們。
+type errorToolClient struct{}
+
+func (errorToolClient) Chat(context.Context, llm.Request, func(string)) (llm.Message, error) {
+	return llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"X","rationale":"r"}`}}},
+		errors.New("模型串流未正常結束(連線中斷)")
+}
+
+// 意圖(#133/G1):模型串流異常時回錯,已累積的工具呼叫不得被執行——不能因為半截回覆就建立提案。
+func TestAskDoesNotRunToolsWhenChatFails(t *testing.T) {
+	a, _, _ := setup(t)
+	a.LLM = errorToolClient{}
+	var toolEvents int
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) {
+		if e.Kind == "tool" {
+			toolEvents++
+		}
+	}); err == nil {
+		t.Fatal("串流異常應回錯")
+	}
+	if toolEvents != 0 {
+		t.Fatalf("回錯時不得執行工具, got %d 次工具事件", toolEvents)
+	}
+	list, err := a.Proposals.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("回錯時不得建立提案, got %+v", list)
 	}
 }
 
@@ -2133,6 +2193,65 @@ func TestRejectBeforeFinishShowsRejected(t *testing.T) {
 	}
 	if strings.Contains(all, created+"(") && strings.Contains(all[strings.Index(all, created+"("):], "等待作者審查") {
 		t.Fatalf("不得仍把這個提案描述成待審:%q", all)
+	}
+}
+
+// 意圖(#133/SPEC §12.3「提案狀態回饋給 Bot」):作者在同一次詢問內、工具剛建立提案後立刻拒絕,
+// 下一個工具回合送出的 system 訊息就要看到「作者已拒絕」與理由,不能還以為提案待審。
+func TestRejectionWithinSameAskVisibleToNextRequest(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "知道了"},
+	}
+	var created string
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) {
+		if e.ProposalID != "" {
+			created = e.ProposalID
+			if _, err := a.Proposals.Reject(e.ProposalID, "太口語"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if created == "" {
+		t.Fatal("應有建立的提案 id")
+	}
+	if len(s.reqs) < 2 {
+		t.Fatalf("應有第二個工具回合, got %d 次請求", len(s.reqs))
+	}
+	sys := s.reqs[1].Messages[0].Content
+	if !strings.Contains(sys, "作者已拒絕") || !strings.Contains(sys, "太口語") || !strings.Contains(sys, created) {
+		t.Fatalf("同一回合內被拒絕的提案,下一個請求的 system 應含已拒絕與理由:%q", sys)
+	}
+}
+
+// 意圖(#133):達工具上限的收尾請求也要看到同一次詢問內剛被拒絕的提案,不能沿用開頭的舊狀態。
+func TestRejectionWithinSameAskVisibleToWrapRequest(t *testing.T) {
+	a, s, _ := setup(t)
+	a.MaxIter = 1
+	s.replies = []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "收尾"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q"}, func(e Event) {
+		if e.ProposalID != "" {
+			if _, err := a.Proposals.Reject(e.ProposalID, "太口語"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.reqs) != 2 {
+		t.Fatalf("應有工具回合與收尾請求, got %d 次請求", len(s.reqs))
+	}
+	sys := s.reqs[1].Messages[0].Content
+	if !strings.Contains(sys, "作者已拒絕") || !strings.Contains(sys, "太口語") {
+		t.Fatalf("收尾請求的 system 應含已拒絕與理由:%q", sys)
 	}
 }
 

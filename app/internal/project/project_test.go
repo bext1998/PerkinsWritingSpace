@@ -2,9 +2,13 @@ package project
 
 import (
 	"crypto/sha256"
+	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -275,4 +279,121 @@ func TestBotReadDefaultsAndPersists(t *testing.T) {
 	if got := strings.Join(q.Config.BotReadable(), ","); got != "notes" {
 		t.Fatalf("重開後可讀 = %q, want notes", got)
 	}
+}
+
+// makeDirLink 建立資料夾連結(Windows 用 junction,不需要管理員;其他平台用符號連結)。
+// #132 的前提:作品資料夾裡已經有這種連結(模型沒有建立連結的工具)。
+func makeDirLink(t *testing.T, link, target string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+		if err != nil {
+			t.Fatalf("mklink /J %s: %v: %s", link, err, out)
+		}
+		return
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink %s: %v", link, err)
+	}
+}
+
+// 意圖(#132):路徑經過連結時,實際讀到的可能是作者排除的資料夾或作品外的內容;
+// Bot 讀取與提案寫入的邊界要看實體路徑,不只驗證路徑字串。p.Root 本身是連結則不管。
+func TestCheckNoLinkRejectsPathsThroughLinks(t *testing.T) {
+	dir := t.TempDir()
+	p, err := Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteFile("canon/hidden.md", "未寫到劇情的伏筆\n"); err != nil {
+		t.Fatal(err)
+	}
+	rel, _ := p.NewChapter("第一章", 0)
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.md"), []byte("作品外的內容\n"), 0o644)
+	makeDirLink(t, filepath.Join(dir, ManuscriptDir, "link"), filepath.Join(dir, CanonDir)) // (a) 未開放的 canon/
+	makeDirLink(t, filepath.Join(dir, ManuscriptDir, "outside"), outside)                   // (b) 作品外資料夾
+
+	// 對照:一般路徑照常可用
+	if err := p.CheckNoLink(rel); err != nil {
+		t.Fatalf("一般路徑應可用: %v", err)
+	}
+	for _, r := range []string{"manuscript/link/hidden.md", "manuscript/outside/secret.md"} {
+		if err := p.CheckNoLink(r); !errors.Is(err, ErrLinkPath) {
+			t.Errorf("%s 應回 ErrLinkPath, got %v", r, err)
+		}
+	}
+	// 不存在的段落照 Lstat 的錯誤回傳;跳脫路徑照舊拒絕
+	if err := p.CheckNoLink("manuscript/none.md"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("不存在的路徑應回 Lstat 錯誤: %v", err)
+	}
+	for _, r := range []string{"", "../x.md", "manuscript/../perkins.json", "C:/x.md"} {
+		if err := p.CheckNoLink(r); !errors.Is(err, ErrBadPath) {
+			t.Errorf("應拒絕路徑 %q, got %v", r, err)
+		}
+	}
+
+	t.Run("檔案符號連結", func(t *testing.T) {
+		link := filepath.Join(dir, ManuscriptDir, "file-link.md")
+		if err := os.Symlink(filepath.Join(dir, CanonDir, "hidden.md"), link); err != nil {
+			t.Skipf("此環境無法建立檔案符號連結: %v", err)
+		}
+		if err := p.CheckNoLink("manuscript/file-link.md"); !errors.Is(err, ErrLinkPath) {
+			t.Errorf("檔案連結應回 ErrLinkPath, got %v", err)
+		}
+	})
+
+	t.Run("作品放在連結資料夾裡不受影響", func(t *testing.T) {
+		root := t.TempDir()
+		makeDirLink(t, filepath.Join(root, "proj-link"), dir)
+		q := &Project{Root: filepath.Join(root, "proj-link")}
+		if err := q.CheckNoLink(rel); err != nil {
+			t.Errorf("p.Root 本身是連結應照常可用: %v", err)
+		}
+	})
+}
+
+func TestAllFilesKeepsAuthorFileLinksButDoesNotDescendDirLinks(t *testing.T) {
+	// #132 審查:Bot 的連結限制在 agent 那一層;作者側欄(Tree)與整份快照(AllFiles)要照舊列出作者自己放的連結檔,
+	// 資料夾連結則和以前一樣不往下走訪。
+	dir := t.TempDir()
+	p, err := Create(dir, "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.WriteFile("canon/hidden.md", "未寫到劇情的伏筆\n"); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	os.WriteFile(filepath.Join(outside, "secret.md"), []byte("作品外的內容\n"), 0o644)
+	makeDirLink(t, filepath.Join(dir, ManuscriptDir, "link"), outside) // 連結資料夾:不得走進去
+	fileLink := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(dir, CanonDir, "leak.md")) == nil
+	if !fileLink {
+		t.Log("此環境無法建立檔案符號連結,略過連結檔檢查")
+	}
+
+	files, err := p.AllFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasPrefix(f, ManuscriptDir+"/link/") {
+			t.Errorf("不得走進資料夾連結: %s(清單 %v)", f, files)
+		}
+	}
+	if !contains(files, "canon/hidden.md") {
+		t.Errorf("一般檔案應列入清單: %v", files)
+	}
+	if fileLink && !contains(files, "canon/leak.md") {
+		t.Errorf("作者自己放的連結檔應照舊列入(側欄、整份快照): %v", files)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
