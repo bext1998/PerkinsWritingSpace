@@ -44,6 +44,7 @@ interface Props {
     setCfg: (c: main.SettingsView) => void;
     beforeAsk: () => Promise<void>;          // 送出提問/接受提案前先存檔,讓 AI 與後端看到的與磁碟一致
     onAccepted: (p: proposal.Proposal) => Promise<void>;   // 提案套用後,編輯器需重新載入該檔(並短暫標示改動範圍)
+    onReload: (files: string[]) => Promise<void>;   // 沒套用但磁碟已被外部改過(notApplied):只重新載入,不標示改動
     onReveal: (p: proposal.Proposal) => void;               // 審查視窗「在稿件中顯示」(#45 方案 A)
     lockEdits: () => () => void;   // 接受期間(存檔→套用→重載)鎖住編輯器,避免新輸入被重載覆蓋(#56);回傳解鎖函式
     onPending: (n: number) => void;
@@ -110,7 +111,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
 const READABLE_LABEL: Record<string, string> = {canon: '設定集(canon/)', outline: '大綱(outline/)', notes: '筆記(notes/)'};
 
 export default function ChatWindow(props: Props) {
-    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, beforeAsk, onAccepted, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
+    const {open, setOpen, request, tree, doc, docText, selection, cfg, setCfg, beforeAsk, onAccepted, onReload, onReveal, lockEdits, onPending, pending, notify, onPickSelection, lastSel, onClearLastSel} = props;
     const [turns, setTurns] = useState<Turn[]>([]);
     const [question, setQuestion] = useState('');
     const [busy, setBusy] = useState(false);
@@ -365,10 +366,16 @@ export default function ChatWindow(props: Props) {
         try {
             await beforeAsk(); // 先存檔:後端以磁碟內容比對,未存的文字也不能在重新載入時遺失
             const r = await AcceptProposal(p.id, version, mine as any); // version:作者選的版本(#39);mine 非 null = 作者編輯過(部分採用)
-            await onAccepted(r);
-            // 已寫入、記錄沒寫完(recordError):照常重載,通知改成警告
-            notify(r.recordError ? {text: r.recordError + '。可在「版本」還原。', kind: 'error'}
-                : {text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
+            if (r.notApplied) {
+                // 稿件在接受過程中被外部改過、沒套用:仍在編輯鎖內重載磁碟上的新內容,否則接著存檔會蓋掉外部修改
+                await onReload([r.target]);
+                notify({text: r.notApplied, kind: 'error'});
+            } else {
+                await onAccepted(r);
+                // 已寫入、記錄沒寫完(recordError):照常重載,通知改成警告
+                notify(r.recordError ? {text: r.recordError + '。可在「版本」還原。', kind: 'error'}
+                    : {text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
+            }
             setError('');
         } catch (e) { setError(errText(e)); }
         finally { unlock(); }

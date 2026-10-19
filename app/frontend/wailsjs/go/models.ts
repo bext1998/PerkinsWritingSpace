@@ -732,6 +732,7 @@ export namespace proposal {
 	    final?: string;
 	    rejectReason?: string;
 	    recordError?: string;
+	    notApplied?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Proposal(source);
@@ -760,6 +761,7 @@ export namespace proposal {
 	        this.final = source["final"];
 	        this.rejectReason = source["rejectReason"];
 	        this.recordError = source["recordError"];
+	        this.notApplied = source["notApplied"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

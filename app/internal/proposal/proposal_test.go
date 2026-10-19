@@ -466,8 +466,8 @@ func TestAcceptRefusedWhenFileChangedDuringAccept(t *testing.T) {
 	}
 	defer func() { takeSnapshot = (*snapshot.Store).Take }()
 
-	if _, err := s.Accept(p.ID, 0, nil); !errors.Is(err, ErrChangedDuringAccept) {
-		t.Fatalf("應回 ErrChangedDuringAccept, got %v", err)
+	if got, err := s.Accept(p.ID, 0, nil); err != nil || got.NotApplied != ErrChangedDuringAccept.Error() || got.Status != Pending {
+		t.Fatalf("應回待審提案並帶 NotApplied(不回錯,前端才會重載), got %+v %v", got, err)
 	}
 	if read(t, s, rel) != ext {
 		t.Fatalf("不得覆寫外部修改: %q", read(t, s, rel))
@@ -504,6 +504,27 @@ func TestAcceptReportsRecordFailureAfterWrite(t *testing.T) {
 	}
 	if read(t, s, rel) != "小明走進森林。夜濃得化不開。他很害怕。\n" {
 		t.Fatalf("稿件應已寫入, got %q", read(t, s, rel))
+	}
+	// 之後的清單與決策都要當它已接受(PR #140 審查):前端刷新不會再出現待審卡,也不能再拒絕或接受
+	if g, err := s.Get(p.ID); err != nil || g.Status != Accepted {
+		t.Fatalf("Get 應回已接受, got %+v %v", g, err)
+	}
+	if l, _ := s.List(); len(l) != 1 || l[0].Status != Accepted {
+		t.Fatalf("List 應回已接受, got %+v", l)
+	}
+	if _, err := s.Reject(p.ID, "x"); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("已套用的提案不得再拒絕, got %v", err)
+	}
+	if _, err := s.Accept(p.ID, 0, nil); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("已套用的提案不得再接受, got %v", err)
+	}
+	// 檔案恢復可寫後,下一次讀取補存;新的 Store(等同重開)從檔案讀到已接受
+	os.Chmod(pj, 0o644)
+	if _, err := s.Get(p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := (&Store{Proj: s.Proj}).Get(p.ID); err != nil || g.Status != Accepted {
+		t.Fatalf("補存後檔案應是已接受, got %+v %v", g, err)
 	}
 }
 

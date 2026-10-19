@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"perkins/internal/project"
@@ -71,6 +72,9 @@ type Proposal struct {
 	// RecordError:稿件已寫入、但之後的記錄沒寫完時的說明(只回給介面,不存檔)。不回錯是因為前端拿到錯誤就不會重載稿件,
 	// 作者接著存檔會把舊內容寫回去(PR #136 審查)。
 	RecordError string `json:"recordError,omitempty"`
+	// NotApplied:檢查到稿件在接受過程中被外部改過、沒有套用時的說明(只回給介面,不存檔;狀態仍是待審)。
+	// 不回錯是因為前端要重載磁碟上的新內容,否則作者接著存檔會把外部的修改蓋掉(PR #140 審查)。
+	NotApplied string `json:"notApplied,omitempty"`
 }
 
 // Versions 回傳所有改寫版本(主版本 + Alternatives,#39);舊提案只有一個版本。
@@ -80,7 +84,14 @@ func (p *Proposal) Versions() []Version {
 	return append(out, p.Alternatives...)
 }
 
-type Store struct{ Proj *project.Project }
+type Store struct {
+	Proj *project.Project
+	// applied:稿件已寫入、但提案 JSON 沒存成的提案(#131,PR #140 審查)。Get/List 以這份為準,
+	// 所以已套用的提案不會被當成待審再接受或拒絕,Bot 的提案現況也是已接受;之後每次讀取都再試著補存,
+	// 存成就拿掉。只在記憶體:App 重開前沒補存成,JSON 仍是待審,但原文已不在稿件裡,再接受會變衝突、不會重寫。
+	mu      sync.Mutex
+	applied map[string]*Proposal
+}
 
 func Hash(s string) string {
 	h := sha256.Sum256([]byte(s))
@@ -100,6 +111,16 @@ func (s *Store) save(p *Proposal) error {
 func (s *Store) Get(id string) (*Proposal, error) {
 	if id == "" || strings.ContainsAny(id, `/\.`) {
 		return nil, fmt.Errorf("無效的提案 id")
+	}
+	s.mu.Lock()
+	ap := s.applied[id]
+	if ap != nil && s.save(ap) == nil { // 補存成功:之後照檔案讀
+		delete(s.applied, id)
+	}
+	s.mu.Unlock()
+	if ap != nil {
+		cp := *ap
+		return &cp, nil
 	}
 	b, err := os.ReadFile(filepath.Join(s.dir(), id+".json"))
 	if err != nil {
@@ -261,7 +282,12 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 		return nil, err
 	}
 	if again != content {
-		return p, ErrChangedDuringAccept
+		cur, err := s.Get(p.ID) // 回傳磁碟上的提案(前面重新定位等欄位只改了記憶體副本)
+		if err != nil {
+			return nil, err
+		}
+		cur.NotApplied = ErrChangedDuringAccept.Error()
+		return cur, nil
 	}
 	if err := s.Proj.WriteFile(p.Target, content[:start]+final+content[end:]); err != nil {
 		return nil, err
@@ -273,6 +299,13 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	var recErrs []string
 	if err := s.save(p); err != nil {
 		recErrs = append(recErrs, "提案記錄未完成:"+err.Error())
+		cp := *p
+		s.mu.Lock()
+		if s.applied == nil {
+			s.applied = map[string]*Proposal{}
+		}
+		s.applied[p.ID] = &cp
+		s.mu.Unlock()
 	}
 	if err := snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
