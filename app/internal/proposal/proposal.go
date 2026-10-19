@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"perkins/internal/project"
@@ -84,14 +83,7 @@ func (p *Proposal) Versions() []Version {
 	return append(out, p.Alternatives...)
 }
 
-type Store struct {
-	Proj *project.Project
-	// applied:稿件已寫入、但提案 JSON 沒存成的提案(#131,PR #140 審查)。Get/List 以這份為準,
-	// 所以已套用的提案不會被當成待審再接受或拒絕,Bot 的提案現況也是已接受;之後每次讀取都再試著補存,
-	// 存成就拿掉。只在記憶體:App 重開前沒補存成,JSON 仍是待審,但原文已不在稿件裡,再接受會變衝突、不會重寫。
-	mu      sync.Mutex
-	applied map[string]*Proposal
-}
+type Store struct{ Proj *project.Project }
 
 func Hash(s string) string {
 	h := sha256.Sum256([]byte(s))
@@ -111,16 +103,6 @@ func (s *Store) save(p *Proposal) error {
 func (s *Store) Get(id string) (*Proposal, error) {
 	if id == "" || strings.ContainsAny(id, `/\.`) {
 		return nil, fmt.Errorf("無效的提案 id")
-	}
-	s.mu.Lock()
-	ap := s.applied[id]
-	if ap != nil && s.save(ap) == nil { // 補存成功:之後照檔案讀
-		delete(s.applied, id)
-	}
-	s.mu.Unlock()
-	if ap != nil {
-		cp := *ap
-		return &cp, nil
 	}
 	b, err := os.ReadFile(filepath.Join(s.dir(), id+".json"))
 	if err != nil {
@@ -232,6 +214,7 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	if p.Status != Pending {
 		return nil, ErrNotPending
 	}
+	before := *p // 稿件寫入失敗時把提案存回這個樣子
 	versions := p.Versions()
 	if version < 0 || version >= len(versions) {
 		return nil, fmt.Errorf("沒有第 %d 個版本(共 %d 個)", version+1, len(versions))
@@ -289,32 +272,26 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 		cur.NotApplied = ErrChangedDuringAccept.Error()
 		return cur, nil
 	}
+	// 先把提案狀態存成已接受,再寫稿(#131,PR #140 審查):狀態存不成就什麼都不寫、明確回錯。
+	// 反過來「稿件已寫、狀態沒存成」的話,切換作品或重開後提案又變回待審,改寫保留原文時還會被重複套用。
+	p.Status, p.SnapshotID = Accepted, snap.ID
+	if err := s.save(p); err != nil {
+		return nil, fmt.Errorf("提案狀態無法存檔,未套用提案: %w", err)
+	}
 	if err := s.Proj.WriteFile(p.Target, content[:start]+final+content[end:]); err != nil {
+		// 稿件沒寫成:提案改回接受前的樣子(待審),作者可以再試
+		if serr := s.save(&before); serr != nil {
+			return nil, fmt.Errorf("稿件寫入失敗(%v),提案狀態也無法改回待審: %w", err, serr)
+		}
 		return nil, err
 	}
-	p.Status, p.SnapshotID = Accepted, snap.ID
-	// 稿件已寫入之後的記錄失敗不回錯(#131,同 PR #136 的 Provenance 處理):回錯前端就拿不到
-	// 回傳值、不會重載稿件,作者接著存檔會把舊內容寫回。改以 RecordError 告知,前端照「已寫入」
-	// 處理。提案狀態存檔失敗時 Provenance 仍要嘗試寫,兩個都失敗就兩個原因都寫進 RecordError。
-	var recErrs []string
-	if err := s.save(p); err != nil {
-		recErrs = append(recErrs, "提案記錄未完成:"+err.Error())
-		cp := *p
-		s.mu.Lock()
-		if s.applied == nil {
-			s.applied = map[string]*Proposal{}
-		}
-		s.applied[p.ID] = &cp
-		s.mu.Unlock()
-	}
+	// 稿件已寫入之後的來源紀錄失敗不回錯(同 PR #136):回錯前端就拿不到回傳值、不會重載稿件,
+	// 作者接著存檔會把舊內容寫回。改以 RecordError 告知,前端照「已寫入」處理。
 	if err := snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
 		"version": version, "versions": len(versions),
 		"authorEdited": p.AuthorEdited, "final": final}); err != nil {
-		recErrs = append(recErrs, "來源紀錄寫入失敗:"+err.Error())
-	}
-	if len(recErrs) > 0 {
-		p.RecordError = "稿件已寫入,但" + strings.Join(recErrs, ";")
+		p.RecordError = fmt.Sprintf("稿件已寫入,但來源紀錄寫入失敗:%v", err)
 	}
 	return p, nil
 }
