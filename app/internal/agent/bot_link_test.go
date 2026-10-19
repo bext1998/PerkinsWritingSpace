@@ -120,6 +120,13 @@ func TestBotSearchDoesNotLeakThroughFileLink(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(dir, "manuscript", "leak.md")); err != nil {
 		t.Skipf("此環境無法建立檔案符號連結: %v", err)
 	}
+	// 稿件以外的資料夾(summaries/ 一律列給 Bot)也要擋:list_files 的摘要/設定清單另走 AllFiles
+	if err := os.MkdirAll(filepath.Join(dir, "summaries"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, "summaries", "leak-sum.md")); err != nil {
+		t.Fatal(err)
+	}
 	s.replies = []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{
 			{ID: "1", Name: "search_project", Arguments: `{"query":"機密外流"}`},
@@ -133,7 +140,7 @@ func TestBotSearchDoesNotLeakThroughFileLink(t *testing.T) {
 	}
 	res := linkResults(t, s.reqs, 1)
 	for _, id := range []string{"1", "2", "3"} {
-		for _, leaked := range []string{"機密外流", "leak.md", "secret.md"} {
+		for _, leaked := range []string{"機密外流", "leak.md", "leak-sum.md", "secret.md"} {
 			if strings.Contains(res[id], leaked) {
 				t.Errorf("工具結果 %s 不得含連結或其內容(%q): %q", id, leaked, res[id])
 			}
