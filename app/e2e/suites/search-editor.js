@@ -1375,7 +1375,21 @@ module.exports = {
         const i2 = await docText(), i2pos = await editorPos();
         check('#130 `**粗**` 選取內文按 Ctrl+I:不把粗體星號當斜體記號',
             i2 === '***粗***' && i2pos.anchor === 3 && i2pos.head === 4, JSON.stringify({txt: i2, pos: i2pos}));
-        await undoOnce();
+        // 同一選取再按一次 Ctrl+I:只拿掉斜體,保留粗體(PR #139 審查:原本會堆成 ****粗****)
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        const i3 = await docText(), i3pos = await editorPos();
+        check('#130 粗斜體再按 Ctrl+I 只取消斜體、保留粗體',
+            i3 === '**粗**' && i3pos.anchor === 2 && i3pos.head === 3, JSON.stringify({txt: i3, pos: i3pos}));
+        // 粗斜體按 Ctrl+B:只拿掉粗體,留下斜體
+        await page.keyboard.press('Control+i');
+        await settle(80, 500);
+        await page.keyboard.press('Control+b');
+        await settle(80, 500);
+        const i4 = await docText(), i4pos = await editorPos();
+        check('#130 粗斜體按 Ctrl+B 只取消粗體、保留斜體',
+            i4 === '*粗*' && i4pos.anchor === 1 && i4pos.head === 2, JSON.stringify({txt: i4, pos: i4pos}));
+        await setDoc('**粗**');
 
         // --- 插入場景分隔(◇◇◇):前後各留一個空白行(已有就沿用)、游標在分隔行之後的下一行開頭 ---
         await setDoc('# 章名\n\n第一段\n\n第二段');

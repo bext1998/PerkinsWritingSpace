@@ -215,7 +215,7 @@ const applyHeading = (v: EditorView, level: number): boolean => {
 
 // 粗體/斜體(切換,#130):有選取時,若選取文字本身以 `**…**`(斜體 `*…*`)包住,或選取外緊鄰就是這組
 // 記號,就拿掉;否則包上,選取保持在內文。沒有選取時插入成對記號、游標放中間(同 insertPair)。
-// 斜體判斷不可把 `**` 的其中一個星號當成斜體記號(單一 `*` 記號的前後都不能是 `*`)。
+// 斜體判斷不可把 `**` 的其中一個星號當成斜體記號(看連續星號數量,見下方 has)。
 // 多行選取整段包住,不逐行處理。IME 組字中不動作。
 const toggleInline = (v: EditorView, mark: string): boolean => {
     if (v.composing || v.compositionStarted) return true;
@@ -224,23 +224,23 @@ const toggleInline = (v: EditorView, mark: string): boolean => {
     const doc = v.state.doc;
     const text = doc.sliceString(from, to);
     const n = mark.length;
-    // 單一 `*` 記號:兩側還有 `*` 就是 `**` 的一半,不當斜體記號
-    const singleStar = (p: number) => doc.sliceString(p, p + 1) === '*' && doc.sliceString(p - 1, p) !== '*' && doc.sliceString(p + 1, p + 2) !== '*';
+    // 以連續星號的數量判斷:粗體要兩側各至少兩顆;斜體要兩側各奇數顆(1 或 3,`***x***` 是粗體兩顆加斜體一顆),
+    // 所以 `**x**` 按 Ctrl+I 是加斜體,`***x***` 再按一次只拿掉斜體那一對(PR #139 審查)。
+    const has = (l: number, r: number) => mark === '**' ? l >= 2 && r >= 2 : l % 2 === 1 && r % 2 === 1;
     // 選取本身包著記號:拿掉記號、選取留在內文
-    const wrapped = mark === '**'
-        ? text.length > 4 && text.startsWith('**') && text.endsWith('**')
-        : text.length > 2 && text.startsWith('*') && text.endsWith('*') && !text.startsWith('**') && !text.endsWith('**');
-    if (wrapped) {
+    const lead = text.length - text.replace(/^\*+/, '').length;
+    const trail = text.length - text.replace(/\*+$/, '').length;
+    if (lead + trail < text.length && has(lead, trail)) {
         const inner = text.slice(n, text.length - n);
         v.dispatch({changes: {from, to, insert: inner}, selection: EditorSelection.range(from, from + inner.length), annotations: isolateHistory.of('full')});
         v.focus();
         return true;
     }
     // 選取外緊鄰就是這組記號:拿掉兩側記號,選取跟著內文走
-    const outside = mark === '**'
-        ? doc.sliceString(from - 2, from) === '**' && doc.sliceString(to, to + 2) === '**'
-        : singleStar(from - 1) && singleStar(to);
-    if (outside) {
+    let l = 0, r = 0;
+    while (from - l > 0 && doc.sliceString(from - l - 1, from - l) === '*') l++;
+    while (to + r < doc.length && doc.sliceString(to + r, to + r + 1) === '*') r++;
+    if (has(l, r)) {
         v.dispatch({changes: [{from: to, to: to + n, insert: ''}, {from: from - n, to: from, insert: ''}],
                     selection: EditorSelection.range(from - n, to - n), annotations: isolateHistory.of('full')});
         v.focus();
