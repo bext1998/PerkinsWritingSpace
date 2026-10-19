@@ -580,13 +580,6 @@ func listMD(root, dir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		// 連結不走訪也不列出(#132):搜尋與清單不得經連結看到作品外或作者排除的內容。
-		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
-			if d.IsDir() {
-				return fs.SkipDir // 連結資料夾(某些平台回報為目錄)不往下走訪
-			}
-			return nil // 連結檔不列入清單
-		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
 		}

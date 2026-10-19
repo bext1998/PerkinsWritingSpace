@@ -353,9 +353,9 @@ func TestCheckNoLinkRejectsPathsThroughLinks(t *testing.T) {
 	})
 }
 
-// 意圖(#132):搜尋與清單走訪的檔案清單不得包含連結,也不得走進連結資料夾——
-// 否則 Bot 的 search_project/list_files 會看到作品外或作者排除的內容。
-func TestAllFilesSkipsLinksAndDoesNotDescendIntoThem(t *testing.T) {
+func TestAllFilesKeepsAuthorFileLinksButDoesNotDescendDirLinks(t *testing.T) {
+	// #132 審查:Bot 的連結限制在 agent 那一層;作者側欄(Tree)與整份快照(AllFiles)要照舊列出作者自己放的連結檔,
+	// 資料夾連結則和以前一樣不往下走訪。
 	dir := t.TempDir()
 	p, err := Create(dir, "n")
 	if err != nil {
@@ -366,12 +366,10 @@ func TestAllFilesSkipsLinksAndDoesNotDescendIntoThem(t *testing.T) {
 	}
 	outside := t.TempDir()
 	os.WriteFile(filepath.Join(outside, "secret.md"), []byte("作品外的內容\n"), 0o644)
-	makeDirLink(t, filepath.Join(dir, ManuscriptDir, "link"), outside)  // 連結資料夾:不得走進去
-	makeDirLink(t, filepath.Join(dir, CanonDir, "linkdir.md"), outside) // 名稱像 .md 的連結:不得列入
-	if err := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(dir, ManuscriptDir, "leak.md")); err != nil {
-		t.Logf("此環境無法建立檔案符號連結,略過連結檔檢查: %v", err)
-	} else {
-		makeDirLink(t, filepath.Join(dir, NotesDir, "link"), filepath.Join(dir, CanonDir)) // 連結到 canon:不得走進去
+	makeDirLink(t, filepath.Join(dir, ManuscriptDir, "link"), outside) // 連結資料夾:不得走進去
+	fileLink := os.Symlink(filepath.Join(outside, "secret.md"), filepath.Join(dir, CanonDir, "leak.md")) == nil
+	if !fileLink {
+		t.Log("此環境無法建立檔案符號連結,略過連結檔檢查")
 	}
 
 	files, err := p.AllFiles()
@@ -379,23 +377,15 @@ func TestAllFilesSkipsLinksAndDoesNotDescendIntoThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		if strings.Contains(f, "link") || strings.Contains(f, "leak") || strings.Contains(f, "outside") {
-			t.Errorf("連結不得列入檔案清單: %s(清單 %v)", f, files)
+		if strings.HasPrefix(f, ManuscriptDir+"/link/") {
+			t.Errorf("不得走進資料夾連結: %s(清單 %v)", f, files)
 		}
 	}
-	for _, want := range []string{"canon/hidden.md"} {
-		if !contains(files, want) {
-			t.Errorf("一般檔案應列入清單: %s(清單 %v)", want, files)
-		}
+	if !contains(files, "canon/hidden.md") {
+		t.Errorf("一般檔案應列入清單: %v", files)
 	}
-	tree, err := p.Tree()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range tree.Canon {
-		if strings.Contains(e.Path, "link") {
-			t.Errorf("Tree 不得列出連結: %s", e.Path)
-		}
+	if fileLink && !contains(files, "canon/leak.md") {
+		t.Errorf("作者自己放的連結檔應照舊列入(側欄、整份快照): %v", files)
 	}
 }
 

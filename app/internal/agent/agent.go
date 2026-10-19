@@ -386,7 +386,7 @@ func (a *Agent) search(q string, g gate) (string, error) {
 	var hits []string
 	total := 0
 	for _, f := range files {
-		if !g.ok(f) {
+		if !g.ok(f) || a.Proj.CheckNoLink(f) != nil { // 經過連結的檔案不搜(#132);作者側欄照常列出,所以在 Bot 這裡擋
 			continue
 		}
 		text, err := a.Proj.ReadFile(f)
@@ -432,6 +432,9 @@ func (a *Agent) listFiles(g gate) (string, error) {
 			fmt.Fprintf(&b, "◆ %s\n", v.Title)
 		}
 		for _, e := range v.Chapters {
+			if a.Proj.CheckNoLink(e.Path) != nil { // 經過連結的章節不列給 Bot(#132;Tree 是作者側欄共用的,不在那裡過濾)
+				continue
+			}
 			title := baseTitle(e.Path)
 			words := ""
 			if text, err := a.Proj.ReadFile(e.Path); err == nil {
@@ -449,6 +452,9 @@ func (a *Agent) listFiles(g gate) (string, error) {
 	}
 	var sums, prot []string
 	for _, f := range files {
+		if a.Proj.CheckNoLink(f) != nil { // 同上:經過連結的檔案不列給 Bot(#132)
+			continue
+		}
 		switch project.KindOf(f) {
 		case project.SummariesDir:
 			sums = append(sums, f)
