@@ -29,6 +29,8 @@ var (
 	ErrNotProject  = errors.New("不是 Perkins WritingSpace 專案資料夾(找不到 perkins.json)")
 	ErrBadPath     = errors.New("不允許的檔案路徑")
 	ErrProjectHere = errors.New("此資料夾已是 Perkins WritingSpace 專案")
+	// ErrLinkPath 表示路徑本身或其上層是符號連結/資料夾連結(#132)。
+	ErrLinkPath = errors.New("路徑經過資料夾連結")
 )
 
 const (
@@ -189,6 +191,34 @@ func (p *Project) resolve(rel string) (string, error) {
 		return "", ErrBadPath
 	}
 	return filepath.Join(p.Root, filepath.FromSlash(rel)), nil
+}
+
+// CheckNoLink 逐段(含最後的檔案)確認 rel 這一路上都不是連結,給 Bot 讀取與提案寫入
+// 這類「依路徑存取」的邊界用(#132):resolve 只驗證路徑字串,作品內的 junction/symlink
+// 會讓 Bot 讀到作者排除的資料夾或作品外的內容。任何一段是 fs.ModeSymlink 或
+// fs.ModeIrregular(Windows 的 junction/mount point,Go 1.23+ 回報為此)就回 ErrLinkPath;
+// 不存在的段落照 Lstat 的錯誤回傳。p.Root 本身是不是連結不管(作者可能把作品放在連結資料夾裡)。
+// 作者自己編輯器的讀寫不走這裡,行為不變。
+func (p *Project) CheckNoLink(rel string) error {
+	rel = filepath.ToSlash(rel)
+	if rel == "" || strings.HasPrefix(rel, "/") || strings.Contains(rel, ":") {
+		return ErrBadPath
+	}
+	abs := p.Root
+	for _, seg := range strings.Split(rel, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return ErrBadPath
+		}
+		abs = filepath.Join(abs, filepath.FromSlash(seg))
+		fi, err := os.Lstat(abs)
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			return ErrLinkPath
+		}
+	}
+	return nil
 }
 
 func isDir(top string) bool {
@@ -549,6 +579,13 @@ func listMD(root, dir string) ([]string, error) {
 	err := filepath.WalkDir(base, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// 連結不走訪也不列出(#132):搜尋與清單不得經連結看到作品外或作者排除的內容。
+		if d.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			if d.IsDir() {
+				return fs.SkipDir // 連結資料夾(某些平台回報為目錄)不往下走訪
+			}
+			return nil // 連結檔不列入清單
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
 			return nil
