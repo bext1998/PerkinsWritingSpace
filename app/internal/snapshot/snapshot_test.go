@@ -102,11 +102,12 @@ func TestRestoreReportsProvenanceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	backup, err := s.Restore(m.ID, nil)
-	if err == nil || !strings.Contains(err.Error(), "已還原") || !strings.Contains(err.Error(), "來源紀錄") {
-		t.Fatalf("provenance 失敗應回錯並說明已還原, got %v", err)
+	// 不回錯:前端要照「已還原」重載稿件,否則作者接著存檔會把舊內容寫回(PR #136 審查)
+	if err != nil {
+		t.Fatalf("檔案已還原時不應回錯, got %v", err)
 	}
-	if backup == nil {
-		t.Fatal("仍應回傳還原前的備份快照")
+	if !strings.Contains(backup.RecordError, "已還原") || !strings.Contains(backup.RecordError, "來源紀錄") {
+		t.Fatalf("RecordError 應說明已還原、來源紀錄失敗, got %q", backup.RecordError)
 	}
 	if got, _ := s.Proj.ReadFile(rel); got != orig {
 		t.Fatalf("檔案應已還原, got %q", got)

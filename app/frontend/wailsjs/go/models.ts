@@ -731,6 +731,7 @@ export namespace proposal {
 	    authorEdited?: boolean;
 	    final?: string;
 	    rejectReason?: string;
+	    recordError?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Proposal(source);
@@ -758,6 +759,7 @@ export namespace proposal {
 	        this.authorEdited = source["authorEdited"];
 	        this.final = source["final"];
 	        this.rejectReason = source["rejectReason"];
+	        this.recordError = source["recordError"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1113,6 +1115,7 @@ export namespace snapshot {
 	    reason: string;
 	    files: string[];
 	    missing?: string[];
+	    recordError?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Meta(source);
@@ -1126,6 +1129,7 @@ export namespace snapshot {
 	        this.reason = source["reason"];
 	        this.files = source["files"];
 	        this.missing = source["missing"];
+	        this.recordError = source["recordError"];
 	    }
 	}
 

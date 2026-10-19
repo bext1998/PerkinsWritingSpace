@@ -23,6 +23,8 @@ type Meta struct {
 	Reason  string   `json:"reason"` // manual | before-accept | before-restore
 	Files   []string `json:"files"`
 	Missing []string `json:"missing,omitempty"` // 快照當時不存在的檔案(還原時代表「不存在」)
+	// RecordError:檔案已還原、但來源紀錄沒寫成時的說明(只回給介面,不存進索引)。不回錯是因為前端拿到錯誤就不會重載稿件(PR #136 審查)。
+	RecordError string `json:"recordError,omitempty"`
 }
 
 type Store struct{ Proj *project.Project }
@@ -156,7 +158,7 @@ func (s *Store) Restore(id string, files []string) (*Meta, error) {
 		}
 	}
 	if err := Provenance(s.Proj, map[string]any{"event": "restore", "snapshot": id, "files": files, "backup": before.ID}); err != nil {
-		return before, fmt.Errorf("稿件已還原,但來源紀錄寫入失敗: %w", err)
+		before.RecordError = fmt.Sprintf("稿件已還原,但來源紀錄寫入失敗:%v", err)
 	}
 	return before, nil
 }

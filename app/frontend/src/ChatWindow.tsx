@@ -366,7 +366,9 @@ export default function ChatWindow(props: Props) {
             await beforeAsk(); // 先存檔:後端以磁碟內容比對,未存的文字也不能在重新載入時遺失
             const r = await AcceptProposal(p.id, version, mine as any); // version:作者選的版本(#39);mine 非 null = 作者編輯過(部分採用)
             await onAccepted(r);
-            notify({text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
+            // 已寫入、記錄沒寫完(recordError):照常重載,通知改成警告
+            notify(r.recordError ? {text: r.recordError + '。可在「版本」還原。', kind: 'error'}
+                : {text: r.authorEdited ? '已接受(以你修改後的版本寫入)。可在「版本」還原。' : '已接受提案。可在「版本」還原。', kind: 'ok'});
             setError('');
         } catch (e) { setError(errText(e)); }
         finally { unlock(); }

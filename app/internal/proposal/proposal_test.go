@@ -251,10 +251,14 @@ func TestAcceptReportsProvenanceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := s.Accept(p.ID, 0, nil)
-	if err == nil || !strings.Contains(err.Error(), "已寫入") || !strings.Contains(err.Error(), "來源紀錄") {
-		t.Fatalf("provenance 失敗應回錯並說明稿件已寫入, got %v", err)
+	// 不回錯:前端要照「已接受」重載稿件,否則作者接著存檔會把舊內容寫回(PR #136 審查)
+	if err != nil {
+		t.Fatalf("稿件已寫入時不應回錯, got %v", err)
 	}
-	if got == nil || got.Status != Accepted {
+	if !strings.Contains(got.RecordError, "已寫入") || !strings.Contains(got.RecordError, "來源紀錄") {
+		t.Fatalf("RecordError 應說明稿件已寫入、來源紀錄失敗, got %q", got.RecordError)
+	}
+	if got.Status != Accepted {
 		t.Fatalf("回傳的提案應是已接受, got %+v", got)
 	}
 	if read(t, s, rel) != "小明走進森林。夜濃得化不開。他很害怕。\n" {
