@@ -23,6 +23,8 @@ type Meta struct {
 	Reason  string   `json:"reason"` // manual | before-accept | before-restore
 	Files   []string `json:"files"`
 	Missing []string `json:"missing,omitempty"` // 快照當時不存在的檔案(還原時代表「不存在」)
+	// RecordError:檔案已還原、但來源紀錄沒寫成時的說明(只回給介面,不存進索引)。不回錯是因為前端拿到錯誤就不會重載稿件(PR #136 審查)。
+	RecordError string `json:"recordError,omitempty"`
 }
 
 type Store struct{ Proj *project.Project }
@@ -155,22 +157,27 @@ func (s *Store) Restore(id string, files []string) (*Meta, error) {
 			return before, err
 		}
 	}
-	Provenance(s.Proj, map[string]any{"event": "restore", "snapshot": id, "files": files, "backup": before.ID})
+	if err := Provenance(s.Proj, map[string]any{"event": "restore", "snapshot": id, "files": files, "backup": before.ID}); err != nil {
+		before.RecordError = fmt.Sprintf("稿件已還原,但來源紀錄寫入失敗:%v", err)
+	}
 	return before, nil
 }
 
-// Provenance 追加一筆來源記錄到 .perkins/provenance.jsonl。
-func Provenance(p *project.Project, rec map[string]any) {
+// Provenance 追加一筆來源記錄到 .perkins/provenance.jsonl;寫入失敗回錯,由呼叫端告訴作者。
+func Provenance(p *project.Project, rec map[string]any) error {
 	rec["time"] = time.Now().Format(time.RFC3339)
 	dir := filepath.Join(p.Root, ".perkins")
-	if os.MkdirAll(dir, 0o755) != nil {
-		return
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
 	f, err := os.OpenFile(filepath.Join(dir, "provenance.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
 	b, _ := json.Marshal(rec)
-	f.Write(append(b, '\n'))
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return nil
 }

@@ -65,6 +65,9 @@ type Proposal struct {
 	// RejectReason 是作者拒絕時填的原因(選填,#40、#124);存進提案 JSON,
 	// 聊天卡片重開作品後仍顯示得出來。舊提案 JSON 沒有這個欄位,照常可讀。
 	RejectReason string `json:"rejectReason,omitempty"`
+	// RecordError:稿件已寫入、但之後的記錄沒寫完時的說明(只回給介面,不存檔)。不回錯是因為前端拿到錯誤就不會重載稿件,
+	// 作者接著存檔會把舊內容寫回去(PR #136 審查)。
+	RecordError string `json:"recordError,omitempty"`
 }
 
 // Versions 回傳所有改寫版本(主版本 + Alternatives,#39);舊提案只有一個版本。
@@ -241,10 +244,12 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	if err := s.save(p); err != nil {
 		return nil, err
 	}
-	snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
+	if err := snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
 		"version": version, "versions": len(versions),
-		"authorEdited": p.AuthorEdited, "final": final})
+		"authorEdited": p.AuthorEdited, "final": final}); err != nil {
+		p.RecordError = fmt.Sprintf("稿件已寫入,但來源紀錄寫入失敗:%v", err)
+	}
 	return p, nil
 }
 

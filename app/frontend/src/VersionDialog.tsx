@@ -74,9 +74,10 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
         const unlock = lockEdits();
         try {
             await saveFirst();
-            await RestoreSnapshot(sel.id, files);
+            const r = await RestoreSnapshot(sel.id, files);
             setMsg('已還原。還原前的內容也自動備份成一個快照,需要時可以再還原回來。');
             await onRestored(files.length ? files : sel.files ?? []);
+            if (r.recordError) setError(r.recordError); // 已還原、來源紀錄沒寫成:照常重載,另外警告
             refresh();
             if (file) setDiff(await SnapshotDiff(sel.id, file));
         } catch (e) { fail(e); }
