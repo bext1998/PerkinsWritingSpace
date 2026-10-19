@@ -19,7 +19,7 @@ for i in $(seq 1 240); do
   if [ $i -eq 28 ]; then
     f=$(sess); [ "$(grep -cE '"name":"(write|edit)"' "$f")" -eq 0 ] && { echo "30 分鐘內沒有任何修改,可能迷路"; exit 0; }
   fi
-  if [ $((i % 15)) -eq 0 ]; then
+  if [ $((i % 5)) -eq 0 ]; then # 每 5 分鐘查一次花費(2026-10-19:10 倍價模型 15 分鐘就燒掉 1.6 美元,15 分鐘一次來不及停損)
     u=$(bash "$D/usage.sh"); echo "$(date +%H:%M) 花費=$(python -c "print(round($u-$BASE,3))")"
     python -c "import sys;sys.exit(0 if $u-$BASE>$LIMIT else 1)" && { echo "花費超過停損門檻 $LIMIT"; exit 0; }
   fi
