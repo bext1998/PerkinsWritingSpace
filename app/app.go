@@ -327,8 +327,12 @@ func (a *App) SaveFile(rel, content string) error {
 	if a.proj == nil {
 		return errNoProject
 	}
+	// 讀+寫都在 project.WriteMu 內(#131):與接受/拒絕提案、還原快照同一把鎖,
+	// 避免存檔讀到的內容被另一個寫入蓋掉。研究記錄在鎖外寫。
+	a.proj.WriteMu.Lock()
 	before, _ := a.proj.ReadFile(rel)
 	err := a.proj.WriteFile(rel, content)
+	a.proj.WriteMu.Unlock()
 	// 研究記錄(§12.8):save 只記路徑與字數(CountText 規則),不記內文;
 	// 失敗時記 error、不記 afterCount(預計內容不等於已保存內容)。寫入失敗不影響存檔本身。
 	d := map[string]any{"path": rel, "beforeCount": CountText(before)}

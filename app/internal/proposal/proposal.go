@@ -30,6 +30,9 @@ const (
 var (
 	ErrConflict   = errors.New("檔案在提案建立後已被修改,為避免覆蓋你的編輯,提案未套用")
 	ErrNotPending = errors.New("此提案已處理過")
+	// ErrChangedDuringAccept:比對、快照之後、寫入之前,稿件被外部程式改過。不寫入、狀態維持原樣
+	// (不改成 Conflict):作者再按一次接受時照現有規則重新定位或衝突(#131)。
+	ErrChangedDuringAccept = errors.New("稿件在接受過程中被其他程式修改(例如雲端同步),未套用提案;請確認內容後再按一次接受")
 )
 
 // Version 是提案的一個改寫版本(#39):Label 是一句很短的方向說明(選填,例如「收斂」「更誇張」)。
@@ -177,6 +180,10 @@ func (s *Store) List() ([]*Proposal, error) {
 // Reject 拒絕提案,reason 是作者選填的原因(存進提案 JSON,聊天卡片才顯示得出來,#124);
 // 回傳提案供呼叫端記錄研究事件。
 func (s *Store) Reject(id, reason string) (*Proposal, error) {
+	// 與 Accept、稿件存檔、還原快照共用 project.WriteMu(#131):提案決定要序列化,
+	// 拒絕不得插進接受的中間,讀狀態(Get)也要在鎖內。
+	s.Proj.WriteMu.Lock()
+	defer s.Proj.WriteMu.Unlock()
 	p, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -193,6 +200,10 @@ func (s *Store) Reject(id, reason string) (*Proposal, error) {
 // version 是作者選的版本序號(0 = 主版本,#39);edited 非 nil 時表示作者編輯過該版本文字
 // (部分採用),寫入的是作者的版本(B4)。
 func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error) {
+	// 與 Reject、稿件存檔、還原快照共用 project.WriteMu(#131):接受是「讀稿→快照→寫稿→記錄」
+	// 一整段決定,期間不得插入另一個決定(拒絕或外部存檔),否則後寫的會覆蓋前寫的。
+	s.Proj.WriteMu.Lock()
+	defer s.Proj.WriteMu.Unlock()
 	p, err := s.Get(id)
 	if err != nil {
 		return nil, err
@@ -241,18 +252,36 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	if err != nil {
 		return nil, fmt.Errorf("快照失敗,未套用提案: %w", err)
 	}
+	// 寫入前再讀一次稿件(#131):比對、快照之後若被外部程式(雲端同步、其他編輯器)改過,
+	// 絕不用先前讀到的內容覆寫——那些新文字連快照裡都沒有(G3 救不回)。狀態維持原樣,
+	// 作者再按一次接受時照現有規則重新定位或衝突。註:這次再讀到 WriteFile 之間仍有個
+	// 極小時間窗,外部程式要插進來無法完全排除(要完全排除得靠外部程式配合獨占開啟)。
+	again, err := s.Proj.ReadFile(p.Target)
+	if err != nil {
+		return nil, err
+	}
+	if again != content {
+		return p, ErrChangedDuringAccept
+	}
 	if err := s.Proj.WriteFile(p.Target, content[:start]+final+content[end:]); err != nil {
 		return nil, err
 	}
 	p.Status, p.SnapshotID = Accepted, snap.ID
+	// 稿件已寫入之後的記錄失敗不回錯(#131,同 PR #136 的 Provenance 處理):回錯前端就拿不到
+	// 回傳值、不會重載稿件,作者接著存檔會把舊內容寫回。改以 RecordError 告知,前端照「已寫入」
+	// 處理。提案狀態存檔失敗時 Provenance 仍要嘗試寫,兩個都失敗就兩個原因都寫進 RecordError。
+	var recErrs []string
 	if err := s.save(p); err != nil {
-		return nil, err
+		recErrs = append(recErrs, "提案記錄未完成:"+err.Error())
 	}
 	if err := snapshot.Provenance(s.Proj, map[string]any{"event": "accept", "proposal": p.ID, "target": p.Target, "model": p.Model,
 		"snapshot": snap.ID, "rationale": p.Rationale, "relocated": p.Relocated,
 		"version": version, "versions": len(versions),
 		"authorEdited": p.AuthorEdited, "final": final}); err != nil {
-		p.RecordError = fmt.Sprintf("稿件已寫入,但來源紀錄寫入失敗:%v", err)
+		recErrs = append(recErrs, "來源紀錄寫入失敗:"+err.Error())
+	}
+	if len(recErrs) > 0 {
+		p.RecordError = "稿件已寫入,但" + strings.Join(recErrs, ";")
 	}
 	return p, nil
 }

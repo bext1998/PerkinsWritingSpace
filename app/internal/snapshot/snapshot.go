@@ -133,6 +133,10 @@ func (s *Store) FileContent(id, rel string) (string, error) {
 
 // Restore 把快照中的檔案寫回(files 為空則全部)。還原前先自動快照目前狀態,回傳該快照。
 func (s *Store) Restore(id string, files []string) (*Meta, error) {
+	// 與稿件存檔、接受/拒絕提案共用 project.WriteMu(#131):還原也是稿件寫入,
+	// 不得與其他決定交錯;鎖內只呼叫不會加鎖的 Take/Provenance,不會死鎖。
+	s.Proj.WriteMu.Lock()
+	defer s.Proj.WriteMu.Unlock()
 	m, err := s.Get(id)
 	if err != nil {
 		return nil, err
