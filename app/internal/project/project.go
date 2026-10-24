@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 const (
@@ -77,6 +78,10 @@ func (c Config) BotReadable() []string {
 type Project struct {
 	Root   string
 	Config Config
+	// WriteMu 序列化同一作品的稿件寫入(#131):稿件存檔、接受/拒絕提案、還原快照都在這把鎖內
+	// 執行,避免兩個決定交錯、後寫的覆蓋前寫的。App、proposal.Store、snapshot.Store 拿的是同一個
+	// *Project,鎖因此共用;持鎖時不得再呼叫另一個會加鎖的操作(會死鎖)。
+	WriteMu sync.Mutex
 }
 
 type Scene struct {

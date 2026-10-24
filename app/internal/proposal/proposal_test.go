@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"perkins/internal/project"
 	"perkins/internal/research"
@@ -439,5 +440,165 @@ func TestAcceptRejectsTargetThroughLink(t *testing.T) {
 	}
 	if q, err := s.Get(p.ID); err != nil || q.Status != Pending {
 		t.Fatalf("失敗的 Accept 不得改變提案狀態: %+v %v", q, err)
+	}
+}
+
+// #131 意圖:比對、快照之後,外部程式(雲端同步、其他編輯器)又改了稿件時,Accept 絕不能用先前
+// 讀到的內容覆寫——新文字連快照裡都沒有,G3 救不回。稿件保持外部修改後的內容,提案仍是待審。
+func TestAcceptRefusedWhenFileChangedDuringAccept(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := read(t, s, rel) + "【外部同步後加的一段】\n"
+	orig := takeSnapshot
+	takeSnapshot = func(st *snapshot.Store, label, reason string, files []string) (*snapshot.Meta, error) {
+		m, err := orig(st, label, reason, files)
+		if err != nil {
+			return m, err
+		}
+		// 快照完成後、寫入前,模擬外部程式改稿
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(ext), 0o644); err != nil {
+			t.Error(err)
+		}
+		return m, nil
+	}
+	defer func() { takeSnapshot = (*snapshot.Store).Take }()
+
+	if got, err := s.Accept(p.ID, 0, nil); err != nil || got.NotApplied != ErrChangedDuringAccept.Error() || got.Status != Pending {
+		t.Fatalf("應回待審提案並帶 NotApplied(不回錯,前端才會重載), got %+v %v", got, err)
+	}
+	if read(t, s, rel) != ext {
+		t.Fatalf("不得覆寫外部修改: %q", read(t, s, rel))
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Pending {
+		t.Fatalf("提案應維持待審,作者再按一次才重新定位或衝突: %+v %v", q, err)
+	}
+}
+
+// #131 意圖(PR #140 審查後改為先存狀態再寫稿):提案狀態存不成時什麼都不寫、明確回錯。
+// 不能留下「稿件已寫、提案仍待審」:切換作品或重開後它又能被接受,改寫保留原文時會被重複套用。
+func TestAcceptWritesNothingWhenProposalCannotBeSaved(t *testing.T) {
+	s, rel, dir := setup(t)
+	// 改寫保留原文(原文仍唯一):若稿件先寫,重開後再接受會重複套用
+	p, err := s.Create("m", rel, "天很黑。", "天很黑。雨下起來了。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pj := filepath.Join(dir, ".perkins", "proposals", p.ID+".json")
+	if err := os.Chmod(pj, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(pj, 0o644) // 改回可寫,TempDir 才清得掉
+
+	if _, err := s.Accept(p.ID, 0, nil); err == nil || !strings.Contains(err.Error(), "未套用") {
+		t.Fatalf("提案狀態存不成應回錯並說明未套用, got %v", err)
+	}
+	if read(t, s, rel) != "小明走進森林。天很黑。他很害怕。\n" {
+		t.Fatalf("狀態沒存成就不得寫稿, got %q", read(t, s, rel))
+	}
+	// 等同切換作品/重開:新的 Store 看到的是待審,而稿件也確實沒動,兩者一致
+	if g, err := (&Store{Proj: s.Proj}).Get(p.ID); err != nil || g.Status != Pending {
+		t.Fatalf("提案應仍是待審, got %+v %v", g, err)
+	}
+	// 恢復可寫後再接受只套用一次
+	os.Chmod(pj, 0o644)
+	if _, err := s.Accept(p.ID, 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, s, rel); got != "小明走進森林。天很黑。雨下起來了。他很害怕。\n" {
+		t.Fatalf("應只套用一次, got %q", got)
+	}
+	if _, err := (&Store{Proj: s.Proj}).Accept(p.ID, 0, nil); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("新的 Store 不得再次接受已套用的提案, got %v", err)
+	}
+}
+
+// #131 意圖:狀態已存成已接受、但稿件寫入失敗時,提案要改回待審(稿件沒變),作者可以再試;
+// 不能留下「顯示已接受、稿件其實沒改」。
+func TestAcceptRevertsProposalWhenManuscriptWriteFails(t *testing.T) {
+	s, rel, dir := setup(t)
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.Chmod(target, 0o444); err != nil { // 稿件唯讀:寫入必定失敗(讀取照常)
+		t.Fatal(err)
+	}
+	defer os.Chmod(target, 0o644)
+	if _, err := s.Accept(p.ID, 0, nil); err == nil {
+		t.Fatal("稿件寫入失敗應回錯")
+	}
+	if read(t, s, rel) != "小明走進森林。天很黑。他很害怕。\n" {
+		t.Fatalf("稿件不應改變, got %q", read(t, s, rel))
+	}
+	if g, err := (&Store{Proj: s.Proj}).Get(p.ID); err != nil || g.Status != Pending || g.SnapshotID != "" {
+		t.Fatalf("提案應改回待審, got %+v %v", g, err)
+	}
+}
+
+// PR #140 審查:沒套用的結果(外部改稿,NotApplied)不得記成 proposal_accept。
+func TestLogAcceptSkipsNotApplied(t *testing.T) {
+	s, rel, dir := setup(t)
+	if err := s.Proj.SetResearch(true); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.NotApplied = ErrChangedDuringAccept.Error() // Status 仍是 Pending,與 Accept 回傳的未套用結果相同
+	LogAccept(research.New(s.Proj, "sess"), p)
+	res, _ := os.ReadFile(filepath.Join(dir, ".perkins", "research.jsonl"))
+	if strings.Contains(string(res), "proposal_accept") {
+		t.Fatalf("未套用不得記成接受: %s", res)
+	}
+}
+
+// #131 意圖:接受還在進行中(快照當下)時,同一提案不得被 Reject 插隊;兩個決定要序列化,
+// 後到的拒絕等 Accept 完成後回 ErrNotPending,最終狀態是 Accepted。
+func TestAcceptRejectSerialized(t *testing.T) {
+	s, rel, _ := setup(t)
+	p, _ := s.Create("m", rel, "天很黑。", "夜濃得化不開。", "", nil)
+	orig := takeSnapshot
+	rejectDone := make(chan struct{})
+	var rejectErr error
+	takeSnapshot = func(st *snapshot.Store, label, reason string, files []string) (*snapshot.Meta, error) {
+		m, err := orig(st, label, reason, files)
+		if err != nil {
+			return m, err
+		}
+		go func() {
+			_, rejectErr = s.Reject(p.ID, "改主意了")
+			close(rejectDone)
+		}()
+		select {
+		case <-rejectDone:
+			t.Error("Reject 在 Accept 進行中就完成了,兩個決定沒有被序列化")
+		case <-time.After(200 * time.Millisecond):
+		}
+		return m, nil
+	}
+	defer func() { takeSnapshot = (*snapshot.Store).Take }()
+
+	got, err := s.Accept(p.ID, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-rejectDone:
+		if !errors.Is(rejectErr, ErrNotPending) {
+			t.Fatalf("Accept 完成後 Reject 應回 ErrNotPending, got %v", rejectErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Reject 沒有在 Accept 完成後結束(死鎖?)")
+	}
+	if got.Status != Accepted {
+		t.Fatalf("Accept 回傳狀態應為 Accepted: %v", got.Status)
+	}
+	if q, err := s.Get(p.ID); err != nil || q.Status != Accepted {
+		t.Fatalf("最終狀態應為 Accepted: %+v %v", q, err)
 	}
 }

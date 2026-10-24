@@ -895,7 +895,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                           fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
-                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}
+                            beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReload={files => reloadCurrent(files)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}
                             pending={pending} notify={notify} onPickSelection={pickSelection}
                             lastSel={lastSel}
                             onClearLastSel={() => setLastSel(null)}/>
