@@ -1,6 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
-    BookOpen, CircleCheck, CircleDashed, FileText, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelRightClose,
+    BookOpen, CircleCheck, CircleDashed, FileText, Focus, History, Home, ListChecks, MoreHorizontal, NotebookPen, PanelRightClose,
     PanelRightOpen, Save, ScrollText, Settings, Share2, Users,
 } from 'lucide-react';
 import {
@@ -143,10 +143,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 禪模式(SPEC §16 第 6 項):只用 CSS 隱藏周邊(display:none),不卸載——
     // 側欄、資訊欄、Perkins Bot 的狀態(含對話內容)都保留,退出後版面原樣恢復。
     const [zen, setZen] = useState(false);
-    // 打字機捲動與專注模式(#44 第二階段(一),SPEC §17.3):各自獨立開關,
-    // 只存在記憶體(與禪模式相同),不寫設定檔;一般模式與禪模式都可用,禪模式不自動開啟
-    const [typewriter, setTypewriter] = useState(false);
-    const [focusMode, setFocusMode] = useState(false);
+    // 專注寫作(#116):打字機捲動+段落淡化合成一個開關,
+    // 只存在記憶體(與禪模式相同),重開後關閉;一般模式與禪模式都可用,禪模式不自動開啟
+    const [focusWriting, setFocusWriting] = useState(false);
     const [toast, setToast] = useState<Toast | null>(null);
     const [counts, setCounts] = useState<Record<string, number>>({});
     const [liveCount, setLiveCount] = useState(0);
@@ -503,9 +502,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         return () => window.removeEventListener('keydown', onKey);
     }, [saveNow]);
 
-    // 打字機捲動 Ctrl+Shift+T、專注模式 Ctrl+Shift+D(進出同鍵)、禪模式 Ctrl+Shift+F、IME 組字中不動作。
+    // 專注寫作 Ctrl+Shift+D(進出同鍵)、禪模式 Ctrl+Shift+F、IME 組字中不動作。
     // 必須在 CodeMirror keymap 之前攔截(PR #79 返工、#80):Caps Lock 下這幾個組合的 key 是小寫
-    // 'd'/'t'/'f',CM 的 Mod-d(selectNextOccurrence)與 Mod-f(開搜尋面板)會先把按鍵處理掉——
+    // 'd'/'f',CM 的 Mod-d(selectNextOccurrence)與 Mod-f(開搜尋面板)會先把按鍵處理掉——
     // Ctrl+Shift+D 會把游標所在的英文字選起來(之後輸入就取代被選的字),Ctrl+Shift+F 會順手把
     // 搜尋面板打開;CM 處理後 bubble 到 window 時 preventDefault 救不回已發生的事。
     // 所以用 capture 階段的 listener 攔截並 stopPropagation,事件根本到不了 CM。
@@ -513,12 +512,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
         const onKey = (e: KeyboardEvent) => {
             if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
             const k = e.key.toLowerCase();
-            if (k !== 't' && k !== 'd' && k !== 'f') return;
+            if (k !== 'd' && k !== 'f') return;
             if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
             e.preventDefault();
             e.stopPropagation();
-            if (k === 't') setTypewriter(v => !v);
-            else if (k === 'd') setFocusMode(v => !v);
+            if (k === 'd') setFocusWriting(v => !v);
             else setZen(z => !z);
         };
         window.addEventListener('keydown', onKey, true);
@@ -564,13 +562,9 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     }, [zen]);
     useEffect(() => () => setShellActions({zen: undefined}), []);
     useEffect(() => {
-        setShellActions({typewriter: {on: typewriter, toggle: () => setTypewriter(v => !v)}});
-    }, [typewriter]);
-    useEffect(() => () => setShellActions({typewriter: undefined}), []);
-    useEffect(() => {
-        setShellActions({focusMode: {on: focusMode, toggle: () => setFocusMode(v => !v)}});
-    }, [focusMode]);
-    useEffect(() => () => setShellActions({focusMode: undefined}), []);
+        setShellActions({focusWriting: {on: focusWriting, toggle: () => setFocusWriting(v => !v)}});
+    }, [focusWriting]);
+    useEffect(() => () => setShellActions({focusWriting: undefined}), []);
     // 展開時回到上次收合前的面板
     const lastPanel = useRef<Panel>('manuscript');
     if (panel) lastPanel.current = panel;
@@ -778,6 +772,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                     </DropdownMenu>
                                 </>
                             )}
+                            <Tip label="專注寫作:游標保持在舒適的高度,淡化其他段落(Ctrl+Shift+D)" side="bottom">
+                                <Button variant={focusWriting ? 'secondary' : 'ghost'} size="sm" data-testid="toolbar-focus" className="shrink-0"
+                                        aria-pressed={focusWriting} aria-label={focusWriting ? '離開專注寫作' : '專注寫作'}
+                                        onClick={() => setFocusWriting(v => !v)}><Focus/>{!iconOnly && '專注寫作'}</Button>
+                            </Tip>
                             {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
                             <Button size="sm"
                                     data-testid="save-button"
@@ -843,7 +842,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} reveal={revealP && revealP.target === current ? originalRange(text, revealP) : null} posKey={current} posStore={posMemo.current}
-                            typewriter={typewriter} focusMode={focusMode}
+                            typewriter={focusWriting} focusMode={focusWriting}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);
