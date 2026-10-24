@@ -45,9 +45,9 @@
   - 優先級：P0 阻斷性問題，優先處理；P1 當前核心任務，確保交付；P2 一般改善，依實際需要安排；P3 非必要最佳化，原則上延後。
   - 小型、已釐清或以驗證為主的工作（補測試、小修正、改文件）由 Orchestrator 自己做；實作量大、自己做明顯不划算時才派給 Pi，任務說明寫清楚，減少返工往返。
   - Orchestrator 可視工作難易度，自行決定是否把一部分工作交給自己的子代理（例如 Claude Code 的 sub-agent）：適合範圍明確、可獨立完成的搜尋、調查或局部實作；簡單到自己做更快的不拆，難度高、需要完整上下文判斷的留給自己。子代理不占用 Pi 名額，成果一樣要親自核對。
-  - 任何時刻最多只有一個 Pi 實作者在執行任務，適用於所有透過 Herdr 啟動的 Pi pane；不得為了加快進度自行解除。
-  - **Pi 按需啟動**：Pi 不常駐。派工時由 Orchestrator 開 pane、指定模型啟動，步驟與腳本見 `.agent/skills/pi-dispatch/SKILL.md`。模型依任務選：預設簡單工作用 MiMo V2.6 Flash、複雜工作用 MiMo V2.6 Pro；為持續累積比較資料，可依需求改用 GLM 5.3、GLM 5.3 Flash、DeepSeek V4.1 Flash。思考強度依任務難度在啟動時指定：簡單工作 medium（模型沒有 medium 時用 low，各模型可用檔位見 pi-dispatch 技能）；複雜工作，或曾返工、審查被打回的重派，用 high；xhigh、max 原則上不用（思考 token 照樣計費）。每次派工的模型、思考強度、供應商、花費與審查結果記在本機紀錄（不進 Git）。
-  - **第二種派工方式：dsh-code（DeepSeek Harness）**：內容明確、設計已定的工作可改派給 herdr pane 裡的 dsh-code，唯讀分析可用它的單次模式，步驟與腳本見 `.agent/skills/dsh-dispatch/SKILL.md`。實作用的 dsh-code 與 Pi 共用「同時最多一個實作者」的名額，只在任務工作樹執行；唯讀分析不占名額。
+  - 任何時刻最多只有一個 Pi 實作者在本專案執行任務，適用於在本倉庫或其工作樹裡透過 Herdr 啟動的 Pi pane（作者在其他專案開的 Pi 不算）；不得為了加快進度自行解除。
+  - **Pi 按需啟動**：Pi 不常駐。派工時由 Orchestrator 開 pane、指定模型啟動，步驟與腳本見 `.agent/skills/pi-dispatch/SKILL.md`。模型依任務選：預設簡單工作用 MiMo V2.6 Flash、複雜工作用 MiMo V2.6 Pro；為持續累積比較資料，可依需求改用 GLM 5.3、GLM 5.3 Flash、DeepSeek V4.1 Flash、MiniMax M3.1 Flash（皆經 OpenRouter）；也可從 Pi 直連 DeepSeek 官方 API（`deepseek/deepseek-flash`），或視情況用本機模型 `mirai/mirai-s-27b`。思考強度依任務難度在啟動時指定：簡單工作 medium（模型沒有 medium 時用 low，各模型可用檔位見 pi-dispatch 技能）；複雜工作，或曾返工、審查被打回的重派，用 high；xhigh、max 原則上不用（思考 token 照樣計費）。每次派工的模型、思考強度、供應商、花費與審查結果記在本機紀錄（不進 Git）。
+  - **第二種派工方式：dsh-code（DeepSeek Harness）**：內容明確、設計已定的工作可改派給 herdr pane 裡的 dsh-code（DeepSeek 官方帳戶額度，與 Pi 直連 DeepSeek 共用，依任務擇一），唯讀分析可用它的單次模式，步驟與腳本見 `.agent/skills/dsh-dispatch/SKILL.md`。實作用的 dsh-code 與 Pi 共用「同時最多一個實作者」的名額，只在任務工作樹執行；唯讀分析不占名額。
   - **生命週期由 Orchestrator 管理**：建立 pane 與工作階段、追蹤進度、異常停損、完成後清理。停損條件任一成立就中斷 Pi，改由 Orchestrator 接手、換模型重派或回報作者：30 分鐘內沒有任何檔案修改；單項花費超過作者設定的停損門檻（門檻記在本機紀錄，不寫進倉庫）；同一問題返工兩輪仍未通過審查。Pi 回報且不再需要後關閉其 pane；PR 合併後刪除對應工作樹與本機分支。
   - 適時停止：核心任務已達驗收條件、剩餘問題不影響交付，或繼續投入的成本已不符效益時，停止新增派工，把剩餘事項回報作者或開成待辦；不因待辦還有事就繼續派工。
 - **審查範圍**：Reviewer 只審查本次 PR 的 diff，以及任務說明、驗收條件與相關 SPEC 章節要求的行為。
