@@ -7,7 +7,7 @@
 // 否則標題欄按鈕會在對話框開著時點不到。
 import * as React from 'react';
 import {useEffect, useState} from 'react';
-import {Copy, Focus, Library, Maximize2, Minimize2, Minus, PanelLeftClose, PanelLeftOpen, Save, Settings, Square, X} from 'lucide-react';
+import {Copy, Focus, Keyboard, Library, Maximize2, Minimize2, Minus, PanelLeftClose, PanelLeftOpen, Save, Settings, Square, X} from 'lucide-react';
 import {Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise} from '../../wailsjs/runtime/runtime';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {getProjectName, getShellActions, isFrameVisible, subscribeShellState} from '@/lib/shellState';
@@ -47,7 +47,8 @@ export default function TitleBar() {
     const save = frame ? actions.save : undefined;
     const bookshelf = frame ? actions.bookshelf : undefined;
     const zen = frame ? actions.zen : undefined;
-    const focusWriting = frame ? actions.focusWriting : undefined;
+    const typewriter = frame ? actions.typewriter : undefined;
+    const focusMode = frame ? actions.focusMode : undefined;
     // 禪模式時圖示列藏起,標題欄不再與它連成 L 形外框,也不提供側欄開關
     const sidebar = frame && !zen?.on ? actions.sidebar : undefined;
     const lFrame = frame && !zen?.on;
@@ -66,7 +67,7 @@ export default function TitleBar() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="start" className="z-[70] min-w-[13rem]" data-testid="app-menu-content">
                         <div className="px-2 py-1.5 text-xs text-muted-foreground">Perkins WritingSpace</div>
-                        {(save || bookshelf || zen || focusWriting || actions.settings) && <DropdownMenuSeparator/>}
+                        {(save || bookshelf || zen || typewriter || focusMode || actions.settings) && <DropdownMenuSeparator/>}
                         {save && (
                             <DropdownMenuItem data-testid="menu-save" onSelect={save}>
                                 <Save/>儲存<span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+S</span>
@@ -78,9 +79,15 @@ export default function TitleBar() {
                                 <span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+Shift+F</span>
                             </DropdownMenuItem>
                         )}
-                        {focusWriting && (
-                            <DropdownMenuItem data-testid="menu-focus" onSelect={focusWriting.toggle}>
-                                <Focus/>{focusWriting.on ? '離開專注寫作' : '專注寫作'}
+                        {typewriter && (
+                            <DropdownMenuItem data-testid="menu-typewriter" onSelect={typewriter.toggle}>
+                                <Keyboard/>{typewriter.on ? '關閉打字機捲動' : '打字機捲動'}
+                                <span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+Shift+T</span>
+                            </DropdownMenuItem>
+                        )}
+                        {focusMode && (
+                            <DropdownMenuItem data-testid="menu-focus" onSelect={focusMode.toggle}>
+                                <Focus/>{focusMode.on ? '離開專注模式' : '專注模式'}
                                 <span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+Shift+D</span>
                             </DropdownMenuItem>
                         )}

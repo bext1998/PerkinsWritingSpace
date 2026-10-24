@@ -523,48 +523,23 @@ module.exports = {
             return {t, closed: (await page.locator('[data-testid=app-menu-content]').count()) === 0};
         };
 
-        // 專注寫作(#116):工具列按鈕——存在、aria-pressed 切換、打字機捲動與段落淡化一起開關
-        const dimCount = async () => (await ops()).filter(r => r.t !== '' && r.op < 1).length;
-        const focusBtn = page.locator('[data-testid=toolbar-focus]');
-        const fw0 = await focusBtn.getAttribute('aria-pressed');
-        await focusBtn.click();
-        await settle(150, 1000);
-        const fw1 = await focusBtn.getAttribute('aria-pressed');
-        const twOn = await page.evaluate(() => document.querySelector('.cm-host').classList.contains('cm-typewriter'));
-        const dimOn = await dimCount();
-        await focusBtn.click();
-        await settle(150, 1000);
-        const fw2 = await focusBtn.getAttribute('aria-pressed');
-        const twOff = await page.evaluate(() => document.querySelector('.cm-host').classList.contains('cm-typewriter'));
-        const dimOff = await dimCount();
-        check('#116 專注寫作:工具列按鈕存在,點下去打字機捲動與段落淡化一起開啟,再點一次全部恢復',
-            fw0 === 'false' && fw1 === 'true' && twOn && dimOn > 0 && fw2 === 'false' && !twOff && dimOff === 0,
-            JSON.stringify({fw0, fw1, fw2, twOn, dimOn, twOff, dimOff}));
-        // 1280 寬時按鈕有文字「專注寫作」
-        await page.setViewportSize({width: 1280, height: 800});
-        await settle(200, 1000);
-        const btnText = (await focusBtn.innerText()).trim();
-        check('#116 專注寫作:1280 寬時按鈕有文字「專注寫作」', btnText === '專注寫作', JSON.stringify({btnText}));
-        await page.setViewportSize({width: 1440, height: 900});
-        await settle(200, 1000);
-
-        // 專注寫作:選單開啟。游標在文件開頭時不硬拉(開頭照常顯示,scrollTop 夾在 0)
+        // 打字機捲動:選單開啟。游標在文件開頭時不硬拉(開頭照常顯示,scrollTop 夾在 0)
         await page.click('.cm-content');
         await page.keyboard.press('Control+Home');
         await settle(80, 500);
         const t0 = await scr();
         await openAppMenu();
-        const fwLabelOff = (await page.textContent('[data-testid=menu-focus]')) || '';
-        if (await page.locator('[data-testid=menu-focus]').count()) await page.click('[data-testid=menu-focus]');
+        const twLabelOff = (await page.textContent('[data-testid=menu-typewriter]')) || '';
+        if (await page.locator('[data-testid=menu-typewriter]').count()) await page.click('[data-testid=menu-typewriter]');
         else await page.click('[data-testid=titlebar-title]'); // 開關不存在(破壞驗證時):只關選單,讓檢查自己 FAIL
         await settle(150, 1000);
         const t1 = await scr();
-        check('#116 專注寫作(選單開啟):文件開頭不足以捲動時不硬拉,開頭照常顯示',
-            fwLabelOff.includes('專注寫作') && t0 && t1 && (await stTop()) < 2 && t1.ratio < 0.25,
-            JSON.stringify({label: fwLabelOff, t0, t1, st: await stTop()}));
-        const fwMenu = await menuText('menu-focus');
-        check('#116 專注寫作:選單顯示目前狀態(開啟後標示「離開專注寫作」),選完能回到編輯器',
-            fwMenu.t.includes('離開專注寫作') && fwMenu.closed, JSON.stringify(fwMenu));
+        check('#44 打字機捲動(選單開啟):文件開頭不足以捲動時不硬拉,開頭照常顯示',
+            twLabelOff.includes('打字機捲動') && t0 && t1 && (await stTop()) < 2 && t1.ratio < 0.25,
+            JSON.stringify({label: twLabelOff, t0, t1, st: await stTop()}));
+        const twMenu = await menuText('menu-typewriter');
+        check('#44 打字機捲動:選單顯示目前狀態(開啟後標示關閉),選完能回到編輯器',
+            twMenu.t.includes('關閉打字機捲動') && twMenu.closed, JSON.stringify(twMenu));
 
         // 連續輸入與方向鍵移動:游標行維持在固定範圍(約上方 40%),內容捲動而不是游標往下跑。
         // 先把游標放到中段(上方有足夠內容可捲動)再量,避免開頭夾住的暫態混進量測;
@@ -589,8 +564,8 @@ module.exports = {
             ratios.every(r => r > 0.3 && r < 0.5) && Math.max(...ratios) - Math.min(...ratios) < 0.08,
             JSON.stringify({lineBefore, lineAfter, stBefore, stTyped, ratios: ratios.map(r => Math.round(r * 100) / 100)}));
 
-        // 快捷鍵 Ctrl+Shift+D 關閉:恢復一般行為(游標往下跑、內容不捲動);再按開啟:游標行回到固定位置
-        await page.keyboard.press('Control+Shift+D');
+        // 快捷鍵 Ctrl+Shift+T 關閉:恢復一般行為(游標往下跑、內容不捲動);再按開啟:游標行回到固定位置
+        await page.keyboard.press('Control+Shift+T');
         await settle(100, 600);
         const twOff0 = await scr();
         const twOffS0 = await stTop();
@@ -602,13 +577,13 @@ module.exports = {
         const twOff1 = await scr();
         const twOffS1 = await stTop();
         const lineOff1 = (await page.evaluate(() => window.__perkinsEditor.cursor())).line;
-        check('#116 專注寫作關閉(快捷鍵)後恢復一般行為:游標往下跑、內容不捲動',
+        check('#44 打字機捲動關閉(快捷鍵)後恢復一般行為:游標往下跑、內容不捲動',
             lineOff1 > lineOff0 && twOff1.ratio > twOff0.ratio + 0.02 && Math.abs(twOffS1 - twOffS0) < 2,
             JSON.stringify({lineOff0, lineOff1, twOff0, twOff1, twOffS0, twOffS1}));
-        await page.keyboard.press('Control+Shift+D');
+        await page.keyboard.press('Control+Shift+T');
         await settle(150, 1000);
         const twOn2 = await scr();
-        check('#116 專注寫作(快捷鍵開啟)後游標行回到固定位置(約上方 40%)',
+        check('#44 打字機捲動(快捷鍵開啟)後游標行回到固定位置(約上方 40%)',
             twOn2 && twOn2.ratio > 0.3 && twOn2.ratio < 0.5, JSON.stringify(twOn2));
 
         // 作者用滾輪主動捲動閱讀:不被拉回,直到下一次移動游標(先確認編輯器有焦點)
@@ -647,8 +622,10 @@ module.exports = {
         const afterIme = await scr();
         check('#44 打字機捲動:組字結束後才定位(游標行回到固定位置)',
             afterIme && afterIme.ratio > 0.3 && afterIme.ratio < 0.5, JSON.stringify(afterIme));
-        // 專注寫作(段落淡化):打字機捲動維持開啟直接測(淡化在打字機捲動開著時一樣成立);
-        // 游標所在段落不淡化,其他(含標題、場景分隔)淡化;換段跟著換。
+        await page.keyboard.press('Control+Shift+T'); // 關掉打字機捲動(受控狀態給專注模式段落)
+        await settle(100, 600);
+
+        // 專注模式:游標所在段落不淡化,其他(含標題、場景分隔)淡化;換段跟著換。
         // 畫面只渲染可見的行,一律用行文字找目標行(不靠行序),量測前先捲到該區
         const rowOf = t => page.evaluate(async s => {
             const l = [...document.querySelectorAll('.cm-content .cm-line')].find(x => x.innerText.trim().startsWith(s));
@@ -656,6 +633,14 @@ module.exports = {
             return l ? {t: l.innerText.trim(), op: parseFloat(getComputedStyle(l).opacity)} : null;
         }, t);
         await setDoc(TDOC);
+        await openAppMenu();
+        const foLabelOff = (await page.textContent('[data-testid=menu-focus]')) || '';
+        if (await page.locator('[data-testid=menu-focus]').count()) await page.click('[data-testid=menu-focus]');
+        else await page.click('[data-testid=titlebar-title]');
+        await settle(150, 1000);
+        const foMenu = await menuText('menu-focus');
+        check('#44 專注模式:選單顯示目前狀態(開啟後標示離開專注模式)且選完能回到編輯器',
+            foMenu.t.includes('離開專注模式') && foLabelOff.includes('專注模式') && foMenu.closed, JSON.stringify(foMenu));
         await page.click('.cm-content');
         await page.keyboard.press('Control+Home');
         await settle(150, 1000);
@@ -665,13 +650,13 @@ module.exports = {
         const f1all = f1.filter(r => r.t !== '');
         const dimmed1 = f1all.filter(r => r.op < 1);
         const headRow = f1.find(r => r.t === '打字機測試');
-        check('#116 專注寫作(段落淡化):游標所在段落不淡化,其他段落(含標題)淡化',
+        check('#44 專注模式:游標所在段落不淡化,其他段落(含標題)淡化',
             headRow && headRow.op < 1 && f1all.length > 3 && dimmed1.length === f1all.length - 1 &&
             (await rowOf('打字第1段')).op === 1,
             JSON.stringify({heading: headRow, dimmed: dimmed1.length, all: f1all.length, para: await rowOf('打字第1段')}));
         await page.evaluate(() => window.__perkinsEditor.setCursor(7, 0)); // 打字第3段
         await settle(150, 1000);
-        check('#116 專注寫作(段落淡化):游標移到別段,淡化跟著換',
+        check('#44 專注模式:游標移到別段,淡化跟著換',
             (await rowOf('打字第3段')).op === 1 && (await rowOf('打字第1段')).op < 1,
             JSON.stringify({now: await rowOf('打字第3段'), old: await rowOf('打字第1段')}));
 
@@ -683,7 +668,7 @@ module.exports = {
         await settle(150, 1000);
         const sel = [await rowOf('打字第2段'), await rowOf('打字第3段'), await rowOf('打字第4段')];
         const out = [await rowOf('打字第1段'), await rowOf('打字第5段')];
-        check('#116 專注寫作(段落淡化):選取跨多段時,選取涵蓋的段落都不淡化',
+        check('#44 專注模式:選取跨多段時,選取涵蓋的段落都不淡化',
             sel.every(r => r && r.op === 1) && out.every(r => r && r.op < 1), JSON.stringify({sel, out}));
 
         // 場景分隔:游標不在它上面時淡化,游標移上去就不淡化
@@ -693,23 +678,29 @@ module.exports = {
         await settle(150, 1000);
         const brk = await rowOf('◇◇◇');
         const last = await rowOf('末段');
-        check('#116 專注寫作(段落淡化):場景分隔行一樣依是否在游標所在段落淡化',
+        check('#44 專注模式:場景分隔行一樣依是否在游標所在段落淡化',
             brk && brk.op < 1 && last && last.op === 1, JSON.stringify({brk, last}));
 
         // 快捷鍵 Ctrl+Shift+D 關閉:回到一般行為(全部不淡化)
         await page.keyboard.press('Control+Shift+D');
         await settle(150, 1000);
         const f4 = await ops();
-        check('#116 專注寫作關閉(快捷鍵)後恢復一般行為:所有段落都不淡化',
+        check('#44 專注模式關閉(快捷鍵)後恢復一般行為:所有段落都不淡化',
             f4.filter(r => r.t !== '' && r.op < 1).length === 0, JSON.stringify(f4.filter(r => r.op < 1).slice(0, 3)));
 
         // 快捷鍵必須在 CodeMirror keymap 之前攔截(PR #79 返工):Caps Lock 下 Ctrl+Shift+D 的 key
         // 是小寫 'd'(keyCode 68),CM 的 Mod-d(selectNextOccurrence)若先收到會把游標所在的英文字
-        // 選起來,切換專注寫作後下一個輸入就取代被選的字。送真實 keyDown(key='d'+Ctrl+Shift)驗:
-        // 狀態切換且原本的游標/選取不變。
+        // 選起來,切換專注模式後下一個輸入就取代被選的字。送真實 keyDown(key='d'+Ctrl+Shift)驗:
+        // 狀態切換且原本的游標/選取不變;事件也不得傳到 CM/內文層(探針在 document 上看不到它)。
         await setDoc('hello world\n\n第二段。\n');
         await home();
         await press('ArrowRight', 2); // 游標在 hello 中間(空選取)
+        await page.evaluate(() => {
+            (window).__capProbe = 0;
+            document.addEventListener('keydown', e => {
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 't' || e.key === 'd')) (window).__capProbe++;
+            }, false);
+        });
         const capKey = (k, modifiers = 10) => cdp.send('Input.dispatchKeyEvent', {type: 'keyDown', key: k, code: `Key${k.toUpperCase()}`,
             windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0), nativeVirtualKeyCode: k.toUpperCase().charCodeAt(0), modifiers}); // 預設 10 = Ctrl+Shift
         const capUp = (k, modifiers = 10) => cdp.send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code: `Key${k.toUpperCase()}`,
@@ -721,7 +712,7 @@ module.exports = {
         await settle(150, 1000);
         const kb1 = await page.evaluate(() => window.__perkinsEditor.pos());
         const dim1 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
-        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+D(key=d)切換專注寫作且游標/選取不變',
+        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+D(key=d)切換專注模式且游標/選取不變',
             dim0 === 0 && dim1 > 0 && kb1.anchor === kb0.anchor && kb1.head === kb0.head,
             JSON.stringify({kb0, kb1, dim0, dim1}));
         await capKey('d');
@@ -729,16 +720,18 @@ module.exports = {
         await settle(150, 800);
         const twCls = () => page.evaluate(() => document.querySelector('.cm-host').classList.contains('cm-typewriter'));
         const tw0 = await twCls();
-        const dimA0 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
         await capKey('t');
         await capUp('t');
         await settle(150, 1000);
         const tw1 = await twCls();
-        const dimA1 = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
         const kb2 = await page.evaluate(() => window.__perkinsEditor.pos());
-        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+T(key=t)不再切換任何模式(.cm-typewriter 存在與淡化不變),選取不變',
-            tw0 === tw1 && dimA0 === dimA1 && kb2.anchor === kb0.anchor && kb2.head === kb0.head,
-            JSON.stringify({tw0, tw1, dimA0, dimA1, kb2}));
+        const probe = await page.evaluate(() => window.__capProbe);
+        check('#44 PR#79 返工:Caps Lock 風格的 Ctrl+Shift+T(key=t)以同一機制切換打字機捲動、選取不變且事件不傳到 CM',
+            !tw0 && tw1 && kb2.anchor === kb0.anchor && kb2.head === kb0.head && probe === 0,
+            JSON.stringify({tw0, tw1, kb2, probe}));
+        await capKey('t');
+        await capUp('t'); // 關回
+        await settle(150, 800);
 
         // ===== #80:Caps Lock 下其餘全域快捷鍵(實測後修正,回歸) =====
         // Ctrl+Shift+F(key='f')與 Ctrl+Shift+D/T 同一個問題:CM 的 Mod-f 會先把按鍵處理掉並打開
@@ -795,13 +788,14 @@ module.exports = {
             saveS1.pos.anchor === saveS0.pos.anchor && saveS1.pos.head === saveS0.pos.head,
             JSON.stringify({savedMark, diskBefore, diskAfter, pos0: saveS0.pos, pos1: saveS1.pos}));
 
-        // 640 寬(半螢幕)可用:快捷鍵開啟、游標行維持固定位置、無水平捲軸。
+        // 640 寬(半螢幕)可用:兩個快捷鍵開啟、游標行維持固定位置、無水平捲軸。
         // 先把文件與游標帶到中段(上一段是快捷鍵的短測試檔,游標在開頭會被不硬拉的夾住影響量測)
         await setDoc(TDOC);
         await page.evaluate(() => window.__perkinsEditor.setCursor(21, 0)); // 打字第10段
         await settle(150, 1000);
         await page.setViewportSize({width: 640, height: 672});
         await settle(250, 1500);
+        await page.keyboard.press('Control+Shift+T');
         await page.keyboard.press('Control+Shift+D');
         await settle(150, 1000);
         const g0 = await scr();
@@ -810,33 +804,33 @@ module.exports = {
         await settle(120, 800);
         const g1 = await scr();
         const gDim = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
-        const gFocusBB = await page.locator('[data-testid=toolbar-focus]').boundingBox();
-        check('#116 640 寬:專注寫作可用(游標行維持固定位置、有淡化、無水平捲軸),工具列按鈕可見(只剩圖示)',
-            gFocusBB && gFocusBB.width > 0 && g0 && g1 && g0.ratio > 0.3 && g0.ratio < 0.5 && g1.ratio > 0.3 && g1.ratio < 0.5 && gDim > 0 &&
+        check('#44 640 寬:打字機捲動與專注模式可用(游標行維持固定位置、有淡化、無水平捲軸)',
+            g0 && g1 && g0.ratio > 0.3 && g0.ratio < 0.5 && g1.ratio > 0.3 && g1.ratio < 0.5 && gDim > 0 &&
             await page.evaluate(() => document.querySelector('.cm-scroller').scrollWidth <= document.querySelector('.cm-scroller').clientWidth + 1),
-            JSON.stringify({g0, g1, gDim, gFocusBB}));
+            JSON.stringify({g0, g1, gDim}));
         await shot('44-typewriter-focus-640');
 
-        // 禪模式下可用:選單有「專注寫作」項目且切換有效
+        // 禪模式下可用:選單仍有兩個開關且切換有效
         await page.keyboard.press('Control+Shift+F');
         await settle(250, 1500);
         await openAppMenu();
         const zenMenu = await page.evaluate(() => ({
+            tw: !!document.querySelector('[data-testid=menu-typewriter]'),
             fo: !!document.querySelector('[data-testid=menu-focus]'),
         }));
         const zDimOn = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
-        if (zenMenu.fo) await page.click('[data-testid=menu-focus]'); // 選單關閉專注寫作
+        if (zenMenu.fo) await page.click('[data-testid=menu-focus]'); // 選單關閉專注模式
         else await page.click('[data-testid=titlebar-title]'); // 開關不存在(破壞驗證時):只關選單,讓檢查自己 FAIL
         await settle(150, 1000);
         const zDim = (await ops()).filter(r => r.t !== '' && r.op < 1).length;
-        check('#116 禪模式下可用:選單有「專注寫作」項目且切換有效',
-            zenMenu.fo && zDimOn > 0 && zDim === 0, JSON.stringify({zenMenu, zDimOn, zDim}));
+        check('#44 禪模式下可用:選單仍有打字機捲動/專注模式開關且切換有效',
+            zenMenu.tw && zenMenu.fo && zDimOn > 0 && zDim === 0, JSON.stringify({zenMenu, zDimOn, zDim}));
         await page.keyboard.press('Control+Shift+D'); // 再開啟(截圖用)
         await settle(150, 1000);
         await page.keyboard.press('Control+Shift+F'); // 離開禪模式
         await settle(250, 1500);
 
-        // 截圖:深/淺各一(專注寫作,游標在中段)
+        // 截圖:深/淺各一(打字機捲動+專注模式,游標在中段)
         await page.setViewportSize({width: 1440, height: 900});
         await settle(250, 1200);
         await page.evaluate(() => window.__perkinsEditor.setCursor(21, 0)); // 打字第10段
@@ -857,12 +851,14 @@ module.exports = {
         await page.click('[data-testid=appearance-mode-dark]');
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);
-        await page.keyboard.press('Control+Shift+D'); // 關掉專注寫作
+        await page.keyboard.press('Control+Shift+T'); // 關掉兩個模式
+        await page.keyboard.press('Control+Shift+D');
         await settle(100, 600);
 
-        // 效能(SPEC §17.3 基準):約 7.7 萬字章節、專注寫作開啟,輸入到畫面更新(40 次)
+        // 效能(SPEC §17.3 基準):約 7.7 萬字章節、打字機捲動+專注模式開啟,輸入到畫面更新(40 次)
         const BIG = Array.from({length: 2200}, (_, i) => `第${i + 1}段長度測試內容,用來把版面撐長,模擬真實章節的段落長度。`).join('\n\n') + '\n';
         await setDoc(BIG);
+        await page.keyboard.press('Control+Shift+T');
         await page.keyboard.press('Control+Shift+D');
         await settle(250, 1500);
         await page.evaluate(() => window.__perkinsEditor.setCursor(1100, 0));
@@ -880,9 +876,10 @@ module.exports = {
         const sorted = [...perf].sort((a, b) => a - b);
         const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
         const maxT = sorted.length ? sorted[sorted.length - 1] : null;
-        check('#44 效能:約 7.7 萬字章節輸入到畫面更新(專注寫作)不失速(中位數 < 40ms、最大 < 150ms)',
+        check('#44 效能:約 7.7 萬字章節輸入到畫面更新(打字機捲動+專注模式)不失速(中位數 < 40ms、最大 < 150ms)',
             perf.length >= 38 && median < 40 && maxT < 150,
             JSON.stringify({chars: BIG.length, n: perf.length, median: median && Math.round(median * 10) / 10, max: maxT && Math.round(maxT * 10) / 10}));
+        await page.keyboard.press('Control+Shift+T');
         await page.keyboard.press('Control+Shift+D');
         await settle(100, 600);
 
