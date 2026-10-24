@@ -252,7 +252,15 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 	}
 	p.AcceptedVersion = version
 	// G3:先快照,快照失敗就不套用。
-	snap, err := takeSnapshot(&snapshot.Store{Proj: s.Proj}, "接受提案 "+p.ID+" 之前", "before-accept", []string{p.Target})
+	// 說明不露出提案 ID:作者只需知道是「接受 AI 提案前」,以及是否自己修改過。
+	snapLabel := "AI 提案"
+	if p.Model != "" {
+		snapLabel = "AI 提案(" + p.Model + ")"
+	}
+	if p.AuthorEdited {
+		snapLabel += ",你修改後接受"
+	}
+	snap, err := takeSnapshot(&snapshot.Store{Proj: s.Proj}, snapLabel, "before-accept", []string{p.Target})
 	if err != nil {
 		return nil, fmt.Errorf("快照失敗,未套用提案: %w", err)
 	}

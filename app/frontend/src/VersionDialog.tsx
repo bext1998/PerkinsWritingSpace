@@ -21,7 +21,13 @@ const reasonText: Record<string, string> = {
     'before-accept': '接受提案前',
     'before-restore': '還原前備份',
     'before-import': 'Notion 匯入前',
+    'before-delete-category': '刪除分類前',
 };
+
+// 舊版「接受提案」快照的說明是「接受提案 <內部 ID> 之前」:露出內部 ID 且無意義,
+// 這類快照只顯示原因「接受提案前」,不顯示說明。
+const visibleLabel = (m: snapshot.Meta) =>
+    m.reason === 'before-accept' && /^接受提案 \S+ 之前$/.test(m.label) ? '' : m.label;
 
 const titleOf = (p: string) => p.split('/').pop()?.replace(/\.md$/, '') ?? p;
 
@@ -106,7 +112,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                             <li key={m.id} onClick={() => pick(m)}
                                 className={cn('cursor-pointer rounded px-2 py-1.5', sel?.id === m.id ? 'bg-accent' : 'hover:bg-accent/60')}>
                                 <div className="text-[13px]">{new Date(m.time).toLocaleString()}</div>
-                                <div className="truncate text-xs text-muted-foreground">{reasonText[m.reason] ?? m.reason}{m.label ? ` · ${m.label}` : ''}</div>
+                                <div className="truncate text-xs text-muted-foreground">{reasonText[m.reason] ?? m.reason}{visibleLabel(m) ? ` · ${visibleLabel(m)}` : ''}</div>
                             </li>
                         ))}
                     </ul>
@@ -142,7 +148,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                             <div className="mb-2 rounded-md border p-3 text-xs" data-testid="restore-confirm">
                                                 <p className="font-medium">確定要還原?</p>
                                                 <p className="mt-1 text-muted-foreground">
-                                                    快照:{new Date(sel.time).toLocaleString()}({reasonText[sel.reason] ?? sel.reason}{sel.label ? ` · ${sel.label}` : ''})
+                                                    快照:{new Date(sel.time).toLocaleString()}({reasonText[sel.reason] ?? sel.reason}{visibleLabel(sel) ? ` · ${visibleLabel(sel)}` : ''})
                                                 </p>
                                                 <p className="text-muted-foreground">
                                                     {confirm.files.length === 0
