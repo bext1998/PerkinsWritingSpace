@@ -88,6 +88,32 @@ func TestRestoreRefusedWhenBackupFails(t *testing.T) {
 	}
 }
 
+// 意圖(#133/G3):檔案已還原但 provenance 寫不進去時要回錯,訊息不能讓人誤以為沒還原。
+func TestRestoreReportsProvenanceFailure(t *testing.T) {
+	s, rel := setup(t)
+	orig, _ := s.Proj.ReadFile(rel)
+	m, err := s.Take("", "manual", []string{rel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Proj.WriteFile(rel, "改壞了")
+	// 讓 provenance.jsonl 變成資料夾,寫入必定失敗。
+	if err := os.MkdirAll(filepath.Join(s.Proj.Root, ".perkins", "provenance.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := s.Restore(m.ID, nil)
+	// 不回錯:前端要照「已還原」重載稿件,否則作者接著存檔會把舊內容寫回(PR #136 審查)
+	if err != nil {
+		t.Fatalf("檔案已還原時不應回錯, got %v", err)
+	}
+	if !strings.Contains(backup.RecordError, "已還原") || !strings.Contains(backup.RecordError, "來源紀錄") {
+		t.Fatalf("RecordError 應說明已還原、來源紀錄失敗, got %q", backup.RecordError)
+	}
+	if got, _ := s.Proj.ReadFile(rel); got != orig {
+		t.Fatalf("檔案應已還原, got %q", got)
+	}
+}
+
 func TestRejectsBadIDs(t *testing.T) {
 	s, _ := setup(t)
 	for _, id := range []string{"", "..", "../x", `a\b`, "C:x"} {

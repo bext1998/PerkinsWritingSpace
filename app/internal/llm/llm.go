@@ -207,6 +207,8 @@ func (c *OpenAI) Chat(ctx context.Context, req Request, onDelta func(string)) (M
 func parseStream(r io.Reader, onDelta func(string)) (Message, error) {
 	msg := Message{Role: "assistant"}
 	calls := map[int]*ToolCall{}
+	var finishReason string
+	done := false
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
@@ -216,6 +218,7 @@ func parseStream(r io.Reader, onDelta func(string)) (Message, error) {
 		}
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			done = true
 			break
 		}
 		var chunk struct {
@@ -224,6 +227,7 @@ func parseStream(r io.Reader, onDelta func(string)) (Message, error) {
 					Content   string         `json:"content"`
 					ToolCalls []wireToolCall `json:"tool_calls"`
 				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Error *struct {
 				Message string `json:"message"`
@@ -236,6 +240,9 @@ func parseStream(r io.Reader, onDelta func(string)) (Message, error) {
 			return msg, fmt.Errorf("模型錯誤: %s", chunk.Error.Message)
 		}
 		for _, ch := range chunk.Choices {
+			if ch.FinishReason != "" {
+				finishReason = ch.FinishReason
+			}
 			if ch.Delta.Content != "" {
 				msg.Content += ch.Delta.Content
 				if onDelta != nil {
@@ -260,6 +267,14 @@ func parseStream(r io.Reader, onDelta func(string)) (Message, error) {
 	}
 	if err := sc.Err(); err != nil {
 		return msg, err
+	}
+	// 連線提早結束(沒有 [DONE] 也沒有 finish_reason)或生成被截斷:回錯,
+	// 不把不完整的文字或工具參數當成正常回覆(工具呼叫因此不會被執行,#133)。
+	if !done && finishReason == "" {
+		return msg, fmt.Errorf("模型串流未正常結束(連線中斷)")
+	}
+	if finishReason == "length" {
+		return msg, fmt.Errorf("模型回覆被截斷:達到輸出上限")
 	}
 	idx := make([]int, 0, len(calls))
 	for i := range calls {

@@ -133,6 +133,50 @@ module.exports = {
         const bakCh2 = fs.readFileSync(P('.perkins/snapshots/' + bakID + '/files/' + ch2Path), 'utf8');
         check('U3 before-restore 備份內容等於還原前磁碟', bakCh2 === diskBeforeFirst, JSON.stringify(bakCh2.slice(-40)));
         await shot('21-u3-restore');
+
+        // U3b(PR #136 審查):來源紀錄寫不進去時,還原仍要重載編輯器並警告;
+        // 接著打字存檔不得把還原前的舊稿寫回(先前回錯時前端跳過重載,下一次存檔會覆蓋還原結果)。
+        await page.fill('input[placeholder^="快照說明"]', 'U3b基準');
+        await page.click('button:has-text("建立快照")');
+        await page.waitForTimeout(800);
+        const baseU3b = read(ch2Path);
+        await page.keyboard.press('Escape');
+        await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await page.keyboard.type('U3b舊稿');
+        await page.keyboard.press('Control+s');
+        await page.waitForTimeout(600);
+        const provPath = P('.perkins/provenance.jsonl');
+        const provBak = provPath + '.e2e-bak';
+        if (fs.existsSync(provPath)) fs.renameSync(provPath, provBak);
+        fs.mkdirSync(provPath); // 資料夾占住檔名:來源紀錄必定寫入失敗
+        try {
+            await page.click('[data-testid=open-versions]');
+            await page.waitForSelector('ul.w-56 li:has-text("U3b基準")');
+            await page.click('ul.w-56 li:has-text("U3b基準")');
+            await page.waitForSelector('[data-testid=restore-file]');
+            await page.click('[data-testid=restore-file]');
+            await page.click('[data-testid=restore-confirm-go]');
+            await page.waitForTimeout(1000);
+            const dlg = await page.textContent('.max-w-5xl');
+            check('U3b 來源紀錄失敗仍顯示已還原並警告', dlg.includes('還原前的內容也自動備份') && dlg.includes('來源紀錄寫入失敗'), dlg.slice(0, 200));
+            check('U3b 來源紀錄失敗時磁碟已還原', read(ch2Path) === baseU3b);
+            check('U3b 來源紀錄失敗時編輯器已重載', (await editorText()) === baseU3b);
+            await page.keyboard.press('Escape');
+            await page.waitForSelector('[data-testid=restore-file]', {state: 'hidden'});
+            await page.click('.cm-content');
+            await page.keyboard.press('Control+End');
+            await page.keyboard.type('U3b新字');
+            await page.keyboard.press('Control+s');
+            await page.waitForTimeout(600);
+            check('U3b 還原後存檔不帶回舊稿', read(ch2Path) === baseU3b + 'U3b新字', JSON.stringify(read(ch2Path).slice(-40)));
+        } finally {
+            fs.rmdirSync(provPath);
+            if (fs.existsSync(provBak)) fs.renameSync(provBak, provPath);
+        }
+        await page.click('[data-testid=open-versions]');
+        await page.waitForSelector('text=建立快照');
         await page.keyboard.press('Escape');
 
         // U4(04):選取後浮動列出現;點「詢問這段」帶入選取開啟 AI 視窗(不送出)
