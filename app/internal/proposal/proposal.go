@@ -205,6 +205,10 @@ func (s *Store) Accept(id string, version int, edited *string) (*Proposal, error
 		return nil, fmt.Errorf("沒有第 %d 個版本(共 %d 個)", version+1, len(versions))
 	}
 	chosen := versions[version]
+	// #132:目標經過連結時,內容可能來自作者排除的資料夾或作品外;讀稿前先拒絕,絕不寫入。
+	if err := s.Proj.CheckNoLink(p.Target); err != nil {
+		return nil, err
+	}
 	content, err := s.Proj.ReadFile(p.Target)
 	if err != nil {
 		return nil, err
