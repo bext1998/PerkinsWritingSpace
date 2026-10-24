@@ -1,5 +1,5 @@
 import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
-import {Compartment, EditorSelection, EditorState, StateEffect, StateField, Text} from '@codemirror/state';
+import {ChangeSet, Compartment, EditorSelection, EditorState, Prec, StateEffect, StateField, Text} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
 import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
@@ -163,6 +163,142 @@ const insertSceneHeading = (v: EditorView): boolean => {
     v.focus();
     return true;
 };
+
+// 格式子選單與快捷鍵(#130,作者決定:不必懂 Markdown 語法也能設定標題與格式)。
+// 都是作者自己的編輯:單一 dispatch、isolateHistory.of('full')、走正常 dirty/存檔,Ctrl+Z 一次復原。
+const HEADING_PREFIX = /^(#{1,6}) /;
+// 程式碼區塊內的行(含 ``` 分隔行)不處理,判準照 sceneLines(整行 trim 後以 ``` 開頭就切換)
+const codeBlockLines = (doc: Text): Set<number> => {
+    const out = new Set<number>();
+    let fence = false;
+    for (let i = 1; i <= doc.lines; i++) {
+        const text = doc.line(i).text;
+        if (text.trim().startsWith('```')) { out.add(i); fence = !fence; continue; }
+        if (fence) out.add(i);
+    }
+    return out;
+};
+
+// 標題 N(1–3)/內文(0,取消標題):作用在游標所在行,有選取時為選取涵蓋的每一行(選取結束在下一行
+// 行首時該行不算,同 moveParagraph),跳過空白行與程式碼區塊內的行。行首既有的 #{1,6} 先拿掉,
+// 標題 N 再加上 N 個 # 與一個空白;內文只拿掉。已是同一層級就不變(不做切換)。
+// 游標/選取跟著文字走(位移量照前綴長度調整)。IME 組字中不動作。
+const applyHeading = (v: EditorView, level: number): boolean => {
+    if (imeActive(v)) return true;
+    const doc = v.state.doc;
+    const sel = v.state.selection.main;
+    const a = doc.lineAt(sel.from).number;
+    let b = doc.lineAt(sel.to).number;
+    if (b > a && sel.to === doc.line(b).from) b--; // 選取結束在下一行行首:該行不算在內
+    const code = codeBlockLines(doc);
+    const specs: {from: number; to: number; insert: string}[] = [];
+    for (let i = a; i <= b; i++) {
+        if (code.has(i)) continue;
+        const line = doc.line(i);
+        const m = HEADING_PREFIX.exec(line.text);
+        const oldLevel = m ? m[1].length : 0;
+        if (blankText(line.text) || oldLevel === level) continue;
+        specs.push({from: line.from, to: line.from + (m ? m[0].length : 0), insert: level > 0 ? '#'.repeat(level) + ' ' : ''});
+    }
+    if (specs.length) {
+        const cs = ChangeSet.of(specs, doc.length);
+        v.dispatch({
+            changes: cs,
+            // mapPos(assoc=1):游標/選取黏著原本的內容字元,前綴長度變了就跟著調整
+            selection: EditorSelection.range(cs.mapPos(sel.anchor, 1), cs.mapPos(sel.head, 1)),
+            annotations: isolateHistory.of('full'),
+        });
+    }
+    v.focus();
+    return true;
+};
+
+// 粗體/斜體(切換,#130):有選取時,若選取文字本身以 `**…**`(斜體 `*…*`)包住,或選取外緊鄰就是這組
+// 記號,就拿掉;否則包上,選取保持在內文。沒有選取時插入成對記號、游標放中間(同 insertPair)。
+// 斜體判斷不可把 `**` 的其中一個星號當成斜體記號(看連續星號數量,見下方 has)。
+// 多行選取整段包住,不逐行處理。IME 組字中不動作。
+const toggleInline = (v: EditorView, mark: string): boolean => {
+    if (v.composing || v.compositionStarted) return true;
+    const {from, to} = v.state.selection.main;
+    if (from === to) return insertPair(v, mark, mark);
+    const doc = v.state.doc;
+    const text = doc.sliceString(from, to);
+    const n = mark.length;
+    // 以連續星號的數量判斷:粗體要兩側各至少兩顆;斜體要兩側各奇數顆(1 或 3,`***x***` 是粗體兩顆加斜體一顆),
+    // 所以 `**x**` 按 Ctrl+I 是加斜體,`***x***` 再按一次只拿掉斜體那一對(PR #139 審查)。
+    const has = (l: number, r: number) => mark === '**' ? l >= 2 && r >= 2 : l % 2 === 1 && r % 2 === 1;
+    // 選取本身包著記號:拿掉記號、選取留在內文
+    const lead = text.length - text.replace(/^\*+/, '').length;
+    const trail = text.length - text.replace(/\*+$/, '').length;
+    if (lead + trail < text.length && has(lead, trail)) {
+        const inner = text.slice(n, text.length - n);
+        v.dispatch({changes: {from, to, insert: inner}, selection: EditorSelection.range(from, from + inner.length), annotations: isolateHistory.of('full')});
+        v.focus();
+        return true;
+    }
+    // 選取外緊鄰就是這組記號:拿掉兩側記號,選取跟著內文走
+    let l = 0, r = 0;
+    while (from - l > 0 && doc.sliceString(from - l - 1, from - l) === '*') l++;
+    while (to + r < doc.length && doc.sliceString(to + r, to + r + 1) === '*') r++;
+    if (has(l, r)) {
+        v.dispatch({changes: [{from: to, to: to + n, insert: ''}, {from: from - n, to: from, insert: ''}],
+                    selection: EditorSelection.range(from - n, to - n), annotations: isolateHistory.of('full')});
+        v.focus();
+        return true;
+    }
+    // 包上記號,選取保持在內文
+    v.dispatch({changes: {from, to, insert: mark + text + mark}, selection: EditorSelection.range(from + n, to + n), annotations: isolateHistory.of('full')});
+    v.focus();
+    return true;
+};
+
+// 插入場景分隔(#130):在游標所在行之後插入一行 ◇◇◇,前後空白行規則照 insertSceneHeading
+// (前後各留一個空白行,已有就沿用),游標放在分隔行之後的下一行開頭。
+// 分隔行之後一定要有下一行(游標要放那一行行首),檔案到此為止就補一個空白行。
+const insertSceneBreak = (v: EditorView): boolean => {
+    if (imeActive(v)) return true;
+    const doc = v.state.doc;
+    const cur = doc.lineAt(v.state.selection.main.head);
+    const next = cur.number < doc.lines ? doc.line(cur.number + 1) : null;
+    // 分隔前的空白行:游標行本身是空白行就用它,否則用下一行(已是空白行),都沒有才新增
+    const reuseCur = blankText(cur.text);
+    const reuseNext = !reuseCur && !!next && blankText(next.text);
+    const follower = reuseCur ? next : reuseNext ? (next!.number < doc.lines ? doc.line(next!.number + 1) : null) : next;
+    const at = reuseNext ? next!.to : cur.to;
+    const prefix = reuseCur || reuseNext ? '\n' : '\n\n';
+    // 分隔後的空白行:下一行已是空白行就沿用,不是或檔案到此為止就補一個
+    const after = !follower || !blankText(follower.text) ? '\n' : '';
+    const caret = at + prefix.length + 3 + 1; // 分隔行之後的那一行行首
+    v.dispatch({changes: {from: at, to: at, insert: prefix + '◇◇◇' + after}, selection: EditorSelection.cursor(caret), annotations: isolateHistory.of('full')});
+    v.focus();
+    return true;
+};
+
+// 快捷鍵衝突檢查:defaultKeymap/historyKeymap/searchKeymap 只有 Mod-i(selectParentSyntax)與本組衝突,
+// 以 Prec.high 先於 keymap 處理取代它(Ctrl+I 是斜體,不是選取父節點);Mod-1/2/3/0/Mod-b 無綁定,
+// 與既有快捷鍵(Ctrl+S、Ctrl+Shift+F/T/D、Ctrl+F/H、Alt 系列、Ctrl+Shift+Enter)也不衝突。
+// 同 punctKeyHandler 用 domEventHandlers 看實體鍵(e.code):Caps Lock 下 key 大小寫不同(§17.3);
+// 數字鍵盤(Numpad0…)是另一組 code,不處理。WebView 的 Ctrl+0 可能是縮放重設,這裡 preventDefault 攔下。
+const formatKeyHandler = Prec.high(EditorView.domEventHandlers({
+    keydown(e, v) {
+        if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return false;
+        // 只在編輯器內容聚焦時處理,不攔截搜尋面板等輸入框
+        if (!v.contentDOM.contains(e.target as Node)) return false;
+        // IME 組字中不動作、不攔截(同 punctKeyHandler)
+        if (v.composing || v.compositionStarted || e.isComposing || e.keyCode === 229) return false;
+        const run = ({
+            Digit1: () => applyHeading(v, 1),
+            Digit2: () => applyHeading(v, 2),
+            Digit3: () => applyHeading(v, 3),
+            Digit0: () => applyHeading(v, 0),
+            KeyB: () => toggleInline(v, '**'),
+            KeyI: () => toggleInline(v, '*'),
+        } as Record<string, () => boolean>)[e.code];
+        if (!run) return false;
+        e.preventDefault();
+        return run();
+    },
+}));
 
 // 場景行號:與側欄同一套判準(project.go ParseScenes):`## ` 開頭且標題非空,程式碼區塊(``` 圍住)內的不算
 const sceneLines = (doc: Text): number[] => {
@@ -531,6 +667,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const [sub, setSub] = useState(false);
     const [punctSub, setPunctSub] = useState(false); // 右鍵選單的「插入標點」子選單(#46 前半)
     const [paraSub, setParaSub] = useState(false); // 右鍵選單的「段落與場景」子選單(#46 後半)
+    const [formatSub, setFormatSub] = useState(false); // 右鍵選單的「格式」子選單(#130)
     const [current, setCurrent] = useState<Selection | null>(null); // 最新選取(浮動列用)
     const [subBar, setSubBar] = useState(false); // 浮動列的段落指令子選單
 
@@ -642,6 +779,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                         ...defaultKeymap, ...historyKeymap, {key: 'Mod-h', run: openReplace}, ...searchKeymap,
                     ]),
                     searchTheme,
+                    formatKeyHandler, // 格式快捷鍵(#130):Prec.high,先於 keymap 取代 Mod-i(見上方註解)
                     punctKeyHandler,
                     yamlFrontmatter({content: markdown()}), // 設定檔的 frontmatter 不被誤判成 setext 標題
                     syntaxHighlighting(highlight),
@@ -808,6 +946,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         setSub(false);
         setPunctSub(false);
         setParaSub(false);
+        setFormatSub(false);
         setMenu({x: e.clientX, y: e.clientY, sel: currentSelection()});
     };
 
@@ -919,6 +1058,32 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                         <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
                                     </div>
                                 ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 格式(#130):標題/內文、粗體、斜體、場景分隔;與插入標點同樣式、同往左開規則。
+                        介面文字不提「Markdown」「#」等語法字眼,標題 2 註明就是場景(§12.1) */}
+                    <div className={`relative ${item}`} data-testid="format-submenu"
+                         onMouseEnter={() => setFormatSub(true)} onMouseLeave={() => setFormatSub(false)}>
+                        <span className="w-4"/>格式<ChevronRight className="ml-auto h-4 w-4"/>
+                        {formatSub && (
+                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                                {([
+                                    {id: 'h1', label: '標題 1', key: 'Ctrl+1', run: () => { const v = view.current; if (v) applyHeading(v, 1); }},
+                                    {id: 'h2', label: '標題 2(場景)', key: 'Ctrl+2', run: () => { const v = view.current; if (v) applyHeading(v, 2); }},
+                                    {id: 'h3', label: '標題 3', key: 'Ctrl+3', run: () => { const v = view.current; if (v) applyHeading(v, 3); }},
+                                    {id: 'body', label: '內文(取消標題)', key: 'Ctrl+0', run: () => { const v = view.current; if (v) applyHeading(v, 0); }},
+                                    {id: 'sep', label: '', key: '', run: null}, // 分隔線(不是項目)
+                                    {id: 'bold', label: '粗體', key: 'Ctrl+B', run: () => { const v = view.current; if (v) toggleInline(v, '**'); }},
+                                    {id: 'italic', label: '斜體', key: 'Ctrl+I', run: () => { const v = view.current; if (v) toggleInline(v, '*'); }},
+                                    {id: 'break', label: '插入場景分隔(◇◇◇)', key: '', run: () => { const v = view.current; if (v) insertSceneBreak(v); }},
+                                ] as {id: string; label: string; key: string; run: (() => void) | null}[]).map(p => p.run === null
+                                    ? <div key={p.id} className="-mx-1 my-1 h-px bg-border"/>
+                                    : <div key={p.id} className={item} data-testid={`format-item-${p.id}`}
+                                           onClick={() => { p.run!(); setMenu(null); }}>
+                                        <span>{p.label}</span>
+                                        <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
+                                    </div>)}
                             </div>
                         )}
                     </div>
