@@ -1,5 +1,12 @@
 # PROGRESS.md
 
+## 2026-10-26 — #160 右鍵選單與子選單依實際尺寸避開視窗邊緣、#162 右鍵選單「全選」(分支 maze/2026-10-26-e1fd37b)
+
+- **#160**:`app/frontend/src/Editor.tsx` 右鍵選單新增 `menuRef` + `useLayoutEffect`,依量到的尺寸把主選單 clamped 在 4px 邊緣內(取代舊的 `left/top Math.min(... - 200/-220)` 估算);四個子選單(快速指令、插入標點、格式、段落與場景)改由共同的 `SubMenu` 元件依實際量到的尺寸決定往右開/往左開(右側溢出時往左)與超出底部時往上移(取代舊的 `flip` 估算:`menu.x > innerWidth - 420`);主選單與子選單都加 `whitespace-nowrap`,文字不換行。`useLayoutEffect` 在繪製前執行,不會閃。
+- **#162**:右鍵選單「貼上」後新增「全選」項(附 `Ctrl+A` 快捷鍵提示),點下選取整份檔案、選單關閉、焦點回到編輯器;「全選」不受是否有選取限制。
+- **E2E**(`search-editor`):#160 新增 4 個 check(900×600、640×600 各右下角/左上角:在 .cm-scroller 內 20px 處右鍵,主選單與四個子選單都在視窗內,「詢問 Perkins Bot」項高度 ≤「貼上」項 + 1 即不換行);#162 新增 3 個 check(全選後 anchor=0/head=全文長、選單關、焦點在 .cm-content;全選後右鍵「剪下」清空;復原回原文)。截圖 `87-ctxmenu-640-corner`。E2E 需在選取範圍內右鍵才保留選取(「快速指令」子選單需要選取),所以先選取點擊點所在的行再右鍵(同 bot-chat 模式);無頭環境剪貼簿寫入不可靠,剪下前按 close-guard 模式 stub `navigator.clipboard.writeText`。
+- **驗證**:Go `go test ./...` 全過;前端 `tsc --noEmit` 與建置通過;`search-editor` 131/131(`E2E_SKIP_AI=1`,非冷啟動輪以 `--reuse`)。
+
 ## 2026-10-25 — 合併 #144–#153(派工管道、#116 專注寫作與打字機音效、#28 介面修正第一批)
 
 - **#144、#149 派工管道**(#143):Pi 可直連 DeepSeek 官方(`deepseek/deepseek-flash`)、MiniMax M3.1 Flash 走 OpenRouter(pi 內建模型表沒有,作者本機 `models.json` 補一筆);「同時最多一個 Pi」改為只算本倉庫與其工作樹的 Pi(作者決定)。

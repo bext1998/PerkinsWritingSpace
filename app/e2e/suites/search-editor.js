@@ -1470,6 +1470,104 @@ module.exports = {
             await page.keyboard.press('Escape'); // 關閉選單(同上:640 寬時選單蓋住 .cm-content)
             await settle(80, 400);
         }
+
+        // --- #160:非最大化視窗時,右鍵選單與子選單依實際尺寸避開視窗邊緣(右下角/左上角) ---
+        await setDoc('# 章名\n\n' + Array.from({length: 30}, (_, i) => '這是第 ' + (i + 1) + ' 段測試文字,用來填滿編輯區以測試右鍵選單在視窗邊緣的定位。').join('\n\n'));
+        await settle(80, 400);
+        const inWin = (r, w, h) => !!(r && r.left >= 0 && r.top >= 0 && r.right <= w && r.bottom <= h);
+        const rectOf = sel => page.evaluate(s => {
+            const el = typeof s === 'string' ? document.querySelector(s) : null;
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return {left: r.left, right: r.right, top: r.top, bottom: r.bottom, h: r.height};
+        }, sel);
+        const locBox = async loc => {
+            const b = await loc.boundingBox();
+            return b && {left: b.x, right: b.x + b.width, top: b.y, bottom: b.y + b.height, h: b.height};
+        };
+        for (const [w, h] of [[900, 600], [640, 600]]) {
+            await page.setViewportSize({width: w, height: h});
+            await settle(80, 900);
+            for (const posName of ['右下角', '左上角']) {
+                const sc = await page.evaluate(p => {
+                    const r = document.querySelector('.cm-scroller').getBoundingClientRect();
+                    return p === '右下角' ? {x: r.right - 20, y: r.bottom - 20} : {x: r.left + 20, y: r.top + 20};
+                }, posName);
+                // 在選取範圍內右鍵才保留選取(「快速指令」子選單需要選取);選取點擊點所在的行(同 bot-chat 模式)
+                await page.evaluate(p => {
+                    const v = window.__perkinsEditor;
+                    const lines = [...document.querySelectorAll('.cm-content .cm-line')];
+                    const r = document.querySelector('.cm-scroller').getBoundingClientRect();
+                    const target = p === 'bottom-right' ? r.bottom - 20 : r.top + 20;
+                    const hit = lines.find(l => { const lr = l.getBoundingClientRect(); return lr.top <= target && target <= lr.bottom; })
+                        || lines[p === 'bottom-right' ? lines.length - 1 : 0];
+                    v.setCursor(lines.indexOf(hit) + 1);
+                }, posName);
+                await page.keyboard.press('Home');
+                await page.keyboard.press('Shift+End');
+                await page.mouse.click(sc.x, sc.y, {button: 'right'});
+                await page.waitForSelector('.ctxmenu', {timeout: 5000});
+                const mainRect = await rectOf('.ctxmenu');
+                const askAiRect = await rectOf('[data-testid=ask-ai]');
+                const pb = await page.locator('.ctxmenu').getByText('貼上', {exact: true}).first().boundingBox();
+                const pasteRect = pb && {left: pb.x, right: pb.x + pb.width, top: pb.y, bottom: pb.y + pb.height, h: pb.height};
+                const subs = {};
+                for (const [name, sel] of [
+                    ['punct', '[data-testid=punct-submenu] > div'],
+                    ['format', '[data-testid=format-submenu] > div'],
+                    ['para', '[data-testid=para-submenu] > div'],
+                ]) {
+                    await page.hover('[data-testid=' + name + '-submenu]');
+                    await settle(80, 400);
+                    subs[name] = await rectOf(sel);
+                }
+                await page.hover('text=快速指令');
+                await settle(80, 400);
+                // 快速指令子選單 = 主選單第 2 列(第 1 列是「詢問 Perkins Bot」)的子選單 div;
+                // 「text=快速指令 > div」不是有效的 Playwright 選子器,hover 本身仍用 text=快速指令
+                subs.quick = await locBox(page.locator('.ctxmenu > div:nth-child(2) > div').first());
+                const ok = inWin(mainRect, w, h) && inWin(subs.quick, w, h) && inWin(subs.punct, w, h)
+                    && inWin(subs.format, w, h) && inWin(subs.para, w, h)
+                    && askAiRect && pasteRect && askAiRect.h <= pasteRect.h + 1;
+                check(`#160 ${w}×${h} ${posName} 主選單與子選單都在視窗內、文字不換行`, ok,
+                    JSON.stringify({main: mainRect, askAiH: askAiRect?.h, pasteH: pasteRect?.h, subs}));
+                if (w === 640 && h === 600 && posName === '右下角') await shot('87-ctxmenu-640-corner');
+                await page.keyboard.press('Escape');
+                await settle(80, 400);
+            }
+        }
+
+        // --- #162:右鍵選單「全選」 ---
+        await setDoc('# 章名\n\n第一段\n\n第二段');
+        const p1at = await page.evaluate(t => {
+            const line = [...document.querySelectorAll('.cm-content .cm-line')].find(l => l.textContent.includes(t));
+            const box = line.getBoundingClientRect();
+            return {x: Math.round(box.left + 20), y: Math.round(box.top + box.height / 2)};
+        }, '第一段');
+        await page.mouse.click(p1at.x, p1at.y, {button: 'right'});
+        await page.waitForSelector('.ctxmenu', {timeout: 5000});
+        await page.click('[data-testid=select-all]');
+        await settle(80, 400);
+        const selPos = await editorPos();
+        const docLen = (await docText()).length;
+        const focusInContent = await page.evaluate(() => {
+            const ae = document.activeElement;
+            return !!(ae && ae.closest('.cm-content'));
+        });
+        check('#162 右選「全選」選取整份檔案、選單關閉、焦點回到編輯器',
+            selPos.anchor === 0 && selPos.head === docLen && !(await page.$('.ctxmenu')) && focusInContent,
+            JSON.stringify({sel: selPos, docLen, menu: !!(await page.$('.ctxmenu')), focusInContent}));
+        // 全選後右鍵「剪下」清空內容,復原後回到原文(無頭環境剪貼簿寫入不可靠,按 close-guard 的模式 stub)
+        await page.evaluate(() => { window.__writeOrig = navigator.clipboard.writeText.bind(navigator.clipboard); navigator.clipboard.writeText = t => Promise.resolve(); });
+        await page.mouse.click(p1at.x, p1at.y, {button: 'right'});
+        await page.waitForSelector('.ctxmenu', {timeout: 5000});
+        await page.click('.ctxmenu div:text-is("剪下")');
+        await settle(80, 400);
+        check('#162 全選後右鍵「剪下」清空內容', (await docText()) === '', JSON.stringify(await docText()));
+        await undoOnce();
+        check('#162 全選後剪下可復原回原文', (await docText()) === '# 章名\n\n第一段\n\n第二段', JSON.stringify(await docText()));
+        await page.evaluate(() => { navigator.clipboard.writeText = window.__writeOrig; delete window.__writeOrig; });
+
         await page.setViewportSize({width: 1440, height: 900});
         await settle(80, 800);
 
