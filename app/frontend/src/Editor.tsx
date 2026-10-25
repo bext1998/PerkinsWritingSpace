@@ -352,7 +352,7 @@ interface Props {
     // 以 Compartment 開關,狀態在 Workspace(記憶體)
     typewriter?: boolean;
     focusMode?: boolean;
-    // 打字機音效(#116 PR-2):自己的開關(預設關閉),不綁專注寫作,一般模式也會響
+    // 打字機音效(#116 PR-2、#163):on 由 Workspace 算好(開關打開且專注寫作開啟)
     typingSound?: {on: boolean; volume: number};
 }
 

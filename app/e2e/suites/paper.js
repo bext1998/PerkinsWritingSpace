@@ -920,13 +920,26 @@ module.exports = {
         await settle(150, 1000);
         // 開關打開時會試播一聲:從這裡重新起算。打字間隔 60ms(長按連發節流是 35ms,太快會被當成連發)
         Object.assign(soundBase, await page.evaluate(() => ({...window.__perkinsSound})));
+        // #163:開關打開但專注寫作未開(一般模式):打字與 Enter 都不響
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await page.keyboard.type('abc', {delay: 60});
+        await page.keyboard.press('Enter');
+        await settle(100, 600);
+        const sn1a = await sound();
+        check('#163 打字機音效:開關打開但未開專注寫作,打字與 Enter 都不響(tick、ding 差 0)',
+            sn1a.tick === 0 && sn1a.ding === 0, JSON.stringify({sn1a}));
+        // #163:開專注寫作後重新起算,打字與 Enter 響
+        await page.keyboard.press('Control+Shift+D');
+        await settle(150, 1000);
+        Object.assign(soundBase, await page.evaluate(() => ({...window.__perkinsSound})));
         await page.click('.cm-content');
         await page.keyboard.press('Control+Home');
         await page.keyboard.type('abc', {delay: 60});
         await page.keyboard.press('Enter');
         await settle(100, 600);
         const sn1 = await sound();
-        check('#116 打字機音效:開啟後打 abc 響 3 次(tick 差 3),Enter 響 1 次叮(ding 差 1、tick 差 0)',
+        check('#116 #163 打字機音效:開關打開且專注寫作開啟,打 abc 響 3 次(tick 差 3),Enter 響 1 次叮(ding 差 1、tick 差 0)',
             sn1.tick === 3 && sn1.ding === 1, JSON.stringify({sn1}));
         // 3) 程式插入(貼上)不響
         await page.evaluate(t => {
@@ -976,6 +989,15 @@ module.exports = {
             sn5.tick === 4 && sn5.ding === 1, JSON.stringify({sn5}));
         await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)'); // 關掉浮窗
         await settle(100, 600);
+        // 5b) #163:關閉專注寫作後打字恢復不響
+        await page.keyboard.press('Control+Shift+D');
+        await settle(150, 1000);
+        await page.click('.cm-content');
+        await page.keyboard.type('abc', {delay: 60});
+        await settle(100, 600);
+        const sn5b = await sound();
+        check('#163 打字機音效:關閉專注寫作後打字恢復不響(tick 差 0)',
+            sn5b.tick === 4 && sn5b.ding === 1, JSON.stringify({sn5b}));
         // 6) 收尾:回設定頁把開關關掉(作者設定回到預設)
         await page.click('[data-testid=open-settings]');
         await page.waitForSelector('[data-testid=settings-page]');
