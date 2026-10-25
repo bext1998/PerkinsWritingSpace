@@ -840,20 +840,8 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typing
                         在稿件裡打字時發出打字機聲,換行時叮一聲。只存在這台電腦。
                     </p>
                     {tsError && <p className="mt-1 text-xs text-destructive" data-testid="typing-sound-error">無法儲存打字機音效設定:{tsError}</p>}
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                    <Switch data-testid="typing-sound-switch" checked={typingSound} disabled={tsSaving}
-                            onCheckedChange={async v => {
-                                setTsSaving(true);
-                                try {
-                                    await onSetTypingSound(v, typingVolume);
-                                    setTsError('');
-                                    if (v) playTick(tsVolume); // 開啟後播一次,讓作者聽到目前音量
-                                } catch (e) { setTsError(errText(e)); /* 失敗保持原值 */ }
-                                setTsSaving(false);
-                            }}/>
                     {typingSound && (
-                        <div className="flex items-center gap-2">
+                        <div className="mt-3 flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">音量</span>
                             <input type="range" data-testid="typing-volume" min={0} max={100} step={5}
                                    className="w-40 accent-primary" value={tsVolume}
@@ -863,6 +851,16 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typing
                         </div>
                     )}
                 </div>
+                <Switch data-testid="typing-sound-switch" checked={typingSound} disabled={tsSaving}
+                        onCheckedChange={async v => {
+                            setTsSaving(true);
+                            try {
+                                await onSetTypingSound(v, typingVolume);
+                                setTsError('');
+                                if (v) playTick(tsVolume); // 開啟後播一次,讓作者聽到目前音量
+                            } catch (e) { setTsError(errText(e)); /* 失敗保持原值 */ }
+                            setTsSaving(false);
+                        }}/>
             </div>
             {/* 區塊三:研究記錄(§12.8):間距只靠容器 gap-8,不再 mt-6 疊加(SPEC §17.2) */}
             <div className="flex items-start gap-4 rounded-lg border p-4" data-testid="research-row">
