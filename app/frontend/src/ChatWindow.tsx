@@ -100,9 +100,9 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
             <span className="truncate">{shrinkText ?? children}</span>
             {shrinkText != null && <span className="shrink-0">{children}</span>}
             {onRemove && (
-                <button className="shrink-0 text-muted-foreground hover:text-foreground" onClick={e => { e.stopPropagation(); onRemove(); }}>
+                <Tip label="移除" side="top"><button className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="移除" onClick={e => { e.stopPropagation(); onRemove(); }}>
                     <X className="h-3 w-3"/>
-                </button>
+                </button></Tip>
             )}
         </span>
     );
@@ -591,7 +591,7 @@ export default function ChatWindow(props: Props) {
             )}
 
             <div ref={box} data-testid="chat-window"
-                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg', enter.fade, !open && 'hidden')}
+                 className={cn('fixed z-40 flex flex-col overflow-hidden rounded-lg border bg-card shadow-lg', enter.fade, !open && 'hidden')}
                  style={{...style, width: 440, height: 620, minWidth: 340, minHeight: 360, maxWidth: '90vw', maxHeight: '90vh', resize: 'both'}}>
                 {/* 標題列(可拖曳) */}
                 <div className="flex h-11 shrink-0 cursor-move select-none items-center gap-2 border-b px-3" onMouseDown={startDrag}>
@@ -670,13 +670,13 @@ export default function ChatWindow(props: Props) {
                                         {t.args && (
                                             <div>
                                                 <div className="mb-0.5 font-medium">參數</div>
-                                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-xs leading-relaxed">{prettyArgs(t.args)}</pre>
+                                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/50 p-1.5 font-mono text-xs leading-relaxed">{prettyArgs(t.args)}</pre>
                                             </div>
                                         )}
                                         {t.result && (
                                             <div>
                                                 <div className="mb-0.5 font-medium">結果</div>
-                                                <pre className={cn('max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 leading-relaxed', t.bad && 'text-warning')}>{t.result}</pre>
+                                                <pre className={cn('max-h-56 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-background/50 p-1.5 leading-relaxed', t.bad && 'text-warning')}>{t.result}</pre>
                                             </div>
                                         )}
                                     </div>
@@ -786,7 +786,7 @@ export default function ChatWindow(props: Props) {
                                 ? <p className="px-2 py-1.5 text-xs text-muted-foreground">沒有符合的技能</p>
                                 : slashItems.map((i, n) => (
                                     <button key={i.name} type="button" data-testid="slash-item"
-                                            className={cn('flex w-full items-baseline gap-2 rounded px-2 py-1 text-left hover:bg-secondary',
+                                            className={cn('flex w-full items-baseline gap-2 rounded-md px-2 py-1 text-left hover:bg-secondary',
                                                           n === skillIdx && 'bg-secondary')}
                                             onMouseEnter={() => setSkillIdx(n)} onClick={() => applySlashItem(i)}>
                                         <span className="shrink-0 font-medium">/{i.name}</span>
@@ -819,7 +819,7 @@ export default function ChatWindow(props: Props) {
                                         <div key={g.label} className="mb-2">
                                             <div className="px-1 text-xs font-semibold text-muted-foreground">{g.label}</div>
                                             {g.items.map(i => (
-                                                <label key={i.path} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-accent">
+                                                <label key={i.path} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-accent">
                                                     <Checkbox checked={attach.includes(i.path)} onCheckedChange={() => toggleAttach(i.path)}/>
                                                     <span className="truncate">{i.title}</span>
                                                 </label>

@@ -46,7 +46,7 @@ function Inline({text}: {text: string}) {
             {parts.map((p, i) =>
                 p.kind === 'strong' ? <strong key={i}>{p.text}</strong> :
                 p.kind === 'em' ? <em key={i}>{p.text}</em> :
-                p.kind === 'code' ? <code key={i} className="rounded bg-muted px-1 py-0.5 font-mono text-[0.92em]">{p.text}</code> :
+                p.kind === 'code' ? <code key={i} className="rounded-sm bg-muted px-1 py-0.5 font-mono text-[0.92em]">{p.text}</code> :
                 <React.Fragment key={i}>{p.text}</React.Fragment>
             )}
         </>

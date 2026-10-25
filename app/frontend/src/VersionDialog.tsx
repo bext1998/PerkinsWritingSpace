@@ -110,7 +110,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                         {list.length === 0 && <li className="p-3 text-xs text-muted-foreground">尚無快照</li>}
                         {list.map(m => (
                             <li key={m.id} onClick={() => pick(m)}
-                                className={cn('cursor-pointer rounded px-2 py-1.5', sel?.id === m.id ? 'bg-accent' : 'hover:bg-accent/60')}>
+                                className={cn('cursor-pointer rounded-md px-2 py-1.5', sel?.id === m.id ? 'bg-accent' : 'hover:bg-accent/60')}>
                                 <div className="text-sm">{new Date(m.time).toLocaleString()}</div>
                                 <div className="truncate text-xs text-muted-foreground"><span>{reasonText[m.reason] ?? m.reason}</span>{visibleLabel(m) && <span className="ml-2">{visibleLabel(m)}</span>}</div>
                             </li>
@@ -122,7 +122,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                 <div className="mb-2 flex flex-wrap gap-1">
                                     {sel.files?.map(f => (
                                         <button key={f} onClick={() => showDiff(sel, f)}
-                                                className={cn('rounded border px-2 py-0.5 text-xs', f === file ? 'border-primary text-primary' : 'text-muted-foreground hover:text-foreground')}>
+                                                className={cn('rounded-md border px-2 py-0.5 text-xs', f === file ? 'border-primary text-primary' : 'text-muted-foreground hover:text-foreground')}>
                                             {titleOf(f)}
                                         </button>
                                     ))}

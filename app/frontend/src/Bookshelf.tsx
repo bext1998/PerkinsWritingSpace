@@ -80,7 +80,7 @@ export default function Bookshelf({onOpen, onSettings}: Props) {
 
             <section className="mx-auto w-full max-w-5xl flex-1 px-10 pb-16 pt-8">
                 {recent.length === 0 ? (
-                    <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
+                    <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
                         書櫃還是空的。建立或開啟一部作品後,它會出現在這裡。
                     </div>
                 ) : rows.map((row, i) => (

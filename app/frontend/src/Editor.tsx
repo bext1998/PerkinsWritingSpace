@@ -1034,12 +1034,12 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             {current && (
                 <div data-testid="selection-bar"
                      className="absolute right-3 top-2 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 shadow-lg">
-                    <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask" title="詢問這段(Ctrl+Shift+Enter)"
+                    <button className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask" title="詢問這段(Ctrl+Shift+Enter)"
                             onClick={() => { const s = currentSelection(); if (s) onAskAI(s); }}>
                         <Bot className="h-3.5 w-3.5 text-primary"/>詢問這段
                     </button>
                     <div className="relative">
-                        <button className="flex items-center gap-1.5 rounded px-2 py-1 text-xs hover:bg-accent" data-testid="selection-quick"
+                        <button className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs hover:bg-accent" data-testid="selection-quick"
                                 onClick={() => setSubBar(v => !v)}>
                             <TextSelect className="h-3.5 w-3.5"/>段落指令<ChevronRight className="h-3 w-3"/>
                         </button>

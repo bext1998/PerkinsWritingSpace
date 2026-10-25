@@ -70,7 +70,7 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                         <Section title="場景" icon={Hash}>
                             <ul className="space-y-0.5">
                                 {chapter.scenes!.map(s => (
-                                    <li key={s.line} className="cursor-pointer truncate rounded px-1 py-0.5 text-sm hover:bg-accent"
+                                    <li key={s.line} className="cursor-pointer truncate rounded-md px-1 py-0.5 text-sm hover:bg-accent"
                                         onClick={() => scrollToLine(s.line)}>{s.title}</li>
                                 ))}
                             </ul>
@@ -85,7 +85,7 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                                 {cast.map(c => {
                                     const e = entityOf(c.path);
                                     return (
-                                        <li key={c.path} className="group flex items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent">
+                                        <li key={c.path} className="group flex items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-accent">
                                             <span className="flex-1 cursor-pointer truncate" onClick={() => openFile(c.path)}>{e?.name ?? baseName(c.path)}</span>
                                             <span className="text-xs tabular-nums text-muted-foreground">×{c.count}</span>
                                             <Tip label="附加到對話" side="left">
@@ -110,7 +110,7 @@ export default function Inspector({tree, current, index, chapter, openFile, ask,
                     ) : (
                         <ul className="space-y-0.5" data-testid="appearances">
                             {appearances.map(a => (
-                                <li key={a.path} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-sm hover:bg-accent"
+                                <li key={a.path} className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm hover:bg-accent"
                                     onClick={() => openFile(a.path)}>
                                     <span className="flex-1 truncate">{titleOf(a.path)}</span>
                                     <span className="text-xs text-muted-foreground">×{a.count}</span>
