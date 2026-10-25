@@ -101,6 +101,45 @@ func TestAcceptAppliesOnlyTargetAndSnapshotsFirst(t *testing.T) {
 	}
 }
 
+// A1 意圖:快照說明不露出提案 ID;寫出模型名,作者修改過才接受時要標明。
+func TestAcceptSnapshotLabelHidesIDAndNotesEdited(t *testing.T) {
+	s, rel, _ := setup(t)
+	// 直接接受(未修改)
+	p, _ := s.Create("deepseek/deepseek-v4.1-flash", rel, "天很黑。", "夜濃得化不開。", "why", nil)
+	got, err := s.Accept(p.ID, 0, nil)
+	if err != nil || got.Status != Accepted {
+		t.Fatalf("err=%v status=%v", err, got)
+	}
+	meta, err := (&snapshot.Store{Proj: s.Proj}).Get(got.SnapshotID)
+	if err != nil {
+		t.Fatalf("Get 快照: %v", err)
+	}
+	if meta.Label != "AI 提案(deepseek/deepseek-v4.1-flash)" {
+		t.Errorf("label = %q, 應含模型名且不含提案 ID", meta.Label)
+	}
+	if strings.Contains(meta.Label, p.ID) {
+		t.Error("label 不得含提案 ID")
+	}
+	if strings.Contains(meta.Label, "你修改後接受") {
+		t.Error("直接接受不得含「你修改後接受」")
+	}
+
+	// 作者修改後接受
+	p2, _ := s.Create("m", rel, "他很害怕。", "他心顫。", "why", nil)
+	edited := "他心顫了。"
+	got2, err := s.Accept(p2.ID, 0, &edited)
+	if err != nil || got2.Status != Accepted {
+		t.Fatalf("err=%v status=%v", err, got2)
+	}
+	meta2, err := (&snapshot.Store{Proj: s.Proj}).Get(got2.SnapshotID)
+	if err != nil {
+		t.Fatalf("Get 快照: %v", err)
+	}
+	if meta2.Label != "AI 提案(m),你修改後接受" {
+		t.Errorf("label = %q, 應標明修改後接受", meta2.Label)
+	}
+}
+
 // A2 意圖:作者在提案之後改了「提案要改的那段」,舊提案不能把作者新寫的字蓋掉。
 func TestAcceptConflictWhenAuthorEditedTheSameText(t *testing.T) {
 	s, rel, dir := setup(t)
