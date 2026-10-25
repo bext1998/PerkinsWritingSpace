@@ -523,6 +523,15 @@ module.exports = {
             return {t, closed: (await page.locator('[data-testid=app-menu-content]').count()) === 0};
         };
 
+        // 存檔按鈕在「已儲存」(停用)時滑鼠移上去仍看得到提示(PR #156 審查:停用按鈕收不到 pointer 事件)
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+s');
+        await page.waitForSelector('[data-testid=save-button]:disabled');
+        await page.hover('[data-testid=save-tip-trigger]');
+        const saveTip = await page.waitForSelector('[role=tooltip]:has-text("儲存(Ctrl+S)")', {timeout: 3000}).then(() => true, () => false);
+        await page.mouse.move(5, 5);
+        check('工具列 已儲存(停用)的存檔按鈕滑鼠移上去看得到「儲存(Ctrl+S)」提示', saveTip);
+
         // 專注寫作(#116):工具列按鈕——存在、aria-pressed 切換、打字機捲動與段落淡化一起開關
         const dimCount = async () => (await ops()).filter(r => r.t !== '' && r.op < 1).length;
         const focusBtn = page.locator('[data-testid=toolbar-focus]');

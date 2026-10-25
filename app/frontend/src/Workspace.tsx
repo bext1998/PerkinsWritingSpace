@@ -781,16 +781,18 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             </Tip>
                             {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
                             {/* 只剩圖示時用 iconSm(與「更多」、資訊欄開關同尺寸),窄版把寬度留給章名 */}
+                            {/* 已儲存時按鈕是停用的,收不到滑鼠事件:Tip 掛在外層 span 上,提示照樣出現(PR #156 審查) */}
                             <Tip label="儲存(Ctrl+S)" side="bottom">
-                            <Button size={iconOnly ? 'iconSm' : 'sm'}
-                                    data-testid="save-button"
-                                    className="shrink-0"
-                                    variant={dirty ? 'default' : 'ghost'}
-                                    disabled={saving || !dirty}
-                                    onClick={saveNow}
-                                    aria-label={saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}>
-                                <Save/>{!iconOnly && (saving ? '儲存中…' : dirty ? '儲存' : '已儲存')}
-                            </Button>
+                                <span className="inline-flex shrink-0" data-testid="save-tip-trigger">
+                                    <Button size={iconOnly ? 'iconSm' : 'sm'}
+                                            data-testid="save-button"
+                                            variant={dirty ? 'default' : 'ghost'}
+                                            disabled={saving || !dirty}
+                                            onClick={saveNow}
+                                            aria-label={saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}>
+                                        <Save/>{!iconOnly && (saving ? '儲存中…' : dirty ? '儲存' : '已儲存')}
+                                    </Button>
+                                </span>
                             </Tip>
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"
                                     className={cn('shrink-0', tight && 'hidden')}
