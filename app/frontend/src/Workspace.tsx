@@ -781,28 +781,31 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             </Tip>
                             {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
                             {/* 只剩圖示時用 iconSm(與「更多」、資訊欄開關同尺寸),窄版把寬度留給章名 */}
+                            <Tip label="儲存(Ctrl+S)" side="bottom">
                             <Button size={iconOnly ? 'iconSm' : 'sm'}
                                     data-testid="save-button"
                                     className="shrink-0"
                                     variant={dirty ? 'default' : 'ghost'}
                                     disabled={saving || !dirty}
                                     onClick={saveNow}
-                                    title="儲存(Ctrl+S)"
                                     aria-label={saving ? '儲存中…' : dirty ? '儲存' : '已儲存'}>
                                 <Save/>{!iconOnly && (saving ? '儲存中…' : dirty ? '儲存' : '已儲存')}
                             </Button>
+                            </Tip>
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"
                                     className={cn('shrink-0', tight && 'hidden')}
                                     aria-label="版本" title="版本"><History/>{!iconOnly && '版本'}</Button>
                             {/* 最窄段:次要功能收進「更多」下拉,功能一個都不能少(SPEC §17.1 窄寬度不得讓功能無法觸及) */}
                             {tight && (
                                 <DropdownMenu>
+                                    <Tip label="更多操作" side="bottom">
                                     <DropdownMenuTrigger asChild>
                                         <Button variant="ghost" size="iconSm" data-testid="toolbar-more" className="shrink-0"
-                                                aria-label="更多操作" title="更多操作">
+                                                aria-label="更多操作">
                                             <MoreHorizontal/>
                                         </Button>
                                     </DropdownMenuTrigger>
+                                    </Tip>
                                     <DropdownMenuContent align="end">
                                         <DropdownMenuItem disabled={!chapter}
                                             onSelect={() => chapter && setSummaryFor(chapter.path)}>
@@ -872,7 +875,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     {activeProfile && !zen && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                     {zen && (
                         <button data-testid="zen-exit" title="離開禪模式(Ctrl+Shift+F)"
-                                className={cn('shrink-0 whitespace-nowrap rounded px-1.5 hover:bg-accent hover:text-foreground', enter.fade)}
+                                className={cn('shrink-0 whitespace-nowrap rounded-md px-1.5 hover:bg-accent hover:text-foreground', enter.fade)}
                                 onClick={() => setZen(false)}>
                             離開禪模式
                         </button>
@@ -894,7 +897,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             {/* chat fallback 為 fixed 小卡片,浮在右下圓鈕附近,不佔版面流;禪模式時藏起但不卸載(保留對話) */}
             <div className={zen ? 'hidden' : 'contents'}>
             <AreaBoundary area="chat"
-                          fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-xl border bg-card shadow-2xl">
+                          fallbackClassName="fixed bottom-16 right-4 z-40 w-64 items-center justify-center rounded-lg border bg-card shadow-2xl">
                 <ChatWindow open={chatOpen} setOpen={setChatOpen} request={chatReq} tree={tree} doc={current}
                             docText={text} selection={selection} cfg={cfg} setCfg={setCfg}
                             beforeAsk={save} onAccepted={p => reloadCurrent([p.target], p)} onReload={files => reloadCurrent(files)} onReveal={revealProposal} lockEdits={lockEdits} onPending={setPending}

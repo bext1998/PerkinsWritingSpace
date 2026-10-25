@@ -146,7 +146,7 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                 <div className={cn('grid min-h-0 flex-1 gap-2 p-3', stacked ? 'grid-rows-2' : 'grid-cols-2')}>
                     <div className={cn('flex min-h-0 flex-col', !stacked && 'min-w-0')}>
                         <div className="mb-1 shrink-0 text-xs font-semibold text-muted-foreground">原文(唯讀)</div>
-                        <div className="diff-del min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded px-2 py-1 font-serif text-sm"
+                        <div className="diff-del min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-md px-2 py-1 font-serif text-sm"
                              data-testid="review-original">{p.original}</div>
                     </div>
                     <div className={cn('flex min-h-0 flex-col', !stacked && 'min-w-0')}>

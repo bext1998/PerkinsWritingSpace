@@ -131,7 +131,7 @@ function NavRow({title, desc, icon, badge, onClick, testid}: {
 function SubpageHeader({title, onBack, children}: {title: string; onBack: () => void; children?: React.ReactNode}) {
     return (
         <div className="flex flex-wrap items-center gap-2">
-            <Button variant="ghost" size="iconSm" onClick={onBack} aria-label="返回" data-testid="subpage-back"><ArrowLeft/></Button>
+            <Tip label="返回" side="bottom"><Button variant="ghost" size="iconSm" onClick={onBack} aria-label="返回" data-testid="subpage-back"><ArrowLeft/></Button></Tip>
             <h3 className="min-w-0 flex-1 truncate text-lg font-semibold" data-testid="subpage-title">{title}</h3>
             {children}
         </div>
@@ -992,8 +992,8 @@ function ColorField({label, desc, fieldKey, testid, side, savedValue, onSave}: {
                            placeholder="跟隨主題"
                            data-testid={`${testid}-hex`}
                            className="h-8 w-[8.5rem] font-mono text-xs"/>
-                    {savedValue && <Button size="iconSm" variant="ghost" onClick={() => { setDraft(''); onSave(''); }}
-                                            aria-label="清除回主題" data-testid={`${testid}-clear`}><RotateCcw className="h-3.5 w-3.5"/></Button>}
+                    {savedValue && <Tip label="清除回主題" side="left"><Button size="iconSm" variant="ghost" onClick={() => { setDraft(''); onSave(''); }}
+                                            aria-label="清除回主題" data-testid={`${testid}-clear`}><RotateCcw className="h-3.5 w-3.5"/></Button></Tip>}
                 </div>
             </div>
         </div>
@@ -1133,8 +1133,8 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                                         data-testid={`appearance-mode-${o.id}`}
                                         title={o.desc}
                                         onClick={() => persist(a => ({...a, mode: o.id}))}
-                                        className={cn('flex items-center gap-1.5 rounded px-3 py-1 text-xs transition-colors',
-                                            appearance.mode === o.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                                        className={cn('flex items-center gap-1.5 rounded-sm px-3 py-1 text-xs transition-colors',
+                                            appearance.mode === o.id ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground')}>
                                     <o.Icon className="h-3.5 w-3.5"/>{o.label}
                                 </button>
                             ))}

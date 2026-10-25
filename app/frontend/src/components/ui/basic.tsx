@@ -11,14 +11,14 @@ import {cn} from '@/lib/utils'
 export const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(({className, type, ...props}, ref) => (
     <input type={type} ref={ref}
            // min-w-0:半螢幕(640 寬)設定頁的巢狀 grid 下,input 的固有最小寬度不得把 auto track 撐出水平捲軸
-           className={cn('flex h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
+           className={cn('flex h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
            {...props}/>
 ))
 Input.displayName = 'Input'
 
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.ComponentProps<'textarea'>>(({className, ...props}, ref) => (
     <textarea ref={ref}
-              className={cn('flex min-h-[60px] w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
+              className={cn('flex min-h-[60px] w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50', className)}
               {...props}/>
 ))
 Textarea.displayName = 'Textarea'
@@ -61,9 +61,9 @@ Separator.displayName = SeparatorPrimitive.Root.displayName
 export const Switch = React.forwardRef<React.ElementRef<typeof SwitchPrimitives.Root>, React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>>(
     ({className, ...props}, ref) => (
         <SwitchPrimitives.Root ref={ref}
-                               className={cn('peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input', className)}
+                               className={cn('peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input', className)}
                                {...props}>
-            <SwitchPrimitives.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"/>
+            <SwitchPrimitives.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-background ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0"/>
         </SwitchPrimitives.Root>
     ))
 Switch.displayName = SwitchPrimitives.Root.displayName
@@ -71,7 +71,7 @@ Switch.displayName = SwitchPrimitives.Root.displayName
 export const Checkbox = React.forwardRef<React.ElementRef<typeof CheckboxPrimitive.Root>, React.ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>>(
     ({className, ...props}, ref) => (
         <CheckboxPrimitive.Root ref={ref}
-                                className={cn('peer h-4 w-4 shrink-0 rounded-sm border border-primary shadow focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground', className)}
+                                className={cn('peer h-4 w-4 shrink-0 rounded-sm border border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground', className)}
                                 {...props}>
             <CheckboxPrimitive.Indicator className="flex items-center justify-center text-current">
                 <Check className="h-3.5 w-3.5"/>

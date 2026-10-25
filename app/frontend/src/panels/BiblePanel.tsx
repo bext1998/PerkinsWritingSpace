@@ -97,7 +97,7 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                 </span>
                 {asking ? (
                     <button type="button" data-testid="entity-delete-confirm"
-                            className="shrink-0 rounded px-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
+                            className="shrink-0 rounded-md px-1.5 text-xs font-medium text-destructive hover:bg-destructive/10"
                             onClick={ev => { ev.stopPropagation(); trash(f.path); }}>
                         確認刪除?
                     </button>

@@ -187,7 +187,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                                                 <span className="w-10 shrink-0 text-right text-xs tabular-nums text-muted-foreground group-hover:hidden">{(counts[c.path] ?? 0).toLocaleString()}</span>
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger asChild onClick={e => e.stopPropagation()}>
-                                                        <button className="hidden h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-background group-hover:flex data-[state=open]:flex">
+                                                        <button className="hidden h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-background group-hover:flex data-[state=open]:flex">
                                                             <MoreHorizontal className="h-4 w-4"/>
                                                         </button>
                                                     </DropdownMenuTrigger>

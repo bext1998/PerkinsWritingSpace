@@ -40,7 +40,7 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
             <div className="group mb-1 flex items-center gap-1.5 px-1 text-xs font-semibold tracking-wider text-muted-foreground">
                 <Icon className="h-3.5 w-3.5"/>{title}
                 <div className="flex-1"/>
-                <Button variant="ghost" size="iconSm" onClick={() => { setAdding(dir); setInput(''); }}><Plus/></Button>
+                <Tip label={`新增${title}`} side="bottom"><Button variant="ghost" size="iconSm" aria-label={`新增${title}`} onClick={() => { setAdding(dir); setInput(''); }}><Plus/></Button></Tip>
             </div>
             {adding === dir && (
                 <form className="mb-1" onSubmit={e => { e.preventDefault(); create(dir); }}>
@@ -58,10 +58,10 @@ export default function DocsPanel({tree, current, openFile, refreshTree, notify,
                             e.path === current ? 'bg-accent' : 'hover:bg-accent/60')}
                         onClick={() => openFile(e.path)}>
                         <span className="flex-1 truncate">{e.title}</span>
-                        <button className="hidden text-muted-foreground hover:text-destructive group-hover:block"
+                        <Tip label="刪除" side="left"><button className="hidden text-muted-foreground hover:text-destructive group-hover:block" aria-label="刪除"
                                 onClick={ev => { ev.stopPropagation(); trash(e.path); }}>
                             <Trash2 className="h-3.5 w-3.5"/>
-                        </button>
+                        </button></Tip>
                     </li>
                 ))}
             </ul>
