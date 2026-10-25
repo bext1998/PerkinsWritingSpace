@@ -18,6 +18,7 @@ busy=$(herdr agent list | python -c "
 import json,sys,os,subprocess
 w=os.environ.get('HERDR_WORKSPACE_ID','')
 def ours(cwd):
+    if not cwd: return False # 沒有 cwd 時 git -C '' 會查目前目錄,誤判成本專案
     r=subprocess.run(['git','-C',cwd,'rev-parse','--path-format=absolute','--git-common-dir'],capture_output=True,text=True)
     return r.returncode==0 and os.path.normcase(os.path.abspath(r.stdout.strip()))==os.path.normcase(os.path.abspath(sys.argv[1]))
 print(' '.join(a['pane_id'] for a in json.load(sys.stdin)['result']['agents'] if (a.get('agent')=='pi' and ours(a.get('cwd',''))) or (a.get('agent')=='dsh-code' and a['pane_id'].startswith(w+':'))))
