@@ -971,6 +971,21 @@ module.exports = {
         await page.waitForSelector('[data-testid=settings-page]');
         await page.click('[data-testid=tab-project]');
         await page.waitForSelector('[data-testid=typing-sound-row]');
+        // 音量存檔失敗:滑桿與數字回到最後存成功的值,錯誤看得到(PR #151 審查)
+        const volBefore = await page.inputValue('[data-testid=typing-volume]');
+        await page.evaluate(() => {
+            const app = window.go.main.App;
+            window.__origSetTypingSound = app.SetTypingSound;
+            app.SetTypingSound = () => Promise.reject('模擬寫入失敗');
+        });
+        await page.focus('[data-testid=typing-volume]');
+        await page.keyboard.press('ArrowRight'); // onChange 改值,onKeyUp 存檔(被拒)
+        await settle(100, 800);
+        const volAfter = await page.inputValue('[data-testid=typing-volume]');
+        const volErr = await page.$('[data-testid=typing-sound-error]');
+        await page.evaluate(() => { window.go.main.App.SetTypingSound = window.__origSetTypingSound; });
+        check('#116 打字機音效:音量存檔失敗時滑桿回到原值且顯示錯誤',
+            volAfter === volBefore && !!volErr, JSON.stringify({volBefore, volAfter, err: !!volErr}));
         await page.click('[data-testid=typing-sound-switch]');
         await settle(100, 800);
         const sn6 = await sound();

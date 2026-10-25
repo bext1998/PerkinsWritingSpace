@@ -777,9 +777,9 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typing
             await onSetTypingSound(typingSound, tsVolume); // 後端保存成功才更新畫面
             setTsError('');
             playTick(tsVolume); // 放開並存檔成功後播一次,讓作者聽到音量
-        } catch (e) { setTsError(errText(e)); /* 失敗保持原值 */ }
+        } catch (e) { setTsError(errText(e)); setTsVolume(typingVolume); /* 失敗回到最後存成功的音量 */ }
         setTsSaving(false);
-    }, [typingSound, tsVolume, tsSaving, onSetTypingSound]);
+    }, [typingSound, typingVolume, tsVolume, tsSaving, onSetTypingSound]);
     const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
     const [researchSaving, setResearchSaving] = useState(false);
     const [researchError, setResearchError] = useState('');
@@ -844,7 +844,7 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typing
                         <div className="mt-3 flex items-center gap-2">
                             <span className="text-xs text-muted-foreground">音量</span>
                             <input type="range" data-testid="typing-volume" min={0} max={100} step={5}
-                                   className="w-40 accent-primary" value={tsVolume}
+                                   className="w-40 accent-primary" value={tsVolume} disabled={tsSaving} /* 存檔中不能再拖,避免第二次放開被略過 */
                                    onChange={e => setTsVolume(Number(e.target.value))}
                                    onPointerUp={saveTsVolume} onKeyUp={saveTsVolume}/>
                             <span className="text-xs text-muted-foreground tabular-nums">{tsVolume}%</span>
