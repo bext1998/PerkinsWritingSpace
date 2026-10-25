@@ -527,7 +527,8 @@ module.exports = {
         await page.click('.cm-content');
         await page.keyboard.press('Control+s');
         await page.waitForSelector('[data-testid=save-button]:disabled');
-        await page.hover('[data-testid=save-tip-trigger]');
+        const saveBB = await page.locator('[data-testid=save-button]').boundingBox(); // 照真人操作把滑鼠移到按鈕上
+        await page.mouse.move(saveBB.x + saveBB.width / 2, saveBB.y + saveBB.height / 2);
         const saveTip = await page.waitForSelector('[role=tooltip]:has-text("儲存(Ctrl+S)")', {timeout: 3000}).then(() => true, () => false);
         await page.mouse.move(5, 5);
         check('工具列 已儲存(停用)的存檔按鈕滑鼠移上去看得到「儲存(Ctrl+S)」提示', saveTip);
