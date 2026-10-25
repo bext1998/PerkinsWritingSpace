@@ -183,6 +183,33 @@ func TestAutosaveDefaultOnUnlessExplicitlyOff(t *testing.T) {
 	}
 }
 
+// 意圖(#116):打字機音效預設關閉、音量 50;舊設定檔沒有欄位時也是預設;
+// 作者明確設 0 是有效值,不能被當成「沒設定」回落到 50。
+func TestTypingSoundDefaultOffVolumeFifty(t *testing.T) {
+	st := &Store{Dir: t.TempDir()}
+	if st.Load().TypingSound {
+		t.Fatal("沒有設定時應預設關閉")
+	}
+	if got := st.Load().TypingVolumeOr(); got != 50 {
+		t.Fatalf("音量應預設 50,實際 %d", got)
+	}
+	os.MkdirAll(st.Dir, 0o755)
+	os.WriteFile(filepath.Join(st.Dir, "settings.json"), []byte(`{"theme":"light"}`), 0o600)
+	if st.Load().TypingSound || st.Load().TypingVolumeOr() != 50 {
+		t.Fatal("舊設定檔沒有這兩個欄位時應視為關閉、音量 50")
+	}
+	zero := 0
+	if err := st.Save(Settings{TypingSound: true, TypingVolume: &zero}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.Load().TypingSound {
+		t.Fatal("作者開啟後應維持開啟")
+	}
+	if got := st.Load().TypingVolumeOr(); got != 0 {
+		t.Fatalf("音量 0 是作者明確設的值,不應回落預設 50,實際 %d", got)
+	}
+}
+
 // 意圖(#32):自動上下文壓縮預設開啟;舊設定檔的端點沒有 disableAutoCompact 欄位時
 // 不需遷移,載入後必須是「開啟」;作者在設定頁關閉後存回要保留。
 func TestAutoCompactDefaultsOnForLegacyProfile(t *testing.T) {

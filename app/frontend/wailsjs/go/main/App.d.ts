@@ -157,6 +157,8 @@ export function SetPaperLayout(arg1:string,arg2:string,arg3:string):Promise<void
 
 export function SetResearch(arg1:boolean):Promise<void>;
 
+export function SetTypingSound(arg1:boolean,arg2:number):Promise<void>;
+
 export function SetVolumes(arg1:Array<project.Volume>):Promise<project.Tree>;
 
 export function SnapshotDiff(arg1:string,arg2:string):Promise<Array<snapshot.DiffLine>>;

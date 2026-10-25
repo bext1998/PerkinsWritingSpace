@@ -602,12 +602,16 @@ type SettingsView struct {
 	PaperWidth    string `json:"paperWidth"`
 	PaperFontSize string `json:"paperFontSize"`
 	PaperParaGap  string `json:"paperParaGap"`
+	// 打字機音效(#116):開關與音量(沒設定時預設 50)
+	TypingSound  bool `json:"typingSound"`
+	TypingVolume int  `json:"typingVolume"`
 }
 
 func (a *App) GetSettings() SettingsView {
 	s := a.store.Load()
 	v := SettingsView{Active: s.Active, Platforms: s.Platforms, Appearance: s.Appearance, Autosave: s.AutosaveOn(), Profiles: []ProfileView{},
-		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap}
+		PaperWidth: s.PaperWidth, PaperFontSize: s.PaperFontSize, PaperParaGap: s.PaperParaGap,
+		TypingSound: s.TypingSound, TypingVolume: s.TypingVolumeOr()}
 	for _, p := range s.Profiles {
 		k, _ := settings.ProfileAPIKey(p.ID)
 		v.Profiles = append(v.Profiles, ProfileView{Profile: p, HasKey: k != "", Remote: settings.IsRemote(p.BaseURL), RemoteOk: p.RemoteConfirmed()})
@@ -726,6 +730,16 @@ func (a *App) SetPaperLayout(width, fontSize, paraGap string) error {
 func (a *App) SetAutosave(on bool) error {
 	s := a.store.Load()
 	s.Autosave = &on
+	return a.store.Save(s)
+}
+
+// SetTypingSound 由設定頁的「打字機音效」開關與音量呼叫(#116)。
+func (a *App) SetTypingSound(on bool, volume int) error {
+	if volume < 0 || volume > 100 {
+		return fmt.Errorf("音量須在 0–100 之間:%d", volume)
+	}
+	s := a.store.Load()
+	s.TypingSound, s.TypingVolume = on, &volume
 	return a.store.Save(s)
 }
 

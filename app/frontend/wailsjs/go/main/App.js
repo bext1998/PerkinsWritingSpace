@@ -290,6 +290,10 @@ export function SetResearch(arg1) {
   return window['go']['main']['App']['SetResearch'](arg1);
 }
 
+export function SetTypingSound(arg1, arg2) {
+  return window['go']['main']['App']['SetTypingSound'](arg1, arg2);
+}
+
 export function SetVolumes(arg1) {
   return window['go']['main']['App']['SetVolumes'](arg1);
 }
