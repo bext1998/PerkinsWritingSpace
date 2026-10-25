@@ -1498,9 +1498,9 @@ module.exports = {
                     const v = window.__perkinsEditor;
                     const lines = [...document.querySelectorAll('.cm-content .cm-line')];
                     const r = document.querySelector('.cm-scroller').getBoundingClientRect();
-                    const target = p === 'bottom-right' ? r.bottom - 20 : r.top + 20;
+                    const target = p === '右下角' ? r.bottom - 20 : r.top + 20;
                     const hit = lines.find(l => { const lr = l.getBoundingClientRect(); return lr.top <= target && target <= lr.bottom; })
-                        || lines[p === 'bottom-right' ? lines.length - 1 : 0];
+                        || lines[p === '右下角' ? lines.length - 1 : 0];
                     v.setCursor(lines.indexOf(hit) + 1);
                 }, posName);
                 await page.keyboard.press('Home');
