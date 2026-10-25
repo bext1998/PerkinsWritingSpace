@@ -146,7 +146,7 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                 <div className={cn('grid min-h-0 flex-1 gap-2 p-3', stacked ? 'grid-rows-2' : 'grid-cols-2')}>
                     <div className={cn('flex min-h-0 flex-col', !stacked && 'min-w-0')}>
                         <div className="mb-1 shrink-0 text-xs font-semibold text-muted-foreground">原文(唯讀)</div>
-                        <div className="diff-del min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded px-2 py-1 font-serif text-[13px]"
+                        <div className="diff-del min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded px-2 py-1 font-serif text-sm"
                              data-testid="review-original">{p.original}</div>
                     </div>
                     <div className={cn('flex min-h-0 flex-col', !stacked && 'min-w-0')}>
@@ -164,7 +164,7 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                             </div>
                         )}
                         <div className="mb-1 shrink-0 text-xs font-semibold text-muted-foreground">修改後{changed ? '(已修改)' : ''}</div>
-                        <Textarea className="diff-add min-h-0 flex-1 resize-none rounded-md border border-border bg-transparent font-serif text-[13px] focus-visible:ring-primary"
+                        <Textarea className="diff-add min-h-0 flex-1 resize-none rounded-md border border-border bg-transparent font-serif text-sm focus-visible:ring-primary"
                                   value={mine} data-testid="review-edit" disabled={conflict}
                                   onChange={e => setEdited(m => ({...m, [key]: e.target.value}))}/>
                     </div>
@@ -200,7 +200,7 @@ export default function ProposalReview({items, id, onStep, edited, setEdited, ti
                     </button>
                 )}
                 <span className="flex-1"/>
-                {changed && <span className="shrink-0 text-xs text-primary">已修改 · 接受時會寫入你的版本</span>}
+                {changed && <span className="shrink-0 text-xs text-primary">已修改,接受時會寫入你的版本</span>}
                 <Button size="sm" variant="ghost" onClick={() => conflict ? onReject(p, '') : setReason('')} data-testid="review-reject">{conflict ? '捨棄' : '拒絕'}</Button>
                 {!conflict && <Button size="sm" onClick={() => onAccept(p, vi, changed ? mine : null)} data-testid="review-accept"><Check/>接受</Button>}
             </div>

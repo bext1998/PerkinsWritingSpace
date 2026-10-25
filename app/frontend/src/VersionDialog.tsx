@@ -111,8 +111,8 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                         {list.map(m => (
                             <li key={m.id} onClick={() => pick(m)}
                                 className={cn('cursor-pointer rounded px-2 py-1.5', sel?.id === m.id ? 'bg-accent' : 'hover:bg-accent/60')}>
-                                <div className="text-[13px]">{new Date(m.time).toLocaleString()}</div>
-                                <div className="truncate text-xs text-muted-foreground">{reasonText[m.reason] ?? m.reason}{visibleLabel(m) ? ` · ${visibleLabel(m)}` : ''}</div>
+                                <div className="text-sm">{new Date(m.time).toLocaleString()}</div>
+                                <div className="truncate text-xs text-muted-foreground"><span>{reasonText[m.reason] ?? m.reason}</span>{visibleLabel(m) && <span className="ml-2">{visibleLabel(m)}</span>}</div>
                             </li>
                         ))}
                     </ul>
@@ -148,7 +148,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                             <div className="mb-2 rounded-md border p-3 text-xs" data-testid="restore-confirm">
                                                 <p className="font-medium">確定要還原?</p>
                                                 <p className="mt-1 text-muted-foreground">
-                                                    快照:{new Date(sel.time).toLocaleString()}({reasonText[sel.reason] ?? sel.reason}{visibleLabel(sel) ? ` · ${visibleLabel(sel)}` : ''})
+                                                    快照:{new Date(sel.time).toLocaleString()}({reasonText[sel.reason] ?? sel.reason}{visibleLabel(sel) ? `,${visibleLabel(sel)}` : ''})
                                                 </p>
                                                 <p className="text-muted-foreground">
                                                     {confirm.files.length === 0
@@ -162,7 +162,7 @@ export default function VersionDialog({open, onOpenChange, current, saveFirst, o
                                                 </div>
                                             </div>
                                         )}
-                                        <pre className="min-h-0 flex-1 overflow-auto rounded-md border p-2 font-serif text-[13px] leading-relaxed">
+                                        <pre className="min-h-0 flex-1 overflow-auto rounded-md border p-2 font-serif text-sm leading-relaxed">
                                             {diff.map((l, i) => (
                                                 l.segs ? (
                                                     // 修改的行:整行淡色,實際變動的字加深

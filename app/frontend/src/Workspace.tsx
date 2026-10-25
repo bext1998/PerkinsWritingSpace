@@ -631,7 +631,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
             const out = await CopyChapter(rel, platformID);
             const n = await WordCount(out);
             const pl = cfg?.platforms.find(p => p.id === platformID);
-            notify({text: `已複製「${baseName(rel)}」為${name}格式(${n} 字)${pl?.verified ? '' : ' · 此平台規則尚未驗證,貼上後請確認版面'}`, kind: 'ok'});
+            notify({text: `已複製「${baseName(rel)}」為${name}格式(${n} 字)${pl?.verified ? '' : '。此平台規則尚未驗證,貼上後請確認版面'}`, kind: 'ok'});
         } catch (e) { fail(e); }
     };
 
@@ -705,7 +705,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 <aside data-testid="sidebar" className={cn('flex w-[272px] shrink-0 flex-col border-r bg-sidebar', enter.fromLeft)}>
                     {/* 作品名稱已在標題欄,這裡標示目前面板 */}
                     <div className="flex h-12 items-center border-b px-4">
-                        <span data-testid="sidebar-title" className="truncate font-serif text-[15px] font-semibold">{PANEL_LABEL[panel]}</span>
+                        <span data-testid="sidebar-title" className="truncate font-serif text-sm font-semibold">{PANEL_LABEL[panel]}</span>
                     </div>
                     <div key={panel} data-testid="sidebar-body" className={cn('min-h-0 flex-1 overflow-y-auto', enter.fade)}>
                         {panel === 'manuscript' && <ManuscriptPanel {...panelProps} onCopy={copyTo} onStatus={setStatus} onSummary={setSummaryFor}/>}

@@ -38,7 +38,7 @@
   | 對話框標題 | `text-lg`(18px)+ `font-serif font-semibold` | 對話框、浮窗標題 |
   | 頁標題 | `text-xl` 以上 | 書櫃標題、設定頁頁首與內容區頁名 |
 
-  介面字級最小為 `text-xs`(12px),不低於 12px;空間不夠時用字重、字色、間距調整層次,不縮小字級。作者文字的大小由稿紙版面設定決定,不在此表。
+  介面字級最小為 `text-xs`(12px),不低於 12px;空間不夠時用字重、字色、間距調整層次,不縮小字級。作者文字的大小由稿紙版面設定決定,不在此表。12px 指標準介面字級;作者在設定頁自選「小」介面字體時,整體等比縮小,可低於 12px(作者 2026-10-25 決定)。
 - 【定案】字重:標題 `font-semibold`、強調 `font-medium`;`font-bold` 只用於封面。
 - 【定案】側欄標題、清單中的作品文字(原文摘要、檔名)用 `text-sm`;目前用 13/15px 的地方併入 `text-sm`,10/11px 併入 `text-xs`(見 §14)。
 
@@ -177,13 +177,10 @@
 
 隨相關修改逐步收斂,不單獨大改:
 
-- 任意字級:`text-[13px]` 8 處(Bookshelf、ChatWindow、ProposalReview、VersionDialog、ManuscriptPanel)、`text-[15px]`(Workspace 側欄標題)、`text-[11px]`、`text-[10px]`(ChatWindow 對話記錄徽章)。
 - 圓角:裸 `rounded` 13 處、`rounded-xl` 3 處。
 - 原生 `<button>` 30 處,部分不是整列可點的清單項目。
 - 設定頁各頁區塊標題與設定列寫法不一(見 #97 表格):作品頁自寫 `<section>`(平台輸出頁已改為清單+子頁、用共用元件,2026-10-13)。
-- 中點「·」當分隔:8 個檔案共 28 處(VersionDialog、NotionImport、SettingsPage、ChatWindow、ManuscriptPanel、ProposalReview、SummaryDialog、Workspace)。
 - 陰影:`shadow-sm`、`md`、`lg`、`xl`、`2xl` 混用共 25 處,部分用在非覆蓋層的容器上。
-- 作品面板大綱、筆記標題旁的鎖頭圖示與現行讀取預設不符(#104 第 5 項)。
 
 ## 15. 動態與轉場 【定案,#120,2026-10-14】
 

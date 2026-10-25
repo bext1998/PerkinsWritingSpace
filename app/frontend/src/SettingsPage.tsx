@@ -176,7 +176,7 @@ function BotReadSection() {
 // presetLabel:預設端點名稱 + 站別(國際站/中國站)+ API 型別,作者一眼可辨(#43)
 function presetLabel(p: settings.Preset) {
     const region = p.region && !/國際站|中國站/.test(p.name) ? (p.region === 'intl' ? '(國際站)' : '(中國站)') : '';
-    const provider = p.provider === 'anthropic' ? ' · Anthropic 原生' : '';
+    const provider = p.provider === 'anthropic' ? '(Anthropic 原生)' : '';
     return `${p.name}${region}${provider}`;
 }
 
@@ -512,7 +512,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
                 <RowCard testid="profile-list">
                     {cfg.profiles.map(p => (
                         <NavRow key={p.id} testid={`profile-card-${p.id}`} title={p.name}
-                                desc={`${p.model || '尚未選擇模型'} · ${p.remote ? '雲端' : '本機'}`}
+                                desc={`${p.model || '尚未選擇模型'}(${p.remote ? '雲端' : '本機'})`}
                                 icon={p.remote ? <Cloud className="h-4 w-4 shrink-0 text-muted-foreground"/> : <Monitor className="h-4 w-4 shrink-0 text-muted-foreground"/>}
                                 badge={p.id === cfg.active ? <Badge variant="secondary" className="shrink-0 text-xs">使用中</Badge> : undefined}
                                 onClick={() => setSub({kind: 'profile', id: p.id, notice: ''})}/>
@@ -545,7 +545,7 @@ const CONV_SHORT: Record<string, string> = {tw2s: '轉簡', tw2sp: '轉簡(含�
 function rulesSummary(r: publish.Rules) {
     return [r.indent ? '段首縮排' : '不縮排', r.blankLine ? '段間空行' : '不留空行',
         r.heading === 'strip' ? '保留標題' : '不輸出標題', `分隔:${r.sceneBreak || '空行'}`,
-        `繁簡:${r.convert ? (CONV_SHORT[r.convert] ?? r.convert) : '不轉'}`].join(' · ');
+        `繁簡:${r.convert ? (CONV_SHORT[r.convert] ?? r.convert) : '不轉'}`].join('、');
 }
 
 // 平台規則欄位:判斷子頁是否有未儲存變更,與儲存回應後同步沒再改過的欄位
@@ -1193,6 +1193,10 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
     const [page, setPage] = useState<Page>('models'); // 預設頁維持 Perkins Bot(SPEC §17.2)
     useEffect(() => { GetSettings().then(setCfg); }, []);
 
+    // 切換導覽頁時內容捲回頂端,新頁標題不被前一頁的捲動位置切掉
+    const contentRef = useRef<HTMLDivElement>(null);
+    useEffect(() => { contentRef.current?.scrollTo({top: 0}); }, [page]);
+
     // 離開保護(UI_GUIDE §12.5):子頁有未儲存變更時,返回、切換導覽頁、關閉設定頁前先提醒
     const dirty = useRef(false);
     const setDirty = useCallback((d: boolean) => { dirty.current = d; }, []);
@@ -1246,7 +1250,7 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
                     {navBtn('appearance', Palette)}
                 </nav>
                 {/* 內容區:獨立捲動、單一 max-w-5xl 置中(SPEC §17.2) */}
-                <div data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
+                <div ref={contentRef} data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
                     {cfg && (
                         <div key={page} data-testid="settings-page-body" className={cn('mx-auto w-full max-w-5xl px-6 py-6', enter.fade)}>
                             {pendingLeave && (
