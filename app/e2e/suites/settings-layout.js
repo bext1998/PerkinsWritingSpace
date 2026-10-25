@@ -102,8 +102,17 @@ module.exports = {
         await waitSel('[data-testid=research-row]');
         const navNoTheme = !(await page.isVisible('[data-testid=appearance-mode-system]')) && !(await page.isVisible('[data-testid=paper-width]'));
         check('設定頁 導覽欄底部不再放主題與稿紙版面(作品頁看不到了)', navNoTheme);
+        // 換頁回到頂端(#28):作品頁捲到底再換頁,新頁不能沿用前一頁的捲動位置(標題會被切掉)
+        const scrolledProject = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            c.scrollTop = c.scrollHeight;
+            return c.scrollTop;
+        });
         await page.click('[data-testid=tab-appearance]');
         await waitSel('[data-testid=appearance-visual]');
+        const appearanceTop = await page.evaluate(() => document.querySelector('[data-testid=settings-content]').scrollTop);
+        check('設定頁 換頁後內容回到頂端(不沿用前一頁的捲動位置)',
+            scrolledProject > 0 && appearanceTop === 0, JSON.stringify({scrolledProject, appearanceTop}));
         // 切換模式 (Issue #118):分段按鈕切換,html class 跟著改,設定檔寫進 Appearance.Mode
         await page.click('[data-testid=appearance-mode-light]');
         await settle(80, 500);

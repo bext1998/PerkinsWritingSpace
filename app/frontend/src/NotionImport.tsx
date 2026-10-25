@@ -107,7 +107,7 @@ export default function NotionImport({onDone}: {onDone: () => void}) {
                                             </button>
                                             <div className="truncate text-xs text-muted-foreground">
                                                 {g.files.slice(0, 5).map(f => f.name).join('、')}{g.files.length > 5 ? '…' : ''}
-                                                {overridden > 0 && <span data-testid={`override-count-${g.key || 'root'}`}> · {overridden} 頁另行指定</span>}
+                                                {overridden > 0 && <span data-testid={`override-count-${g.key || 'root'}`}>,{overridden} 頁另行指定</span>}
                                             </div>
                                         </td>
                                         <td className="py-2 text-muted-foreground">{g.files.length}</td>

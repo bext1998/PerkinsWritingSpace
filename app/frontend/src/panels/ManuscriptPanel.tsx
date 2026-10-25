@@ -139,8 +139,8 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                             ) : (
                                 <span className="flex-1 min-w-0" onDoubleClick={() => { setRenaming(vi); setInput(v.title); }}>
                                     {/* 卷名獨立一行,統計移到次行(設計審查 14) */}
-                                    <span className="block truncate text-[13px] font-semibold tracking-wide text-foreground/85">{v.title || '未命名卷'}</span>
-                                    <span className="block text-xs text-muted-foreground">{done}/{v.chapters.length} 章 · {words.toLocaleString()} 字</span>
+                                    <span className="block truncate text-sm font-semibold tracking-wide text-foreground/85">{v.title || '未命名卷'}</span>
+                                    <span className="flex gap-2 text-xs text-muted-foreground"><span>{done}/{v.chapters.length} 章</span><span>{words.toLocaleString()} 字</span></span>
                                 </span>
                             )}
                             <DropdownMenu>
@@ -237,7 +237,7 @@ export default function ManuscriptPanel({tree, current, counts, cfg, openFile, r
                             </form>
                         ) : (
                             /* 常駐的新章入口(不需 hover);卷選單內仍保留「新增章節」 */
-                            <button className="mx-2 mt-0.5 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md py-1.5 pl-7 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+                            <button className="mx-2 mt-0.5 flex w-[calc(100%-1rem)] items-center gap-2 rounded-md py-1.5 pl-7 text-sm text-muted-foreground hover:bg-accent/60 hover:text-foreground"
                                     data-testid={`add-chapter-${vi}`}
                                     onClick={() => { setAdding(vi); setInput(''); setCollapsed(c => ({...c, [vi]: false})); }}>
                                 <Plus className="h-3.5 w-3.5"/>新增章節

@@ -64,7 +64,7 @@ export default function SummaryDialog({chapter, onClose, cfg, setCfg, saveFirst,
         <Dialog open={!!chapter} onOpenChange={o => !o && onClose()}>
             <DialogContent className="max-w-2xl">
                 <DialogHeader>
-                    <DialogTitle>章節摘要 · {chapter ? baseName(chapter) : ''}</DialogTitle>
+                    <DialogTitle>章節摘要:{chapter ? baseName(chapter) : ''}</DialogTitle>
                     <DialogDescription>
                         儲存後,寫後面章節時可以勾選「前情摘要」把它提供給 AI,不必送出整章全文。
                         AI 草擬的內容只是草稿,在你按下儲存之前不會被任何請求使用。

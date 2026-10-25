@@ -344,7 +344,7 @@ export default function ChatWindow(props: Props) {
                 selSent ? `選取 ${selSent.length} 字${selStale && keepSel ? '(仍要附加)' : ''}` : '',
                 attach.length ? `附加 ${attach.length} 個檔案` : '',
                 mode === 'report' ? '檢查報告模式' : '',
-            ].filter(Boolean).join(' · ');
+            ].filter(Boolean).join('、');
             setTurns(t => [...t, {role: 'user', text: question, meta}]);
             setQuestion('');
             setQuickId(undefined); // 送出後歸零,下次非快速指令的提問不會被誤記來源
@@ -649,7 +649,8 @@ export default function ChatWindow(props: Props) {
                             {t.role === 'user' && (
                                 <>
                                     <div className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary/15 px-3 py-2 text-sm">{t.text}</div>
-                                    {t.meta && <span className="mt-0.5 text-xs text-muted-foreground">{t.meta}</span>}
+                                    {/* 附註各項分開顯示;存檔仍是一串文字,舊紀錄用「 · 」串接也一樣拆開 */}
+                                    {t.meta && <span className="mt-0.5 flex flex-wrap justify-end gap-x-3 text-xs text-muted-foreground">{t.meta.split(/、| · /).map(m => <span key={m}>{m}</span>)}</span>}
                                 </>
                             )}
                             {/* assistant 回覆:不以整塊背景包框,以留白與分隔線建立層級(review-1b 第 3 點) */}
@@ -669,7 +670,7 @@ export default function ChatWindow(props: Props) {
                                         {t.args && (
                                             <div>
                                                 <div className="mb-0.5 font-medium">參數</div>
-                                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-[11px] leading-relaxed">{prettyArgs(t.args)}</pre>
+                                                <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded bg-background/50 p-1.5 font-mono text-xs leading-relaxed">{prettyArgs(t.args)}</pre>
                                             </div>
                                         )}
                                         {t.result && (
@@ -696,7 +697,7 @@ export default function ChatWindow(props: Props) {
                                             <span className="shrink-0" data-testid="proposal-versions">{1 + (p.alternatives ?? []).length} 個版本</span>}
                                         <span className="ml-auto shrink-0">{p.model}</span>
                                     </div>
-                                    <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                    <p className="mt-1 truncate font-serif text-sm" title={p.original}>{p.original}</p>
                                     <p data-testid="proposal-status"
                                        className={cn('mt-0.5 text-xs font-medium',
                                                       p.status === 'rejected' ? 'text-destructive' : 'text-muted-foreground')}>
@@ -731,9 +732,9 @@ export default function ChatWindow(props: Props) {
                                                     {versions.length > 1 && <span className="shrink-0" data-testid="proposal-versions">{versions.length} 個版本</span>}
                                                     <span className="ml-auto shrink-0">{p.model}</span>
                                                 </div>
-                                                <p className="mt-1 truncate font-serif text-[13px]" title={p.original}>{p.original}</p>
+                                                <p className="mt-1 truncate font-serif text-sm" title={p.original}>{p.original}</p>
                                                 {p.rationale && <p className="truncate text-xs text-muted-foreground" title={p.rationale}>理由:{p.rationale}</p>}
-                                                {changed && <p className="mt-0.5 text-xs text-primary">已修改 · 接受時會寫入你的版本</p>}
+                                                {changed && <p className="mt-0.5 text-xs text-primary">已修改,接受時會寫入你的版本</p>}
                                                 {p.status === 'conflict' && <p className="mt-0.5 text-xs text-warning">這段原文在提案後已被修改,無法套用。</p>}
                                                 <div className="mt-1.5 flex justify-end">
                                                     <Button size="sm" variant={p.status === 'conflict' ? 'ghost' : 'default'} className="h-7" data-testid="review-open"
@@ -773,7 +774,7 @@ export default function ChatWindow(props: Props) {
                             : <Chip dashed onClick={() => setPrior(true)}><Plus className="inline h-3 w-3"/>前情摘要</Chip>)}
                         {attach.map(a => (
                             <Chip key={a} onRemove={() => toggleAttach(a)} title={a}>
-                                <span className="text-muted-foreground">{KIND_LABEL[a.split('/')[0]]}·</span>{titleOf(a)}
+                                <span className="mr-1 text-muted-foreground">{KIND_LABEL[a.split('/')[0]]}</span>{titleOf(a)}
                             </Chip>
                         ))}
                         {mode === 'report' && <Chip onRemove={() => setMode('')} className="border-warning/40 text-warning">檢查報告</Chip>}
@@ -984,7 +985,7 @@ export default function ChatWindow(props: Props) {
                             <div key={m.id} data-testid="session-row" className="rounded-md border px-2.5 py-1.5">
                                 <div className="flex items-center gap-2">
                                     <span className="min-w-0 flex-1 truncate text-sm" title={m.title}>{m.title || '(無標題)'}</span>
-                                    {m.current && <Badge variant="secondary" className="shrink-0 px-1.5 text-[10px]" data-testid="session-current">目前</Badge>}
+                                    {m.current && <Badge variant="secondary" className="shrink-0 px-1.5 text-xs" data-testid="session-current">目前</Badge>}
                                 </div>
                                 <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
                                     <span data-testid="session-updated">{fmtTime(m.updatedAt)}</span>

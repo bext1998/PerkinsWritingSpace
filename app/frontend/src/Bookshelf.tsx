@@ -3,7 +3,7 @@ import {BookPlus, FolderOpen, Settings, Trash2, TriangleAlert} from 'lucide-reac
 import {ListRecent, OpenProjectAt, PickAndCreateProject, PickAndOpenProject, RemoveRecent} from '../wailsjs/go/main/App';
 import {main, project} from '../wailsjs/go/models';
 import {Button} from '@/components/ui/button';
-import {Input, Label} from '@/components/ui/basic';
+import {Badge, Input, Label} from '@/components/ui/basic';
 import {Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Tip} from '@/components/ui/overlay';
 import {cn, errText} from '@/lib/utils';
 import {enter} from '@/lib/motion';
@@ -90,16 +90,18 @@ export default function Bookshelf({onOpen, onSettings}: Props) {
                                 <div key={r.path} className="group relative">
                                     <button
                                         className={cn('relative block h-[176px] w-[124px] overflow-hidden rounded-r-md rounded-l-sm transition-transform duration-200',
-                                            r.missing ? 'opacity-40 grayscale' : 'hover:-translate-y-2')}
+                                            r.missing ? '' : 'hover:-translate-y-2')}
                                         title={r.path}
                                         disabled={r.missing}
                                         onClick={() => open(OpenProjectAt(r.path))}>
-                                        {r.cover
-                                            ? <img src={r.cover} alt={r.name} className="h-full w-full object-cover"/>
-                                            : <GeneratedCover name={r.name || '未命名'}/>}
+                                        <div className={cn('h-full w-full', r.missing && 'opacity-40 grayscale')}>
+                                            {r.cover
+                                                ? <img src={r.cover} alt={r.name} className="h-full w-full object-cover"/>
+                                                : <GeneratedCover name={r.name || '未命名'}/>}
+                                        </div>
                                         {r.missing && (
-                                            <span className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-1 text-xs text-white">
-                                                <TriangleAlert className="h-3 w-3"/>找不到資料夾
+                                            <span className="absolute inset-x-0 bottom-2 flex justify-center">
+                                                <Badge variant="warning" className="bg-background"><TriangleAlert className="h-3 w-3"/>找不到資料夾</Badge>
                                             </span>
                                         )}
                                     </button>
