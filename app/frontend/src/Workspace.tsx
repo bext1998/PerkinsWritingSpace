@@ -773,12 +773,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                 </>
                             )}
                             <Tip label="專注寫作:游標保持在舒適的高度,淡化其他段落(Ctrl+Shift+D)" side="bottom">
-                                <Button variant={focusWriting ? 'secondary' : 'ghost'} size="sm" data-testid="toolbar-focus" className="shrink-0"
+                                <Button variant={focusWriting ? 'secondary' : 'ghost'} size={iconOnly ? 'iconSm' : 'sm'} data-testid="toolbar-focus" className="shrink-0"
                                         aria-pressed={focusWriting} aria-label={focusWriting ? '離開專注寫作' : '專注寫作'}
                                         onClick={() => setFocusWriting(v => !v)}><Focus/>{!iconOnly && '專注寫作'}</Button>
                             </Tip>
                             {/* 存檔按鈕:章節檔與設定集檔都要有,與 Ctrl+S 同一個處理函式 */}
-                            <Button size="sm"
+                            {/* 只剩圖示時用 iconSm(與「更多」、資訊欄開關同尺寸),窄版把寬度留給章名 */}
+                            <Button size={iconOnly ? 'iconSm' : 'sm'}
                                     data-testid="save-button"
                                     className="shrink-0"
                                     variant={dirty ? 'default' : 'ghost'}
