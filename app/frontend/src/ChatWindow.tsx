@@ -649,7 +649,8 @@ export default function ChatWindow(props: Props) {
                             {t.role === 'user' && (
                                 <>
                                     <div className="max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary/15 px-3 py-2 text-sm">{t.text}</div>
-                                    {t.meta && <span className="mt-0.5 text-xs text-muted-foreground">{t.meta}</span>}
+                                    {/* 附註各項分開顯示;存檔仍是一串文字,舊紀錄用「 · 」串接也一樣拆開 */}
+                                    {t.meta && <span className="mt-0.5 flex flex-wrap justify-end gap-x-3 text-xs text-muted-foreground">{t.meta.split(/、| · /).map(m => <span key={m}>{m}</span>)}</span>}
                                 </>
                             )}
                             {/* assistant 回覆:不以整塊背景包框,以留白與分隔線建立層級(review-1b 第 3 點) */}

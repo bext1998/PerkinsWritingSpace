@@ -107,7 +107,8 @@ function FieldRow({title, desc, children}: {title: string; desc?: React.ReactNod
 
 // 進入子頁的列:結尾「›」、整列可點(UI_GUIDE §12.3)
 function NavRow({title, desc, icon, badge, onClick, testid}: {
-    title: string; desc?: string; icon?: React.ReactNode; badge?: React.ReactNode; onClick: () => void; testid?: string;
+    // desc 是陣列時每項各自一格、以間距分開並可換行(UI_GUIDE §11:並列資訊不用分隔符號串成一行)
+    title: string; desc?: string | string[]; icon?: React.ReactNode; badge?: React.ReactNode; onClick: () => void; testid?: string;
 }) {
     return (
         <button type="button" onClick={onClick} data-testid={testid}
@@ -115,7 +116,9 @@ function NavRow({title, desc, icon, badge, onClick, testid}: {
             {icon}
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium">{title}</span>
-                {desc && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{desc}</span>}
+                {Array.isArray(desc)
+                    ? <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs text-muted-foreground">{desc.map(d => <span key={d}>{d}</span>)}</span>
+                    : desc && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{desc}</span>}
             </span>
             {badge}
             <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground"/>
@@ -512,7 +515,7 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
                 <RowCard testid="profile-list">
                     {cfg.profiles.map(p => (
                         <NavRow key={p.id} testid={`profile-card-${p.id}`} title={p.name}
-                                desc={`${p.model || '尚未選擇模型'}(${p.remote ? '雲端' : '本機'})`}
+                                desc={[p.model || '尚未選擇模型', p.remote ? '雲端' : '本機']}
                                 icon={p.remote ? <Cloud className="h-4 w-4 shrink-0 text-muted-foreground"/> : <Monitor className="h-4 w-4 shrink-0 text-muted-foreground"/>}
                                 badge={p.id === cfg.active ? <Badge variant="secondary" className="shrink-0 text-xs">使用中</Badge> : undefined}
                                 onClick={() => setSub({kind: 'profile', id: p.id, notice: ''})}/>
@@ -541,11 +544,11 @@ function PerkinsBotTab({cfg, setCfg, hasProject, guard, setDirty}: {
 // 繁簡轉換的短標示:清單列的規則摘要用,選單內仍用 ConvertOptions 的完整標示
 const CONV_SHORT: Record<string, string> = {tw2s: '轉簡', tw2sp: '轉簡(含用詞)', s2tw: '轉繁', s2twp: '轉繁(含用詞)'};
 
-// 規則摘要:清單列上一行看完這個平台的輸出規則
-function rulesSummary(r: publish.Rules) {
+// 規則摘要:清單列上看完這個平台的輸出規則(每項各自一格)
+function rulesSummary(r: publish.Rules): string[] {
     return [r.indent ? '段首縮排' : '不縮排', r.blankLine ? '段間空行' : '不留空行',
         r.heading === 'strip' ? '保留標題' : '不輸出標題', `分隔:${r.sceneBreak || '空行'}`,
-        `繁簡:${r.convert ? (CONV_SHORT[r.convert] ?? r.convert) : '不轉'}`].join('、');
+        `繁簡:${r.convert ? (CONV_SHORT[r.convert] ?? r.convert) : '不轉'}`];
 }
 
 // 平台規則欄位:判斷子頁是否有未儲存變更,與儲存回應後同步沒再改過的欄位
