@@ -2,7 +2,7 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ArrowLeft, BookMarked, ChevronRight, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
     AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
-    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAppearance, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, WriteAgentsMd,
+    ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAppearance, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, SetTypingSound, WriteAgentsMd,
 } from '../wailsjs/go/main/App';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {ACCENT_PRESETS, HEX_RE, contrastRatio, hexToHSL, readThemeToken} from './appearance';
@@ -11,6 +11,7 @@ import {Badge, Checkbox, Input, Label, Switch, Textarea} from '@/components/ui/b
 import {Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue, Tip} from '@/components/ui/overlay';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {cn, errText} from '@/lib/utils';
+import {playTick} from '@/lib/typewriterSound';
 import {enter} from '@/lib/motion';
 import {GeneratedCover} from './Bookshelf';
 import NotionImport from './NotionImport';
@@ -750,17 +751,35 @@ function PlatformsTab({cfg, setCfg, guard, setDirty}: {cfg: main.SettingsView; s
     );
 }
 
-function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
+function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typingVolume, onSetTypingSound}: {
     tree: project.Tree;
     setTree: (t: project.Tree) => void;
     autosave: boolean;
     onSetAutosave: (on: boolean) => Promise<void>;
+    // 打字機音效(#116 PR-2):作者全域設定(與 autosave 同一處)
+    typingSound: boolean;
+    typingVolume: number;
+    onSetTypingSound: (on: boolean, volume: number) => Promise<void>;
 }) {
     const [name, setName] = useState(tree.name);
     const [cover, setCover] = useState('');
     const [error, setError] = useState('');
     const [autosaveSaving, setAutosaveSaving] = useState(false);
     const [autosaveError, setAutosaveError] = useState('');
+    // 打字機音效(#116 PR-2):tsVolume 是畫面上的滑桿值(拖動中只更新畫面,放開時才存)
+    const [tsSaving, setTsSaving] = useState(false);
+    const [tsError, setTsError] = useState('');
+    const [tsVolume, setTsVolume] = useState(typingVolume);
+    const saveTsVolume = useCallback(async () => {
+        if (tsSaving) return;
+        setTsSaving(true);
+        try {
+            await onSetTypingSound(typingSound, tsVolume); // 後端保存成功才更新畫面
+            setTsError('');
+            playTick(tsVolume); // 放開並存檔成功後播一次,讓作者聽到音量
+        } catch (e) { setTsError(errText(e)); setTsVolume(typingVolume); /* 失敗回到最後存成功的音量 */ }
+        setTsSaving(false);
+    }, [typingSound, typingVolume, tsVolume, tsSaving, onSetTypingSound]);
     const [researchOn, setResearchOn] = useState<boolean | null>(null); // null = 尚未載入
     const [researchSaving, setResearchSaving] = useState(false);
     const [researchError, setResearchError] = useState('');
@@ -811,6 +830,36 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave}: {
                                 setAutosaveError('');
                             } catch (e) { setAutosaveError(errText(e)); /* 失敗保持原值 */ }
                             setAutosaveSaving(false);
+                        }}/>
+            </div>
+            {/* 區塊:打字機音效(#116 PR-2):只有稿件編輯器響;開關與音量存作者全域設定(這台電腦) */}
+            <div className="flex items-start gap-4 rounded-lg border p-4" data-testid="typing-sound-row">
+                <div className="flex-1">
+                    <Label className="text-sm font-medium">打字機音效</Label>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        在稿件裡打字時發出打字機聲,換行時叮一聲。只存在這台電腦。
+                    </p>
+                    {tsError && <p className="mt-1 text-xs text-destructive" data-testid="typing-sound-error">無法儲存打字機音效設定:{tsError}</p>}
+                    {typingSound && (
+                        <div className="mt-3 flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">音量</span>
+                            <input type="range" data-testid="typing-volume" min={0} max={100} step={5}
+                                   className="w-40 accent-primary" value={tsVolume} disabled={tsSaving} /* 存檔中不能再拖,避免第二次放開被略過 */
+                                   onChange={e => setTsVolume(Number(e.target.value))}
+                                   onPointerUp={saveTsVolume} onKeyUp={saveTsVolume}/>
+                            <span className="text-xs text-muted-foreground tabular-nums">{tsVolume}%</span>
+                        </div>
+                    )}
+                </div>
+                <Switch data-testid="typing-sound-switch" checked={typingSound} disabled={tsSaving}
+                        onCheckedChange={async v => {
+                            setTsSaving(true);
+                            try {
+                                await onSetTypingSound(v, typingVolume);
+                                setTsError('');
+                                if (v) playTick(tsVolume); // 開啟後播一次,讓作者聽到目前音量
+                            } catch (e) { setTsError(errText(e)); /* 失敗保持原值 */ }
+                            setTsSaving(false);
                         }}/>
             </div>
             {/* 區塊三:研究記錄(§12.8):間距只靠容器 gap-8,不再 mt-6 疊加(SPEC §17.2) */}
@@ -1219,6 +1268,11 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
         await SetAutosave(on);
         setCfg(c => c ? main.SettingsView.createFrom({...c, autosave: on}) : c);
     };
+    // 打字機音效(#116 PR-2):寫入設定檔成功後才更新畫面
+    const setTypingSound = async (on: boolean, volume: number) => {
+        await SetTypingSound(on, volume);
+        setCfg(c => c ? main.SettingsView.createFrom({...c, typingSound: on, typingVolume: volume}) : c);
+    };
 
     const navBtn = (id: Page, Icon: typeof Cpu) => (
         <button data-testid={`tab-${id}`} onClick={() => { if (id !== page) guard(() => setPage(id)); }}
@@ -1259,7 +1313,8 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
                                 </div>
                             )}
                             <h2 className="mb-6 text-xl font-semibold" data-testid="settings-page-title">{PAGE_LABEL[page]}</h2>
-                            {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}/>}
+                            {page === 'project' && tree && <ProjectTab tree={tree} setTree={setTree} autosave={cfg.autosave} onSetAutosave={setAutosave}
+                                typingSound={cfg.typingSound} typingVolume={cfg.typingVolume} onSetTypingSound={setTypingSound}/>}
                             {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree} guard={guard} setDirty={setDirty}/>}
                             {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg} guard={guard} setDirty={setDirty}/>}
                             {page === 'appearance' && <AppearanceTab appearance={appearance} setAppearance={setAppearance} paper={paper} setPaper={setPaper}/>}

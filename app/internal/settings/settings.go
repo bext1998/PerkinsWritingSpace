@@ -112,6 +112,10 @@ type Settings struct {
 	// 定時自動存檔(SPEC §17.3)。指標用來區分「作者明確關閉」與「舊設定檔沒有這個欄位」,
 	// 後者視為開啟;用 bool 的話兩者都是 false,分不出來。
 	Autosave *bool `json:"autosave,omitempty"`
+	// 打字機音效(#116):稿件編輯器打字時的輕響。預設 false 就是關閉。
+	TypingSound bool `json:"typingSound,omitempty"`
+	// 打字機音效音量(0–100)。指標用來區分「沒設定」(預設 50)與「作者明確設成 0」。
+	TypingVolume *int `json:"typingVolume,omitempty"`
 
 	// 稿紙化第二階段(二)(SPEC §17.3):編輯區版面的作者全域偏好(與主題同一處),不是作品設定
 	PaperWidth    string `json:"paperWidth"`    // 版心寬度(正文欄最大寬度)
@@ -494,6 +498,14 @@ func (s *Store) Save(v Settings) error {
 
 // AutosaveOn 回傳定時自動存檔是否啟用:沒設定過(舊設定檔)時預設開啟。
 func (v Settings) AutosaveOn() bool { return v.Autosave == nil || *v.Autosave }
+
+// TypingVolumeOr 回傳打字機音效音量:沒設定過(舊設定檔)時預設 50;0 是作者明確設的值。
+func (v Settings) TypingVolumeOr() int {
+	if v.TypingVolume == nil {
+		return 50
+	}
+	return *v.TypingVolume
+}
 
 func (v *Settings) ProfileByID(id string) *Profile {
 	for i := range v.Profiles {

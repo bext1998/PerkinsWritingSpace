@@ -886,6 +886,115 @@ module.exports = {
         await page.keyboard.press('Control+Shift+D');
         await settle(100, 600);
 
+        // ---- #116 PR-2:打字機音效 ----
+        // 無頭環境聽不到聲音,用 DEV hook window.__perkinsSound 的計數驗證(前後差值)
+        // 比對前後差值(同一頁面先前若有計數也不影響)
+        const soundBase = await page.evaluate(() => ({...window.__perkinsSound}));
+        const sound = async () => { const c = await page.evaluate(() => window.__perkinsSound); return {tick: c.tick - soundBase.tick, ding: c.ding - soundBase.ding}; };
+        // 1) 預設關閉:打字不響
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await page.keyboard.type('abc');
+        await settle(80, 500);
+        const sn0 = await sound();
+        check('#116 打字機音效:預設關閉,打字不響(tick 差 0)',
+            sn0.tick === 0 && sn0.ding === 0, JSON.stringify({sn0}));
+        // 2) 設定頁開啟:打 abc → tick 差 3;Enter → ding 差 1、tick 差 0
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=typing-sound-row]');
+        await page.click('[data-testid=typing-sound-switch]');
+        await settle(100, 800);
+        await page.click('[data-testid=close-settings]');
+        await settle(150, 1000);
+        // 開關打開時會試播一聲:從這裡重新起算。打字間隔 60ms(長按連發節流是 35ms,太快會被當成連發)
+        Object.assign(soundBase, await page.evaluate(() => ({...window.__perkinsSound})));
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+Home');
+        await page.keyboard.type('abc', {delay: 60});
+        await page.keyboard.press('Enter');
+        await settle(100, 600);
+        const sn1 = await sound();
+        check('#116 打字機音效:開啟後打 abc 響 3 次(tick 差 3),Enter 響 1 次叮(ding 差 1、tick 差 0)',
+            sn1.tick === 3 && sn1.ding === 1, JSON.stringify({sn1}));
+        // 3) 程式插入(貼上)不響
+        await page.evaluate(t => {
+            const dt = new DataTransfer();
+            dt.setData('text/plain', t);
+            document.querySelector('.cm-content').dispatchEvent(new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true}));
+        }, '貼上的一段文字');
+        await settle(80, 500);
+        const sn2 = await sound();
+        check('#116 打字機音效:貼上(程式插入)不響(tick 差 0)',
+            sn2.tick === 3 && sn2.ding === 1, JSON.stringify({sn2}));
+        // 4) IME:組字中不響,選字確認送出(compositionend 帶文字)響一次
+        //    (CDP 發真實組字事件;無頭環境無真實 IME,實機見 #47)
+        await page.click('.cm-content'); // 組字事件需要焦點
+        await settle(80, 400);
+        const cdp3 = await page.context().newCDPSession(page);
+        await cdp3.send('Input.imeSetComposition', {text: 'ㄋㄧˇ', selectionStart: 3, selectionEnd: 3});
+        await cdp3.send('Input.imeSetComposition', {text: 'ㄋㄧˇ', selectionStart: 3, selectionEnd: 3});
+        await settle(100, 600);
+        const sn3 = await sound();
+        check('#116 打字機音效:IME 組字中不響(tick 差 0)',
+            sn3.tick === 3 && sn3.ding === 1, JSON.stringify({sn3}));
+        await cdp3.send('Input.insertText', {text: '你'});
+        await settle(100, 600);
+        const sn4 = await sound();
+        check('#116 打字機音效:IME 選字確認送出後響一次(tick 差 1)',
+            sn4.tick === 4 && sn4.ding === 1, JSON.stringify({sn4}));
+        // 4b) 搜尋面板(在編輯器 DOM 內,但不是稿件內文)打字不響
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+f');
+        await page.waitForSelector('.perkins-search input[name=search]');
+        await page.keyboard.type('abc', {delay: 60});
+        await settle(80, 500);
+        const sn4b = await sound();
+        check('#116 打字機音效:搜尋面板打字不響(tick 差 0)',
+            sn4b.tick === 4 && sn4b.ding === 1, JSON.stringify({sn4b}));
+        await page.keyboard.press('Escape');
+        await settle(80, 500);
+        // 5) Perkins Bot 輸入框不響
+        if (!(await page.$('[data-testid=chat-window]:visible'))) await page.click('[data-testid=chat-fab]');
+        await page.waitForSelector('[data-testid=chat-window]:visible');
+        await page.click('[data-testid=question]');
+        await page.keyboard.type('abc', {delay: 60});
+        await settle(80, 500);
+        const sn5 = await sound();
+        check('#116 打字機音效:Perkins Bot 輸入框打字不響(tick 差 0)',
+            sn5.tick === 4 && sn5.ding === 1, JSON.stringify({sn5}));
+        await page.click('[data-testid=chat-window] button:has(svg.lucide-minus)'); // 關掉浮窗
+        await settle(100, 600);
+        // 6) 收尾:回設定頁把開關關掉(作者設定回到預設)
+        await page.click('[data-testid=open-settings]');
+        await page.waitForSelector('[data-testid=settings-page]');
+        await page.click('[data-testid=tab-project]');
+        await page.waitForSelector('[data-testid=typing-sound-row]');
+        // 音量存檔失敗:滑桿與數字回到最後存成功的值,錯誤看得到(PR #151 審查)
+        const volBefore = await page.inputValue('[data-testid=typing-volume]');
+        await page.evaluate(() => {
+            const app = window.go.main.App;
+            window.__origSetTypingSound = app.SetTypingSound;
+            app.SetTypingSound = () => Promise.reject('模擬寫入失敗');
+        });
+        await page.focus('[data-testid=typing-volume]');
+        await page.keyboard.press('ArrowRight'); // onChange 改值,onKeyUp 存檔(被拒)
+        await settle(100, 800);
+        const volAfter = await page.inputValue('[data-testid=typing-volume]');
+        const volErr = await page.$('[data-testid=typing-sound-error]');
+        await page.evaluate(() => { window.go.main.App.SetTypingSound = window.__origSetTypingSound; });
+        check('#116 打字機音效:音量存檔失敗時滑桿回到原值且顯示錯誤',
+            volAfter === volBefore && !!volErr, JSON.stringify({volBefore, volAfter, err: !!volErr}));
+        await page.click('[data-testid=typing-sound-switch]');
+        await settle(100, 800);
+        const sn6 = await sound();
+        check('#116 打字機音效:收尾關掉開關後 switch 呈關閉(關開關不觸發音效)',
+            !!(await page.$('[data-testid=typing-sound-switch][data-state=unchecked]'))
+            && sn6.tick === 4 && sn6.ding === 1, JSON.stringify({sn6}));
+        await page.click('[data-testid=close-settings]');
+        await settle(150, 1000);
+
         // 清理:刪掉專用檔並把章節列還原(後面的組會數章節數量)
         await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
         await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});

@@ -405,6 +405,8 @@ export namespace main {
 	    paperWidth: string;
 	    paperFontSize: string;
 	    paperParaGap: string;
+	    typingSound: boolean;
+	    typingVolume: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SettingsView(source);
@@ -420,6 +422,8 @@ export namespace main {
 	        this.paperWidth = source["paperWidth"];
 	        this.paperFontSize = source["paperFontSize"];
 	        this.paperParaGap = source["paperParaGap"];
+	        this.typingSound = source["typingSound"];
+	        this.typingVolume = source["typingVolume"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

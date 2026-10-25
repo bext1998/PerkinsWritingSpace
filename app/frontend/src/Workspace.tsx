@@ -357,6 +357,8 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
     // 計時器綁在當下的檔案與 dirty 狀態上:切檔、回書櫃(卸載)、唯讀鎖、設定關閉都會清掉或不再排程,
     // 不會把舊檔的內容寫進新檔。設定載入前(cfg 為 null)照預設值(開啟)。
     const autosaveOn = cfg?.autosave !== false;
+    // 打字機音效(#116 PR-2):作者全域設定(預設關閉、音量 50),不綁專注寫作
+    const typingSound = useMemo(() => ({on: cfg?.typingSound === true, volume: cfg?.typingVolume ?? 50}), [cfg?.typingSound, cfg?.typingVolume]);
     const autoTimer = useRef<number | null>(null);
     const autoSince = useRef<number | null>(null); // 目前這輪未存變更的起算時間(上限用)
     useEffect(() => {
@@ -842,7 +844,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                 )}
                 {current ? (
                     <Editor ref={editor} key={`${current}:${reloadKey}`} initialText={text} readOnly={editLocked} flash={flashP && flashP.target === current ? acceptedRange(text, flashP) : null} reveal={revealP && revealP.target === current ? originalRange(text, revealP) : null} posKey={current} posStore={posMemo.current}
-                            typewriter={focusWriting} focusMode={focusWriting}
+                            typewriter={focusWriting} focusMode={focusWriting} typingSound={typingSound}
                             onChange={t => { editVersion.current++; latest.current = {...latest.current, text: t, dirty: true}; setText(t); setDirty(true); }}
                             onAskAI={onAskAI} onSelect={sv => {
                                 setSelection(sv);

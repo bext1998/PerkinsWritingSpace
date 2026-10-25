@@ -12,6 +12,7 @@ import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'luc
 import {QUICK_ACTIONS, Quick} from './quick';
 import {paperExtensions} from './paper';
 import {focusExtensions, typewriterExtensions} from './paperModes';
+import {playTick, playDing} from '@/lib/typewriterSound';
 
 export interface Selection {
     text: string;
@@ -351,6 +352,8 @@ interface Props {
     // 以 Compartment 開關,狀態在 Workspace(記憶體)
     typewriter?: boolean;
     focusMode?: boolean;
+    // 打字機音效(#116 PR-2):自己的開關(預設關閉),不綁專注寫作,一般模式也會響
+    typingSound?: {on: boolean; volume: number};
 }
 
 const theme = EditorView.theme({
@@ -650,7 +653,7 @@ const openReplace: Command = view => {
 };
 
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
-const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false, typewriter = false, focusMode = false}, ref) {
+const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false, typewriter = false, focusMode = false, typingSound = {on: false, volume: 50}}, ref) {
     const host = useRef<HTMLDivElement>(null);
     const view = useRef<EditorView | null>(null);
     const revealTimer = useRef(0);
@@ -659,6 +662,11 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const focusComp = useRef(new Compartment());
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    // 打字機音效(#116 PR-2):listener 在掛載時建立,ref 保存最新值(同 onChangeRef 的作法)
+    const typingSoundRef = useRef(typingSound);
+    typingSoundRef.current = typingSound;
+    const readOnlyRef = useRef(readOnly);
+    readOnlyRef.current = readOnly;
     const onAskAIRef = useRef(onAskAI); // 快捷鍵在掛載時建立,要呼叫最新的 onAskAI
     onAskAIRef.current = onAskAI;
     const onSelectRef = useRef(onSelect);
@@ -845,6 +853,33 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         v.dom.addEventListener('wheel', onUserAction, {passive: true});
         v.dom.addEventListener('keydown', onUserAction);
 
+        // 打字機音效(#116 PR-2):只有作者按鍵才響——唯讀、IME 組字中、快捷鍵(Ctrl/Meta)都不響;
+        // 貼上、復原、拖放、AI 提案套用、版本還原不經按鍵,自然不響。長按連發節流(不到 35ms 不播)。
+        let lastTick = 0;
+        const onTypeSound = (e: KeyboardEvent) => {
+            const s = typingSoundRef.current;
+            // 只算稿件內文:搜尋/取代面板也在 v.dom 裡,在那裡打字不響
+            if (!v.contentDOM.contains(e.target as Node)) return;
+            if (!s.on || readOnlyRef.current || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey) return;
+            if (e.key === 'Enter' && !e.repeat) {
+                playDing(s.volume);
+                return;
+            }
+            // 可輸入的單一字元(含空白與 Alt 全形標點快捷鍵);方向鍵、Home/End 等不響
+            if (e.key.length !== 1) return;
+            const now = performance.now();
+            if (now - lastTick < 35) return;
+            lastTick = now;
+            playTick(s.volume);
+        };
+        // IME:組字中不響;選字確認送出(compositionend 且帶文字)響一次
+        const onCompositionEnd = (e: CompositionEvent) => {
+            const s = typingSoundRef.current;
+            if (s.on && !readOnlyRef.current && e.data && v.contentDOM.contains(e.target as Node)) playTick(s.volume);
+        };
+        v.dom.addEventListener('keydown', onTypeSound);
+        v.dom.addEventListener('compositionend', onCompositionEnd);
+
         // 視窗縮放(含 ≤960 側欄/資訊欄互斥自動收合)後游標穩定:游標行落在可視範圍外
         // 才以最小捲動帶回(不跳到頂端,也不干擾本來就看得到的情況)
         let resizeRaf = 0;
@@ -921,6 +956,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             v.dom.removeEventListener('pointerdown', onUserAction);
             v.dom.removeEventListener('wheel', onUserAction);
             v.dom.removeEventListener('keydown', onUserAction);
+            v.dom.removeEventListener('keydown', onTypeSound);
+            v.dom.removeEventListener('compositionend', onCompositionEnd);
             v.destroy();
             view.current = null;
             if (import.meta.env.DEV) delete (window as any).__perkinsEditor;
