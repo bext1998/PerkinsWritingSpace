@@ -2019,7 +2019,7 @@ func TestRejectionReasonSentUntilReset(t *testing.T) {
 	a.Reset()
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	a.Ask(context.Background(), AskParams{Question: "新對話"}, func(Event) {})
-	if strings.Contains(userText(s.reqs[len(s.reqs)-1].Messages), "太口語") {
+	if strings.Contains(joined(s.reqs[len(s.reqs)-1].Messages), "太口語") {
 		t.Fatal("Reset 後不應再帶上拒絕原因")
 	}
 }
@@ -2212,6 +2212,8 @@ func TestRejectBeforeFinishShowsRejected(t *testing.T) {
 // 下一個工具回合送出的 system 訊息就要看到「作者已拒絕」與理由,不能還以為提案待審。
 func TestRejectionWithinSameAskVisibleToNextRequest(t *testing.T) {
 	a, s, _ := setup(t)
+	// 先放一段較早的對話,本回合作者訊息才不是第一則 user;userIdx 算錯時現況會落到「早先的問題」,下面的斷言才抓得到(#165)。
+	a.RestoreSession([]llm.Message{{Role: "user", Content: "早先的問題"}, {Role: "assistant", Content: "早先的回答"}}, nil, nil)
 	s.replies = []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
 			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
@@ -2237,6 +2239,16 @@ func TestRejectionWithinSameAskVisibleToNextRequest(t *testing.T) {
 	sys := userText(s.reqs[1].Messages)
 	if !strings.Contains(sys, "作者已拒絕") || !strings.Contains(sys, "太口語") || !strings.Contains(sys, created) {
 		t.Fatalf("同一回合內被拒絕的提案,下一個請求的作者訊息應含已拒絕與理由:%q", sys)
+	}
+	// 提案現況要寫在本回合作者訊息(最後一則 user)上,不能落到較早的歷史訊息(#165 的 userIdx)。
+	var cur string
+	for _, m := range s.reqs[1].Messages {
+		if m.Role == "user" {
+			cur = m.Content
+		}
+	}
+	if !strings.Contains(cur, "作者已拒絕") || !strings.HasSuffix(cur, "q") {
+		t.Fatalf("提案現況應在本回合作者訊息開頭、問題在最後:%q", cur)
 	}
 	if s.reqs[0].Messages[0].Content != s.reqs[1].Messages[0].Content {
 		t.Fatal("system 應在提案被拒絕前後保持相同")
@@ -2309,6 +2321,53 @@ func TestSystemStableAcrossProposalChanges(t *testing.T) {
 	}
 	if hist := joined(a.History); strings.Contains(hist, p.ID) {
 		t.Fatalf("提案狀態不應寫進對話歷史: %q", hist)
+	}
+}
+
+// 意圖(#165):Ask 送出前自動濃縮會重組訊息、歷史變短;本回合作者訊息的位置要跟著重算,
+// 否則工具回合後重讀的提案現況會寫到別則訊息(或越界)。
+func TestStatusFollowsUserMessageAfterAutoCompactInAsk(t *testing.T) {
+	a, s, _ := setup(t)
+	// 先放 4 回合(8 則)較長舊對話:本回合作者訊息才不是第一則 user,歷史也長到可以觸發自動濃縮。
+	long := strings.Repeat("很長的討論內容。", 12)
+	var hist []llm.Message
+	for i := 0; i < 8; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		hist = append(hist, llm.Message{Role: role, Content: long})
+	}
+	a.RestoreSession(hist, nil, nil)
+	// 預算以系統提示為基準再加固定額度:舊對話加本回合會超預算(送出前觸發自動濃縮),濃縮後可以送出。
+	a.ContextTokens = EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 950
+	s.replies = []llm.Message{
+		{Role: "assistant", Content: "摘要:討論了森林。"}, // 給濃縮用
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
+			Arguments: `{"path":"manuscript/第一章.md","original":"小明走進森林。","replacement":"小明獨自闖入森林。","rationale":"r"}`}}},
+		{Role: "assistant", Content: "好"},
+	}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "本回合的問題"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// (a) 有濃縮:歷史應以摘要開頭。
+	if !strings.HasPrefix(a.History[0].Content, "【較早對話的摘要】") {
+		t.Fatalf("歷史應以摘要開頭: %q", a.History[0].Content)
+	}
+	// (b) 最後一個請求:最後一則 user 應含提案現況與待審狀態,且以本回合問題結尾。
+	last := s.reqs[len(s.reqs)-1].Messages
+	var cur string
+	for _, m := range last {
+		if m.Role == "user" {
+			cur = m.Content
+		}
+	}
+	if !strings.Contains(cur, "本次對話的提案現況") || !strings.Contains(cur, "等待作者審查") || !strings.HasSuffix(cur, "本回合的問題") {
+		t.Fatalf("最後一則 user 應含提案現況與待審狀態、以本回合問題結尾:%q", cur)
+	}
+	// (c) 提案現況不應寫進對話歷史(只在送出時即時組出)。
+	if strings.Contains(joined(a.History), "本次對話的提案現況") {
+		t.Fatalf("提案狀態不應寫進對話歷史:\n%s", joined(a.History))
 	}
 }
 
