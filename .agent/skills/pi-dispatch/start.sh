@@ -21,8 +21,10 @@ def ours(cwd):
     if not cwd: return False # 沒有 cwd 時 git -C '' 會查目前目錄,誤判成本專案
     r=subprocess.run(['git','-C',cwd,'rev-parse','--path-format=absolute','--git-common-dir'],capture_output=True,text=True)
     return r.returncode==0 and os.path.normcase(os.path.abspath(r.stdout.strip()))==os.path.normcase(os.path.abspath(sys.argv[1]))
-print(' '.join(a['pane_id'] for a in json.load(sys.stdin)['result']['agents'] if (a.get('agent')=='pi' and ours(a.get('cwd',''))) or (a.get('agent')=='dsh-code' and a['pane_id'].startswith(w+':'))))
-" "$C")
+# 作者開的常駐審查者(runtime.json 的 reviewer_pi)不是實作者,不占名額
+rv=json.load(open(sys.argv[2],encoding='utf-8')).get('reviewer_pi') if os.path.exists(sys.argv[2]) else None
+print(' '.join(a['pane_id'] for a in json.load(sys.stdin)['result']['agents'] if a['pane_id']!=rv and ((a.get('agent')=='pi' and ours(a.get('cwd',''))) or (a.get('agent')=='dsh-code' and a['pane_id'].startswith(w+':')))))
+" "$C" "$R")
 [ -n "$busy" ] && { echo "本專案已有 Pi 或 dsh-code pane:$busy。同時最多一個實作者,先收掉"; exit 1; }
 p=$(herdr pane split --current --direction down --cwd "$(pwd -W 2>/dev/null || pwd)" | python -c "import json,sys;print(json.load(sys.stdin)['result']['pane']['pane_id'])")
 herdr pane rename "$p" "Wolfe-$2" >/dev/null
