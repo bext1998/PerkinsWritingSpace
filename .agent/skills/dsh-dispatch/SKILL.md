@@ -5,7 +5,7 @@ Pi(`pi-dispatch`)以外的第二種派工方式。`dsh-code` 是作者為 DeepSe
 ## 何時用
 - **實作**(herdr pane):內容明確、設計已定的工作——補測試、小修補、照說明修改。需要邊做邊決定設計、介面打磨或碰作者真實資料的工作不派。
 - **唯讀分析**(單次):程式掃描、摘要、找呼叫點、第二意見。在要分析的目錄執行 `dsh-code -p --permission read-only "<任務>"`(長說明用 `dsh-code -p --permission read-only -` 從 stdin 讀),stdout 就是答案。不占實作者名額。
-- **PR 審查**(單次):Reviewer 主審,見下方「審查」。
+- **PR 審查**(herdr pane):見 `review` 技能。
 - 優先級與成本照 `AGENTS.md`「派工成本與優先級」;小到自己做更快的不派。
 
 ## 已驗證行為(2026-10-19,dsh-code 0.3.1、herdr 0.9.1-preview)
@@ -27,14 +27,6 @@ Pi(`pi-dispatch`)以外的第二種派工方式。`dsh-code` 是作者為 DeepSe
 5. **驗收**:讀回報後親自核對 `git status`/`git diff` 與相關測試(介面改動照 `UI_GUIDE.md` 實看),再由 Orchestrator commit、推送、開 PR。返工用 `send.sh` 在同一個 session 送修正說明;同一問題返工兩輪仍不過就自己接手。
 6. **記錄**:每次派工在主倉庫 `.agent/profile/pi-ledger.md` 加一列,方式寫 `dsh-code`,模型寫 `deepseek-flash(V4.1-Flash-1017)`;花費以 DeepSeek 平台餘額前後差為準。PR「Agent 貢獻」寫 `Implemented-by: DSH Code (DeepSeek Harness) | deepseek-flash(V4.1-Flash-1017)`。
 7. **收尾**:回報且不再需要時 `stop.sh <pane>`;PR 合併後照常清掉工作樹與分支。
-
-## 審查(Reviewer 主審,2026-10-27 起)
-唯讀單次模式,不開 pane、不占實作者名額。唯讀模式下能否跑 shell 未驗證,所以 diff 由 Orchestrator 放進說明,不靠它自己跑 `git`。
-1. **審查說明**寫成系統暫存目錄的檔案:開頭照 `AGENTS.md` 列寄件者、主旨、關聯(PR／分支);正文放審查範圍、任務與驗收條件、相關 SPEC 章節、Orchestrator 認為的風險點,再貼 `.agent/profile/reviewer.md` 的職責與 `AGENTS.md`「審查範圍」;最後附 `git diff origin/main...HEAD` 全文。要求輸出:每項發現附嚴重度、檔案:行、觸發情境、建議修法,範圍外發現另列;沒有就寫可合併並交代沒驗證到的部分。
-2. **執行**:在 PR 的工作樹根目錄(讓它能讀到上下文檔案)執行(PowerShell 不支援 `<` 輸入重導向,用管線)`Get-Content -LiteralPath <說明檔> -Raw -Encoding UTF8 | dsh-code -p --permission read-only -`,stdout 就是審查結果;`$LASTEXITCODE` 不是 0(例如金鑰失效)就是審查沒跑成,不能當成通過。
-3. **處理**:逐項親自核對發現是否成立(它可能誤判);成立的修掉,複審時說明只放修補的 diff 與先前的發現。不成立的在 PR 回覆中寫明理由。
-4. **高風險 PR 加審**(定義見 `AGENTS.md`):另開一個 Claude Code 子代理,只給同一份說明檔路徑與工作樹路徑,不給 Orchestrator 自己的判斷結論,讓它獨立審。
-5. **記錄**:本機紀錄加一列(審查也算花費);過渡期同時寫 Codex 對同一 PR 的發現,標出哪一方多抓或誤報。PR「Agent 貢獻」寫 `Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)`,加審的另列 `Reviewed-by: <名稱> (Claude Code 子代理) | <模型 ID>`。
 
 ## 限制
 - 不改 `~/.dsh`(含 `code-host` profile 的模型設定)與憑證;要換模型用啟動參數 `--model`,並寫進紀錄。

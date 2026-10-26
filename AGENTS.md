@@ -25,8 +25,8 @@
 - 遠端倉庫：`https://github.com/bext1998/PerkinsWritingSpace`，主分支 `main`。
 - 小修改（錯字、文件措辭、不影響行為的單行設定）可直接提交到 `main`；其餘一律開分支、建立 PR，經作者審查後才合併。合併由作者決定，Agent 不自行合併。
 - **每個 PR 都要經 Reviewer 審查**（不論大小、文件或腳本，也不論誰實作）：Orchestrator 完成自己的驗證後送審，有發現就修正並請 Reviewer 複審修補的 diff，通過後才能向作者回報「可合併」。審查通過前，不在回報或 PR 內文寫可合併；Reviewer 無法使用時，明說「尚未審查」並回報作者，不得略過。
-  - 主審是 dsh-code 唯讀審查（DeepSeek 官方 API，步驟見 `.agent/skills/dsh-dispatch/SKILL.md`「審查」）。高風險 PR 另加一位 Claude Code 新開的子代理獨立審查（不帶 Orchestrator 的對話脈絡）；高風險指動到稿件、Canon 或設定的寫入，提案的接受、拒絕與還原，G1–G4 護欄，Bot 工具權限或送出模型的內容。
-  - 過渡期（2026-11-21 Codex 訂閱到期前）：Codex 照舊審同一份 PR 作對照，雙方發現的差異記在本機紀錄，用來判斷 DeepSeek 審查是否可靠；到期後移除本條與 Codex 相關字句。
+  - 主審由 Orchestrator 在 Herdr pane 派 DeepSeek（官方 API）審查，Pi 或 dsh-code 擇一；審查模型不得與該 PR 的實作模型相同。步驟見 `.agent/skills/review/SKILL.md`。高風險 PR 另加一位 Claude Code 新開的子代理獨立審查（不帶 Orchestrator 的對話脈絡）；高風險指動到稿件、Canon 或設定的寫入，提案的接受、拒絕與還原，G1–G4 護欄，Bot 工具權限或送出模型的內容。
+  - 過渡期（2026-11-21 Codex 訂閱到期前）：Codex 照舊審同一份 PR 作對照，雙方發現的差異記在本機紀錄，用來判斷 DeepSeek 審查是否可靠；到期後移除本條，以及 `.agent/skills/review/SKILL.md`「過渡期」與 `.agent/profile/reviewer.md` 的 Codex 字句。
 - 分支名稱格式：`maze/yyyy-mm-dd-<短雜湊>`，短雜湊為隨機 7 位小寫十六進位，例如 `maze/2026-09-30-b14fae6`。
 - 開分支時使用工作樹，放在 `D:\AgentCoding\.codex\worktrees\` 下，路徑與分支名稱相同，例如 `D:\AgentCoding\.codex\worktrees\maze\2026-09-30-b14fae6`。不要把工作樹建在倉庫內。
 - 提交訊息使用中文，第一行簡述改了什麼，必要時空一行後補充原因。
@@ -70,7 +70,7 @@
   ```
   Orchestrated-by: Max (Claude Code) | claude-opus-5-5
   Implemented-by: Wolfe (Pi) | z-ai/glm-5.3-flash
-  Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)（初版；返工未複審）
+  Reviewed-by: Hemingway (Pi) | deepseek/deepseek-flash（初版；返工未複審）
   ```
   - 身分用 `.agent/profile/` 的名稱與 Agent，模型 ID 另寫實際使用的模型（同一角色可能換模型）；查不到就寫「未知」，不要猜。返工由不同角色完成時各列一行並註明；審查只涵蓋部分版本時在括號註明。
   - 提交照現有方式，不要求逐次署名。若加 `Co-authored-by`，只能用 Git 標準格式 `Co-authored-by: Name <email>`；只做審查的 Agent 不列為共同作者。
