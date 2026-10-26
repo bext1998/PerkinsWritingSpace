@@ -18,8 +18,8 @@
    - Pi:`pi-dispatch/start.sh deepseek/deepseek-flash <分支短雜湊> high`;送任務用 `herdr agent prompt <pane> "…"`。
    - dsh-code:`dsh-dispatch/start.sh <分支短雜湊>`;送任務用 `dsh-dispatch/send.sh`。
    - 啟動後 `herdr pane rename <pane> Hemingway-<分支短雜湊>`。
-3. **監看**:背景執行對應的 `watch.sh <pane>`。審查本來就不改檔,「30 分鐘沒有修改」不代表卡住,結束時看 pane 畫面判斷。
-4. **處理**:逐項親自核對發現是否成立(可能誤判);成立的修掉,在同一個 session 請它複審,說明只放修補提交範圍與先前的發現。不成立的在 PR 回覆寫明理由。
+3. **監看**:背景執行對應的監看腳本:Pi 用 `pi-dispatch/watch.sh <pane>`,dsh-code 用 `dsh-dispatch/watch.sh <pane> <工作樹路徑>`。審查本來就不改檔,「30 分鐘沒有修改」不代表卡住,結束時看 pane 畫面判斷。
+4. **處理**:先在工作樹跑 `git status` 確認審查者沒有改檔;再逐項親自核對發現是否成立(可能誤判);成立的修掉,在同一個 session 請它複審,說明只放修補提交範圍與先前的發現。不成立的在 PR 回覆寫明理由。
 5. **高風險 PR 加審**(定義見 `AGENTS.md`):另開一個新的 Claude Code 子代理(不是 fork,不帶 Orchestrator 的對話脈絡),只給同一份說明檔與工作樹路徑。
 6. **記錄**:主倉庫 `.agent/profile/pi-ledger.md` 加一列(任務寫「審查 #<PR>」);DeepSeek 官方 API 的花費以 DeepSeek 平台餘額前後差為準(Pi 的 `watch.sh` 只看 OpenRouter)。PR「Agent 貢獻」寫 `Reviewed-by: Hemingway (Pi) | deepseek/deepseek-flash` 或 `Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)`;加審另列 `Reviewed-by: <角色名或「未知」> (Claude Code 子代理) | <模型 ID>`。
 7. **收尾**:審查通過、不再需要複審時 `stop.sh <pane>`。

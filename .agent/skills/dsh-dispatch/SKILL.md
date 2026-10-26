@@ -4,7 +4,7 @@ Pi(`pi-dispatch`)以外的第二種派工方式。`dsh-code` 是作者為 DeepSe
 
 ## 何時用
 - **實作**(herdr pane):內容明確、設計已定的工作——補測試、小修補、照說明修改。需要邊做邊決定設計、介面打磨或碰作者真實資料的工作不派。
-- **唯讀分析**(單次):程式掃描、摘要、找呼叫點、第二意見。在要分析的目錄執行 `dsh-code -p --permission read-only "<任務>"`(長說明用 `dsh-code -p --permission read-only -` 從 stdin 讀),stdout 就是答案。不占實作者名額。
+- **唯讀分析**(單次):程式掃描、摘要、找呼叫點、第二意見。在要分析的目錄執行 `dsh-code -p --permission read-only "<任務>"`(長說明用 `dsh-code -p --permission read-only -` 從 stdin 讀;Windows PowerShell 5.1 的管線預設 ASCII,中文會變 `?`,改用 Git Bash 的 `<` 或 `cmd /c "… < 檔案"`),stdout 就是答案。不占實作者名額。
 - **PR 審查**(herdr pane):見 `review` 技能。
 - 優先級與成本照 `AGENTS.md`「派工成本與優先級」;小到自己做更快的不派。
 
