@@ -424,6 +424,7 @@ replacement, rationale, assumptions[], status(pending|accepted|rejected|conflict
   - **插入場景分隔**:在游標所在行之後插入一行 `◇◇◇`,前後各留一個空白行(已有就沿用,規則同 `Alt+Enter` 插入場景標題),游標放在分隔行之後的下一行開頭(檔案到此為止時補一個空白行)。
   - **快捷鍵**:`Ctrl+1/2/3/0`、`Ctrl+B`、`Ctrl+I` 不帶 Shift/Alt,以實體鍵(`event.code`)判別(原因同上一條 Caps Lock),只在編輯器內容聚焦時處理,IME 組字中不動作、不攔截,處理時 `preventDefault`。取代 CodeMirror defaultKeymap 的 `Mod-i`(selectParentSyntax,Ctrl+I 是斜體不是選取父節點);`Ctrl+0` 攔下 WebView 的縮放重設;與既有快捷鍵(Ctrl+S、Ctrl+Shift+F/T/D、Ctrl+F/H、Alt 系列、Ctrl+Shift+Enter)不衝突;數字鍵盤的數字不處理。
   - 都是作者自己的編輯:單一 dispatch(`isolateHistory.of('full')`)、走正常 dirty/存檔,一次 Ctrl+Z 復原。**不做**(作者決定):常駐格式工具列、選取浮動工具列、自動改寫作者打的字;檔案格式維持純 Markdown(§0 第 6 條)。
+- **右鍵選單位置與全選**(2026-10-26,#160、#162):主選單開啟後量實際尺寸,超出視窗時往內移,與視窗邊緣保留 4px。子選單(快速指令、插入標點、格式、段落與場景,即上文所說的「往左開規則」)預設在父項右側開;右側放不下時改在左側開,底部放不下時往上移到剛好在視窗內。選單文字不換行。右鍵選單在「貼上」之後有「全選」(標示 `Ctrl+A`),不論有無選取都可用:選取整份檔案、關閉選單、焦點回到編輯器。
 - **稿紙化(#44 第一階段,2026-10-10)**:只改編輯器的呈現與 Enter 行為;**檔案格式、存檔、複製為平台格式、匯出全部不變**,既有稿件不重寫也不正規化(開檔後存檔逐位元組不變)。
   - **一個 Enter 一段(方案 C)**:Enter 在游標處補出段落分隔 `
 

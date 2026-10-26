@@ -1,14 +1,14 @@
-import {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState} from 'react';
 import {ChangeSet, Compartment, EditorSelection, EditorState, Prec, StateEffect, StateField, Text} from '@codemirror/state';
 import {Command, Decoration, DecorationSet, EditorView, keymap, drawSelection, Panel, ViewUpdate} from '@codemirror/view';
-import {defaultKeymap, history, historyKeymap, isolateHistory} from '@codemirror/commands';
+import {defaultKeymap, history, historyKeymap, isolateHistory, selectAll} from '@codemirror/commands';
 import {search, searchKeymap, openSearchPanel, closeSearchPanel, setSearchQuery, SearchQuery,
         getSearchQuery, findNext, findPrevious, replaceNext, replaceAll} from '@codemirror/search';
 import {markdown} from '@codemirror/lang-markdown';
 import {yamlFrontmatter} from '@codemirror/lang-yaml';
 import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
 import {tags} from '@lezer/highlight';
-import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'lucide-react';
+import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, SquareDashed, TextSelect} from 'lucide-react';
 import {QUICK_ACTIONS, Quick} from './quick';
 import {paperExtensions} from './paper';
 import {focusExtensions, typewriterExtensions} from './paperModes';
@@ -652,6 +652,24 @@ const openReplace: Command = view => {
     return true;
 };
 
+// 右鍵子選單(#160):依實際量到的尺寸決定往右/往左開、超出底部就往上移
+function SubMenu({children}: {children: React.ReactNode}) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState<{left: boolean; top: number} | null>(null);
+    useLayoutEffect(() => {
+        const r = ref.current!.getBoundingClientRect();
+        const left = r.right > window.innerWidth - 4;
+        const top = Math.min(0, Math.max(4 - r.top, window.innerHeight - 4 - r.bottom));
+        setPos({left, top});
+    }, []);
+    return (
+        <div ref={ref} style={{top: pos?.top ?? 0}}
+             className={`absolute min-w-[13rem] whitespace-nowrap rounded-md border bg-popover p-1 shadow-md ${pos?.left ? 'right-full mr-1' : 'left-full ml-1'}`}>
+            {children}
+        </div>
+    );
+}
+
 // 內容由父層以 key={檔案路徑} 重新掛載來切換;此元件只負責單一文件的編輯。
 const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onChange, onAskAI, onSelect, posKey, posStore, flash, reveal, readOnly = false, typewriter = false, focusMode = false, typingSound = {on: false, volume: 50}}, ref) {
     const host = useRef<HTMLDivElement>(null);
@@ -672,6 +690,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
     const onSelectRef = useRef(onSelect);
     onSelectRef.current = onSelect;
     const [menu, setMenu] = useState<{x: number; y: number; sel: Selection | null} | null>(null);
+    const menuRef = useRef<HTMLDivElement>(null); // #160:量右鍵選單實際尺寸,避開視窗邊緣
+    const [menuPos, setMenuPos] = useState<{left: number; top: number} | null>(null);
     const [sub, setSub] = useState(false);
     const [punctSub, setPunctSub] = useState(false); // 右鍵選單的「插入標點」子選單(#46 前半)
     const [paraSub, setParaSub] = useState(false); // 右鍵選單的「段落與場景」子選單(#46 後半)
@@ -987,6 +1007,14 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
         setMenu({x: e.clientX, y: e.clientY, sel: currentSelection()});
     };
 
+    // #160:依實際量到的尺寸避開視窗邊緣(useLayoutEffect 在畫面繪製前執行,不會閃)
+    useLayoutEffect(() => {
+        if (!menu) { setMenuPos(null); return; }
+        const r = menuRef.current!.getBoundingClientRect();
+        setMenuPos({left: Math.max(4, Math.min(menu.x, window.innerWidth - r.width - 4)),
+                    top: Math.max(4, Math.min(menu.y, window.innerHeight - r.height - 4))});
+    }, [menu]);
+
     useEffect(() => {
         if (!menu) return;
         const close = () => setMenu(null);
@@ -1025,8 +1053,6 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
 
     const item = 'flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent';
     const disabled = 'pointer-events-none opacity-40';
-    // 選單靠近視窗右緣時,子選單改往左開
-    const flip = menu ? menu.x > window.innerWidth - 420 : false;
 
     return (
         <div className={`cm-host relative${typewriter ? ' cm-typewriter' : ''}`} ref={host} onContextMenu={onContextMenu}>
@@ -1057,8 +1083,8 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                 </div>
             )}
             {menu && (
-                <div className="ctxmenu fixed z-50 min-w-[11rem] rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
-                     style={{left: Math.min(menu.x, window.innerWidth - 200), top: Math.min(menu.y, window.innerHeight - 220)}}
+                <div ref={menuRef} className="ctxmenu fixed z-50 min-w-[11rem] whitespace-nowrap rounded-md border bg-popover p-1 text-popover-foreground shadow-md"
+                     style={menuPos ?? {left: menu.x, top: menu.y}}
                      onClick={e => e.stopPropagation()}>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} data-testid="ask-ai"
                          onClick={() => { if (menu.sel) { onAskAI(menu.sel); setMenu(null); } }}>
@@ -1068,13 +1094,13 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                          onMouseEnter={() => setSub(true)} onMouseLeave={() => setSub(false)}>
                         <span className="w-4"/>快速指令<ChevronRight className="ml-auto h-4 w-4"/>
                         {sub && menu.sel && (
-                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                            <SubMenu>
                                 {QUICK_ACTIONS.map(q => (
                                     <div key={q.id} className={item} onClick={() => { onAskAI(menu.sel!, q); setMenu(null); }}>
                                         {q.label}
                                     </div>
                                 ))}
-                            </div>
+                            </SubMenu>
                         )}
                     </div>
                     {/* 插入標點(#46 前半):與快速指令子選單同樣式、同往左開規則 */}
@@ -1082,7 +1108,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                          onMouseEnter={() => setPunctSub(true)} onMouseLeave={() => setPunctSub(false)}>
                         <span className="w-4"/>插入標點<ChevronRight className="ml-auto h-4 w-4"/>
                         {punctSub && (
-                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                            <SubMenu>
                                 {[
                                     {id: 'quote', label: '「」', key: 'Alt+[', run: () => { const v = view.current; if (v) insertPair(v, '「', '」'); }},
                                     {id: 'dquote', label: '『』', key: 'Alt+Shift+[', run: () => { const v = view.current; if (v) insertPair(v, '『', '』'); }},
@@ -1095,7 +1121,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                         <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
                                     </div>
                                 ))}
-                            </div>
+                            </SubMenu>
                         )}
                     </div>
                     {/* 格式(#130):標題/內文、粗體、斜體、場景分隔;與插入標點同樣式、同往左開規則。
@@ -1104,7 +1130,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                          onMouseEnter={() => setFormatSub(true)} onMouseLeave={() => setFormatSub(false)}>
                         <span className="w-4"/>格式<ChevronRight className="ml-auto h-4 w-4"/>
                         {formatSub && (
-                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                            <SubMenu>
                                 {([
                                     {id: 'h1', label: '標題 1', key: 'Ctrl+1', run: () => { const v = view.current; if (v) applyHeading(v, 1); }},
                                     {id: 'h2', label: '標題 2(場景)', key: 'Ctrl+2', run: () => { const v = view.current; if (v) applyHeading(v, 2); }},
@@ -1121,7 +1147,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                         <span>{p.label}</span>
                                         <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
                                     </div>)}
-                            </div>
+                            </SubMenu>
                         )}
                     </div>
                     {/* 段落與場景(#46 後半):移動/插入/跳轉都在游標處動作,與插入標點同樣式、同往左開規則 */}
@@ -1129,7 +1155,7 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                          onMouseEnter={() => setParaSub(true)} onMouseLeave={() => setParaSub(false)}>
                         <span className="w-4"/>段落與場景<ChevronRight className="ml-auto h-4 w-4"/>
                         {paraSub && (
-                            <div className={`absolute top-0 min-w-[13rem] rounded-md border bg-popover p-1 shadow-md ${flip ? 'right-full mr-1' : 'left-full ml-1'}`}>
+                            <SubMenu>
                                 {[
                                     {id: 'move-up', label: '段落上移', key: 'Alt+↑', run: () => { const v = view.current; if (v) moveParagraph(v, true); }},
                                     {id: 'move-down', label: '段落下移', key: 'Alt+↓', run: () => { const v = view.current; if (v) moveParagraph(v, false); }},
@@ -1143,13 +1169,16 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
                                         <span className="ml-auto pl-4 text-xs text-muted-foreground">{p.key}</span>
                                     </div>
                                 ))}
-                            </div>
+                            </SubMenu>
                         )}
                     </div>
                     <div className="-mx-1 my-1 h-px bg-border"/>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} onClick={() => { copy(true); setMenu(null); }}><Scissors className="h-4 w-4"/>剪下</div>
                     <div className={`${item} ${menu.sel ? '' : disabled}`} onClick={() => { copy(false); setMenu(null); }}><Copy className="h-4 w-4"/>複製</div>
                     <div className={item} onClick={() => { paste(); setMenu(null); }}><ClipboardPaste className="h-4 w-4"/>貼上</div>
+                    <div className={item} data-testid="select-all" onClick={() => { const v = view.current; if (v) { selectAll(v); v.focus(); } setMenu(null); }}>
+                        <SquareDashed className="h-4 w-4"/>全選<span className="ml-auto pl-4 text-xs text-muted-foreground">Ctrl+A</span>
+                    </div>
                 </div>
             )}
         </div>
