@@ -24,7 +24,9 @@
 
 - 遠端倉庫：`https://github.com/bext1998/PerkinsWritingSpace`，主分支 `main`。
 - 小修改（錯字、文件措辭、不影響行為的單行設定）可直接提交到 `main`；其餘一律開分支、建立 PR，經作者審查後才合併。合併由作者決定，Agent 不自行合併。
-- **每個 PR 都要經 Codex Reviewer 審查**（不論大小、文件或腳本，也不論誰實作）：Orchestrator 完成自己的驗證後送審，有發現就修正並請 Reviewer 複審修補的 diff，通過後才能向作者回報「可合併」。審查通過前，不在回報或 PR 內文寫可合併；Reviewer 無法使用時，明說「尚未審查」並回報作者，不得略過。
+- **每個 PR 都要經 Reviewer 審查**（不論大小、文件或腳本，也不論誰實作）：Orchestrator 完成自己的驗證後送審，有發現就修正並請 Reviewer 複審修補的 diff，通過後才能向作者回報「可合併」。審查通過前，不在回報或 PR 內文寫可合併；Reviewer 無法使用時，明說「尚未審查」並回報作者，不得略過。
+  - 主審是 dsh-code 唯讀審查（DeepSeek 官方 API，步驟見 `.agent/skills/dsh-dispatch/SKILL.md`「審查」）。高風險 PR 另加一位 Claude Code 新開的子代理獨立審查（不帶 Orchestrator 的對話脈絡）；高風險指動到稿件、Canon 或設定的寫入，提案的接受、拒絕與還原，G1–G4 護欄，Bot 工具權限或送出模型的內容。
+  - 過渡期（2026-11-21 Codex 訂閱到期前）：Codex 照舊審同一份 PR 作對照，雙方發現的差異記在本機紀錄，用來判斷 DeepSeek 審查是否可靠；到期後移除本條與 Codex 相關字句。
 - 分支名稱格式：`maze/yyyy-mm-dd-<短雜湊>`，短雜湊為隨機 7 位小寫十六進位，例如 `maze/2026-09-30-b14fae6`。
 - 開分支時使用工作樹，放在 `D:\AgentCoding\.codex\worktrees\` 下，路徑與分支名稱相同，例如 `D:\AgentCoding\.codex\worktrees\maze\2026-09-30-b14fae6`。不要把工作樹建在倉庫內。
 - 提交訊息使用中文，第一行簡述改了什麼，必要時空一行後補充原因。
@@ -68,7 +70,7 @@
   ```
   Orchestrated-by: Max (Claude Code) | claude-opus-5-5
   Implemented-by: Wolfe (Pi) | z-ai/glm-5.3-flash
-  Reviewed-by: Hemingway (Codex) | <模型 ID>（初版；返工未複審）
+  Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)（初版；返工未複審）
   ```
   - 身分用 `.agent/profile/` 的名稱與 Agent，模型 ID 另寫實際使用的模型（同一角色可能換模型）；查不到就寫「未知」，不要猜。返工由不同角色完成時各列一行並註明；審查只涵蓋部分版本時在括號註明。
   - 提交照現有方式，不要求逐次署名。若加 `Co-authored-by`，只能用 Git 標準格式 `Co-authored-by: Name <email>`；只做審查的 Agent 不列為共同作者。
@@ -81,5 +83,5 @@
 - `todo ls`：列出待辦。來源是 GitHub 上開著的 Issues（`gh issue list`），依狀態標籤（可開工、待作者決定、待討論、進行中、等外部條件、待作者實測）分組呈現。
 - `todo add <task>`：開一個 GitHub Issue（標題簡述；內文註明日期與「作者回饋」或來源、相關 SPEC 章節與 Issue；加上狀態與領域標籤）。只新增待辦，不開始實作。倉庫是公開的：不得寫入作者稿件、私人設定內容或 `docs/user_research/` 的內容。
 - 待辦完成以 PR 的 `Closes #<編號>` 關閉 Issue；定案的規則寫回 `docs/SPEC.md` 對應章節，不在 SPEC 維護待辦清單。
-- `orch start [task]`：由 Orchestrator 開始處理工作；未指定 task 時，從 `todo ls` 中挑一項並先說明選擇理由。Orchestrator 自行：讀取任務與必要的專案資訊 → 判斷是否拆工 → 參考 Team Profile 了解可用角色 → Herdr 可用時依優先級與成本決定是否派工（Pi 實作者同時最多一個，按需啟動並選模型）→ 收集成果 → 送 Codex Reviewer 審查（每個 PR 都要） → 有有效問題時安排返工並複審 → 完成必要驗證；直到達到驗收條件、真正需要作者決策，或繼續投入已不符效益才停止。
+- `orch start [task]`：由 Orchestrator 開始處理工作；未指定 task 時，從 `todo ls` 中挑一項並先說明選擇理由。Orchestrator 自行：讀取任務與必要的專案資訊 → 判斷是否拆工 → 參考 Team Profile 了解可用角色 → Herdr 可用時依優先級與成本決定是否派工（Pi 實作者同時最多一個，按需啟動並選模型）→ 收集成果 → 送 Reviewer 審查（每個 PR 都要） → 有有效問題時安排返工並複審 → 完成必要驗證；直到達到驗收條件、真正需要作者決策，或繼續投入已不符效益才停止。
 - `orch note <message>`：提供想法、方向、偏好或背景給 Orchestrator。不等同正式待辦，也不代表立即實作；Orchestrator 自行判斷它是否影響目前工作、值得轉成待辦（`todo add`），或只作為後續決策背景。
