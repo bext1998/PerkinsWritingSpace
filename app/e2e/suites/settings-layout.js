@@ -857,6 +857,14 @@ module.exports = {
         check('設定頁 1280×800 外觀頁 內容無水平捲軸', app1280 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
         if (hasNav) await shot('80-settings-appearance-1280');
 
+        // #155:浮層沒有離場動畫、按 Esc 會立刻卸載;設定頁的 Esc 不能因此把「關選單的那一下」也當成關設定頁。
+        await page.click('[data-testid=appearance-preset-select]');
+        const listOpen = await page.waitForSelector('[role=listbox]', {timeout: 3000}).then(() => true, () => false);
+        await page.keyboard.press('Escape');
+        await settle(80, 400);
+        const afterEsc = await page.evaluate(() => ({list: !!document.querySelector('[role=listbox]'), settings: !!document.querySelector('[data-testid=settings-page]')}));
+        check('#155 設定頁開著下拉時按 Esc 只關下拉,設定頁仍在', listOpen && !afterEsc.list && afterEsc.settings, JSON.stringify({listOpen, ...afterEsc}));
+
         // 還原:視窗與設定頁關閉(後續測試在 1440×900 進行)
         await page.setViewportSize({width: 1440, height: 900});
         await page.click('[data-testid=close-settings]');

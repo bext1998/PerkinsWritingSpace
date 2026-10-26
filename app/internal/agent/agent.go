@@ -559,8 +559,8 @@ type buildInfo struct {
 	Mentioned []string
 	// Skills 是本次實際放進 system 訊息的技能名稱(SPEC §12.3「技能與 / 指令」,#114),送出預覽列出。
 	Skills []string
-	// SystemBase 是不含「提案現況」的 system 內容;Ask 在每次送出前用當下的提案狀態重新組(§12.3,#133)。
-	SystemBase string
+	// UserBase 是本回合作者訊息不含「提案現況」的內容;Ask 每次送出前用當下的提案狀態重新組(§12.3,#133、#165)。
+	UserBase string
 }
 
 // buildMessages 組裝訊息並回報本次送出的作者指示層與未送出原因(Preview 與 Ask 用)。
@@ -658,13 +658,11 @@ func (a *Agent) buildMessages(p AskParams) ([]llm.Message, buildInfo, error) {
 	if err != nil {
 		return nil, buildInfo{}, err
 	}
-	base := msgs[0].Content
-	msgs[0].Content += status
 	user := p.Question
 	if ctx.Len() > 0 {
 		user = ctx.String() + "【作者的問題】\n" + p.Question
 	}
-	return append(msgs, llm.Message{Role: "user", Content: user}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned, Skills: skills, SystemBase: base}, nil
+	return append(msgs, llm.Message{Role: "user", Content: withStatus(status, user)}), buildInfo{Instructions: sent, Notices: notices, Mentioned: mentioned, Skills: skills, UserBase: user}, nil
 }
 
 // mentionLimit 是「本段提到的設定」最多列出的數量。
@@ -848,7 +846,7 @@ func (a *Agent) recordProposal(id string) {
 // sessionProposalLimit 是「提案現況」最多列出的筆數:只列最近這些,舊的不再佔上下文。
 const sessionProposalLimit = 20
 
-// proposalStatus 依本次對話建立過的提案 id,向 Store 讀**當下**狀態組成系統訊息的一段(#124)。
+// proposalStatus 依本次對話建立過的提案 id,向 Store 讀**當下**狀態組成本回合作者訊息開頭的一段(#124、#165)。
 // 每次送出都重讀,所以不論提案是在這回合之後、壓縮期間、或別的會話處理的,模型看到的都是真實狀態;
 // 事後寫進對話歷史的做法會被壓縮切割、會被舊快照覆蓋、也會把已處理的提案倒回待審,一律不用。
 func proposalStatus(store *proposal.Store, ids []string) (string, error) {
@@ -886,6 +884,14 @@ func proposalStatus(store *proposal.Store, ids []string) (string, error) {
 		fmt.Fprintf(&b, "\n- %s:%s", proposalTag(p), state)
 	}
 	return b.String(), nil
+}
+
+// withStatus 把提案現況放在本回合作者訊息最前面(#165):system 保持不變,模型端前綴快取才不會因提案變動整段失效。
+func withStatus(status, user string) string {
+	if status == "" {
+		return user
+	}
+	return strings.TrimLeft(status, "\n") + "\n\n" + user
 }
 
 // 註:拒絕不再寫進對話歷史或 rejections——理由存在提案 JSON,送出時由 proposalStatus 即時讀出(#124)。
@@ -979,6 +985,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		result, errMsg = "error", errText(err)
 		return "", err
 	}
+	userIdx := len(msgs) - 1 // 本回合作者訊息;工具回合的訊息接在它後面
 	// 作者指示超過長度上限而不送出時,在對話中明確告知作者(同 B7 的通知機制)
 	for _, n := range info.Notices {
 		emit(Event{Kind: "notice", Text: n})
@@ -998,6 +1005,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 				result, errMsg = "error", errText(err)
 				return "", err
 			}
+			userIdx = len(msgs) - 1 // 濃縮後歷史變短,重算本回合作者訊息位置
 		}
 		if n := EstimateTokens(msgs); n > b-replyReserve(b) {
 			result, errMsg = "error", fmt.Sprintf("送出內容約 %d tokens,超過模型可用的 %d。請減少附加的檔案、取消前情摘要,或開新對話。", n, b-replyReserve(b))
@@ -1021,7 +1029,7 @@ func (a *Agent) Ask(ctx context.Context, p AskParams, emit func(Event)) (string,
 		if err != nil {
 			return err
 		}
-		msgs[0].Content = info.SystemBase + status
+		msgs[userIdx].Content = withStatus(status, info.UserBase)
 		return nil
 	}
 	audit(auditRecord{Event: "request", Detail: fmt.Sprintf("doc=%s selection=%d字元 attachments=%v mode=%s summaries=%v tokens≈%d",

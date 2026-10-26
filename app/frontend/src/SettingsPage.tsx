@@ -840,7 +840,7 @@ function ProjectTab({tree, setTree, autosave, onSetAutosave, typingSound, typing
                 <div className="flex-1">
                     <Label className="text-sm font-medium">打字機音效</Label>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        在稿件裡打字時發出打字機聲,換行時叮一聲。只存在這台電腦。
+                        專注寫作時,在稿件裡打字會發出打字機聲,換行時叮一聲。只存在這台電腦。
                     </p>
                     {tsError && <p className="mt-1 text-xs text-destructive" data-testid="typing-sound-error">無法儲存打字機音效設定:{tsError}</p>}
                     {typingSound && (
@@ -1266,7 +1266,8 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
     };
 
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) guard(onClose); };
+        // Radix 關閉浮層時會 preventDefault;浮層已無離場動畫、會立刻卸載,不能只靠查 DOM(#155)
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) guard(onClose); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose, guard]);
