@@ -1953,6 +1953,18 @@ func joined(msgs []llm.Message) string {
 	return b.String()
 }
 
+// userText 把送出內容裡所有 user 訊息接起來:提案現況在本回合作者訊息裡(#165),工具回合與收尾請求時它不一定是最後一則。
+func userText(msgs []llm.Message) string {
+	var b strings.Builder
+	for _, m := range msgs {
+		if m.Role == "user" {
+			b.WriteString(m.Content)
+			b.WriteString("\n---\n")
+		}
+	}
+	return b.String()
+}
+
 // assertAlternating 檢查送給模型的訊息(扣掉開頭的 system)沒有連續兩則同為 user/assistant:
 // 本機模型的聊天範本遇到 user/assistant 未交替會直接報錯(#124 審查)。連續的 tool 訊息是正常的
 // (一次回覆多個工具呼叫),不算違規。
@@ -2000,14 +2012,14 @@ func TestRejectionReasonSentUntilReset(t *testing.T) {
 	if _, err := a.Ask(context.Background(), AskParams{Question: "再改一次"}, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
-	sys := s.reqs[len(s.reqs)-1].Messages[0].Content
+	sys := userText(s.reqs[len(s.reqs)-1].Messages)
 	if !strings.Contains(sys, "太口語") || !strings.Contains(sys, "小明走進森林。") {
 		t.Fatalf("拒絕原因應送出: %q", sys)
 	}
 	a.Reset()
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	a.Ask(context.Background(), AskParams{Question: "新對話"}, func(Event) {})
-	if strings.Contains(s.reqs[len(s.reqs)-1].Messages[0].Content, "太口語") {
+	if strings.Contains(userText(s.reqs[len(s.reqs)-1].Messages), "太口語") {
 		t.Fatal("Reset 後不應再帶上拒絕原因")
 	}
 }
@@ -2067,9 +2079,9 @@ func TestProposalStatusShownLiveFromStore(t *testing.T) {
 	p := askTurn(t, a, s, "改得有畫面感", "小明獨自闖入森林。")
 	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
 	a.Ask(context.Background(), AskParams{Question: "還要改哪裡"}, func(Event) {})
-	sys := s.reqs[len(s.reqs)-1].Messages[0].Content
+	sys := userText(s.reqs[len(s.reqs)-1].Messages)
 	if !strings.Contains(sys, p.ID) || !strings.Contains(sys, "等待作者審查") {
-		t.Fatalf("系統訊息應列出本回合建立的提案與待審狀態: %q", sys)
+		t.Fatalf("作者訊息應列出本回合建立的提案與待審狀態: %q", sys)
 	}
 	if hist := joined(a.History); strings.Contains(hist, p.ID) {
 		t.Fatalf("提案狀態不應寫進對話歷史(壓縮會切掉、會被舊快照覆蓋): %q", hist)
@@ -2088,9 +2100,9 @@ func TestAcceptedProposalStatusShown(t *testing.T) {
 	if _, err := a.Proposals.Accept(p.ID, 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	sys := joined(mustMsgs(t, a, AskParams{Question: "再改哪裡"}))
+	sys := userText(mustMsgs(t, a, AskParams{Question: "再改哪裡"}))
 	if !strings.Contains(sys, p.ID) || !strings.Contains(sys, "作者已接受第 1 個版本並寫入") {
-		t.Fatalf("系統訊息應說明提案已接受並寫入: %q", sys)
+		t.Fatalf("作者訊息應說明提案已接受並寫入: %q", sys)
 	}
 }
 
@@ -2157,8 +2169,8 @@ func TestCompactAfterProposalTurnKeepsAlternation(t *testing.T) {
 	}
 	msgs := mustMsgs(t, a, AskParams{Question: "q4"})
 	assertAlternating(t, msgs)
-	if !strings.Contains(msgs[0].Content, p.ID) {
-		t.Fatalf("壓縮後仍應帶提案現況:%q", msgs[0].Content)
+	if !strings.Contains(userText(msgs), p.ID) {
+		t.Fatalf("壓縮後仍應帶提案現況:%q", userText(msgs))
 	}
 }
 
@@ -2222,9 +2234,12 @@ func TestRejectionWithinSameAskVisibleToNextRequest(t *testing.T) {
 	if len(s.reqs) < 2 {
 		t.Fatalf("應有第二個工具回合, got %d 次請求", len(s.reqs))
 	}
-	sys := s.reqs[1].Messages[0].Content
+	sys := userText(s.reqs[1].Messages)
 	if !strings.Contains(sys, "作者已拒絕") || !strings.Contains(sys, "太口語") || !strings.Contains(sys, created) {
-		t.Fatalf("同一回合內被拒絕的提案,下一個請求的 system 應含已拒絕與理由:%q", sys)
+		t.Fatalf("同一回合內被拒絕的提案,下一個請求的作者訊息應含已拒絕與理由:%q", sys)
+	}
+	if s.reqs[0].Messages[0].Content != s.reqs[1].Messages[0].Content {
+		t.Fatal("system 應在提案被拒絕前後保持相同")
 	}
 }
 
@@ -2249,9 +2264,51 @@ func TestRejectionWithinSameAskVisibleToWrapRequest(t *testing.T) {
 	if len(s.reqs) != 2 {
 		t.Fatalf("應有工具回合與收尾請求, got %d 次請求", len(s.reqs))
 	}
-	sys := s.reqs[1].Messages[0].Content
+	sys := userText(s.reqs[1].Messages)
 	if !strings.Contains(sys, "作者已拒絕") || !strings.Contains(sys, "太口語") {
-		t.Fatalf("收尾請求的 system 應含已拒絕與理由:%q", sys)
+		t.Fatalf("收尾請求的作者訊息應含已拒絕與理由:%q", sys)
+	}
+}
+
+// 意圖(#165):提案建立、被拒絕前後,送出的 system 逐字相同(模型端前綴快取不失效);
+// 提案現況仍在送出內容裡,而且是當下真實狀態。
+func TestSystemStableAcrossProposalChanges(t *testing.T) {
+	a, s, _ := setup(t)
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q1"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sys0 := s.reqs[len(s.reqs)-1].Messages[0].Content
+	p := askTurn(t, a, s, "改得有畫面感", "小明獨自闖入森林。")
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q2"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sys1 := s.reqs[len(s.reqs)-1].Messages[0].Content
+	u1 := userText(s.reqs[len(s.reqs)-1].Messages)
+	if _, err := a.Proposals.Reject(p.ID, "太口語"); err != nil {
+		t.Fatal(err)
+	}
+	s.replies = []llm.Message{{Role: "assistant", Content: "好"}}
+	if _, err := a.Ask(context.Background(), AskParams{Question: "q3"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	sys2 := s.reqs[len(s.reqs)-1].Messages[0].Content
+	u2 := userText(s.reqs[len(s.reqs)-1].Messages)
+	if sys0 != sys1 || sys1 != sys2 {
+		t.Fatalf("system 應在提案建立與拒絕前後保持不變: sys0=%q sys1=%q sys2=%q", sys0, sys1, sys2)
+	}
+	if strings.Contains(sys1, p.ID) {
+		t.Fatalf("system 不應含提案 id: %q", sys1)
+	}
+	if !strings.Contains(u1, p.ID) || !strings.Contains(u1, "等待作者審查") {
+		t.Fatalf("作者訊息應含提案 id 與待審狀態: %q", u1)
+	}
+	if !strings.Contains(u2, "作者已拒絕") || !strings.Contains(u2, "太口語") {
+		t.Fatalf("作者訊息應含已拒絕與理由: %q", u2)
+	}
+	if hist := joined(a.History); strings.Contains(hist, p.ID) {
+		t.Fatalf("提案狀態不應寫進對話歷史: %q", hist)
 	}
 }
 
