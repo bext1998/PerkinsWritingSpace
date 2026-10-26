@@ -9,6 +9,7 @@ import {yamlFrontmatter} from '@codemirror/lang-yaml';
 import {syntaxHighlighting, HighlightStyle} from '@codemirror/language';
 import {tags} from '@lezer/highlight';
 import {Bot, ChevronRight, ClipboardPaste, Copy, Scissors, TextSelect} from 'lucide-react';
+import {Tip} from '@/components/ui/overlay';
 import {QUICK_ACTIONS, Quick} from './quick';
 import {paperExtensions} from './paper';
 import {focusExtensions, typewriterExtensions} from './paperModes';
@@ -1034,10 +1035,12 @@ const Editor = forwardRef<EditorHandle, Props>(function Editor({initialText, onC
             {current && (
                 <div data-testid="selection-bar"
                      className="absolute right-3 top-2 z-20 flex items-center gap-1 rounded-md border bg-popover p-1 shadow-lg">
-                    <button className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask" title="詢問這段(Ctrl+Shift+Enter)"
+                    <Tip label="詢問這段(Ctrl+Shift+Enter)" side="bottom">
+                    <button className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs hover:bg-accent" data-testid="selection-ask"
                             onClick={() => { const s = currentSelection(); if (s) onAskAI(s); }}>
                         <Bot className="h-3.5 w-3.5 text-primary"/>詢問這段
                     </button>
+                    </Tip>
                     <div className="relative">
                         <button className="flex items-center gap-1.5 rounded-sm px-2 py-1 text-xs hover:bg-accent" data-testid="selection-quick"
                                 onClick={() => setSubBar(v => !v)}>

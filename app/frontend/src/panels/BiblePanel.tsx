@@ -4,7 +4,7 @@ import {NewDoc, TrashFile} from '../../wailsjs/go/main/App';
 import {Button} from '@/components/ui/button';
 import {Input, Label} from '@/components/ui/basic';
 import {
-    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+    Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, Tip,
 } from '@/components/ui/overlay';
 import {cn} from '@/lib/utils';
 import {PanelProps} from './types';
@@ -103,12 +103,16 @@ export default function BiblePanel({tree, current, index, openFile, refreshTree,
                     </button>
                 ) : (
                     <>
-                        <span className="text-xs text-muted-foreground group-hover:hidden" title="在稿件中出現的次數">{appearances(f.path) || ''}</span>
-                        <button type="button" data-testid="entity-delete" title="刪除(移到回收區)" aria-label={`刪除 ${f.name}`}
-                                className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
-                                onClick={ev => { ev.stopPropagation(); setConfirming(f.path); }}>
-                            <Trash2 className="h-3.5 w-3.5"/>
-                        </button>
+                        <Tip label="在稿件中出現的次數" side="left">
+                            <span className="text-xs text-muted-foreground group-hover:hidden">{appearances(f.path) || ''}</span>
+                        </Tip>
+                        <Tip label="刪除(移到回收區)" side="left">
+                            <button type="button" data-testid="entity-delete" aria-label={`刪除 ${f.name}`}
+                                    className="hidden shrink-0 text-muted-foreground hover:text-destructive group-hover:block"
+                                    onClick={ev => { ev.stopPropagation(); setConfirming(f.path); }}>
+                                <Trash2 className="h-3.5 w-3.5"/>
+                            </button>
+                        </Tip>
                     </>
                 )}
             </li>

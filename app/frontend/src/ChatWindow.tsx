@@ -86,11 +86,12 @@ const prettyArgs = (s?: string) => {
     try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s; }
 };
 
-function Chip({children, onRemove, dashed, onClick, className, title, warning, shrinkText}: {
+function Chip({children, onRemove, dashed, onClick, className, title, warning, shrinkText, tip}: {
     children: React.ReactNode; onRemove?: () => void; dashed?: boolean; onClick?: () => void; className?: string; title?: string; warning?: boolean;
     shrinkText?: string; // 有值時:只截短這段文字,children(操作按鈕)放不收縮區域(review-1a 第 2 點)
+    tip?: string; // 說明用 Tip(替代原生 title);顯示被截短完整內容的 title 維持原生
 }) {
-    return (
+    const chip = (
         <span title={title} onClick={onClick}
               className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs',
                   warning ? 'max-w-[22rem]' : 'max-w-[12rem]',
@@ -106,6 +107,7 @@ function Chip({children, onRemove, dashed, onClick, className, title, warning, s
             )}
         </span>
     );
+    return tip ? <Tip label={tip} side="top">{chip}</Tip> : chip;
 }
 
 const READABLE_LABEL: Record<string, string> = {canon: '設定集(canon/)', outline: '大綱(outline/)', notes: '筆記(notes/)'};
@@ -578,9 +580,10 @@ export default function ChatWindow(props: Props) {
     return (
         <>
             {!open && (
-                <button data-testid="chat-fab"
+                <Tip label="Perkins Bot" side="left">
+                <button data-testid="chat-fab" aria-label="Perkins Bot"
                         className={cn('fixed bottom-11 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md transition-transform hover:scale-105', enter.fade)}
-                        onClick={() => { onPickSelection?.(); setOpen(true); }} title="Perkins Bot">
+                        onClick={() => { onPickSelection?.(); setOpen(true); }}>
                     <MessageCircle className="h-6 w-6"/>
                     {(pending > 0 || busy) && (
                         <span className="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-bold text-white">
@@ -588,6 +591,7 @@ export default function ChatWindow(props: Props) {
                         </span>
                     )}
                 </button>
+                </Tip>
             )}
 
             <div ref={box} data-testid="chat-window"
@@ -760,7 +764,7 @@ export default function ChatWindow(props: Props) {
                             // 來源不是目前文件:警示色 + 來源名 + 移除;預設不送出,點「仍要附加」才送
                             // Chip 內文只截短來源段;「仍要附加」與移除在不收縮的區域(review-1a 第 2 點)
                             <Chip warning onRemove={() => { clearSel(); }}
-                                  title={`這段選取來自「${titleOf(selFrom!)}」,不是目前開啟的檔案;送出時預設不附加`}
+                                  tip={`這段選取來自「${titleOf(selFrom!)}」,不是目前開啟的檔案;送出時預設不附加`}
                                   shrinkText={`選取 ${sel.length} 字(來自〈${titleOf(selFrom!)}〉)`}>
                                 {keepSel
                                     ? <span className="shrink-0 text-warning">仍要附加</span>
