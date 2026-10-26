@@ -4,7 +4,7 @@
 
 ## 選工具與模型
 - **Pi(預設)**:`deepseek/deepseek-flash`(DeepSeek 官方 API),思考強度 `high`。2026-10-27 PR #167 實測約 13 分鐘,會自己跑 git 與 PowerShell 實測佐證發現。
-- **dsh-code**:同一份 DeepSeek 額度,可擇一使用。DSH 改版後先確認能正常啟動與執行 shell 再派;2026-10-27 新版在唯讀與單次模式下 shell 失敗、長時間繞路,當時改用 Pi。
+- **dsh-code**:**2026-10-27 起暫停**(作者決定改用 Pi)。原因:Harness 主程式的終端機工具在沙箱下每次輸出 `InvalidOperation`、PowerShell 印中文成亂碼,修正要等 Harness 主程式更新。作者表示恢復後,先確認能正常執行 shell 再派。
 - **迴避**:審查模型不得與該 PR 的實作模型相同。DeepSeek 實作的 PR(dsh-code 或 Pi `deepseek-*`)改用其他模型的 Pi 審(例如 `xiaomi/mimo-v2.6-pro`),或由 Claude Code 子代理主審。
 - 啟動腳本會檢查「本專案同時最多一個 Pi／dsh-code」;送審時實作者應已回報並收掉,還開著就先 `stop.sh`。
 
