@@ -1265,7 +1265,8 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
     };
 
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) guard(onClose); };
+        // Radix 關閉浮層時會 preventDefault;浮層已無離場動畫、會立刻卸載,不能只靠查 DOM(#155)
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !e.defaultPrevented && !document.querySelector('[role=dialog],[data-radix-popper-content-wrapper]')) guard(onClose); };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose, guard]);
