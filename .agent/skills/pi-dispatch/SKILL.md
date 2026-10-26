@@ -4,7 +4,7 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
 
 ## 本機檔案(不進 Git)
 - `.agent/profile/pi-ledger.md`(主倉庫):第一行寫 `停損門檻:<美元>`(作者設定),其下是派工紀錄表。倉庫公開,花費與門檻只寫在這裡。
-- `.agent/profile/runtime.json`:`start.sh`/`stop.sh` 自動維護 `worker_pi`(pane、標籤、模型、開始時間)。只是備忘,實際狀態以 `herdr agent list` 為準。
+- `.agent/profile/runtime.json`:`start.sh`/`stop.sh` 自動維護 `worker_pi`(pane、標籤、模型、開始時間),只是備忘,實際狀態以 `herdr agent list` 為準。另有 Orchestrator 手動登記的 `reviewer_pi`(常駐審查者的 pane ID,見 `review` 技能),`start.sh` 的名額檢查會讀它,不要刪。
 
 ## 步驟
 1. **選模型**:預設簡單工作 `xiaomi/mimo-v2.6-flash`、複雜工作 `xiaomi/mimo-v2.6-pro`。為累積比較資料,可依任務性質改用 `z-ai/glm-5.3`、`z-ai/glm-5.3-flash`、`deepseek/deepseek-v4.1-flash`、`minimax/minimax-m3.1-flash`;選擇理由寫進紀錄。

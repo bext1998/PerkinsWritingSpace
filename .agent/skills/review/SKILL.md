@@ -24,5 +24,12 @@
 6. **記錄**:主倉庫 `.agent/profile/pi-ledger.md` 加一列(任務寫「審查 #<PR>」);DeepSeek 官方 API 的花費以 DeepSeek 平台餘額前後差為準(Pi 的 `watch.sh` 只看 OpenRouter)。PR「Agent 貢獻」寫 `Reviewed-by: Hemingway (Pi) | deepseek/deepseek-flash` 或 `Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)`;加審另列 `Reviewed-by: <角色名或「未知」> (Claude Code 子代理) | <模型 ID>`。
 7. **收尾**:審查通過、不再需要複審時 `stop.sh <pane>`。
 
+## 常駐審查者(Codex 到期後,作者自己開)
+作者會自己開一個常駐的 Pi pane 當審查者;有它時用它,不另外啟動。
+1. **認領**:`herdr agent list` 找本倉庫(主倉庫或工作樹)裡 `agent: pi` 的 pane,再用 `herdr pane list` 看它們的 `label`(`agent list` 沒有標籤欄),排除 Orchestrator 自己啟動的(`Wolfe-*`、`Hemingway-<短雜湊>`);從狀態列確認模型。`herdr pane rename <pane> Hemingway`,並在主倉庫 `.agent/profile/runtime.json` 寫 `"reviewer_pi": "<pane ID>"`(是 `w12:p1E` 這種 ID,不是標籤)——`pi-dispatch/start.sh` 靠這個值把它排除在「同時最多一個實作者」之外。寫完再跑一次 `herdr pane list` 核對 ID 與標籤對得上。找不到或不確定是哪一個時,照上面步驟按需啟動,並告訴作者。
+2. **送審**:步驟 1 的說明檔照寫,寫明工作樹的絕對路徑(它的工作目錄可能是主倉庫,要用 `git -C <工作樹>`);用 `herdr agent prompt`,對方正在工作時先等它空閒。
+3. **迴避**:它的模型與該 PR 的實作模型相同時,這次改用按需啟動的其他模型或 Claude Code 子代理。
+4. **不收掉**:審查完不 `stop.sh`;pane 消失或換了,重新認領並更新 `runtime.json`。
+
 ## 過渡期(到 2026-11-21 Codex 訂閱到期)
 Codex 照舊審同一份 PR 作對照,紀錄寫雙方的發現,標出哪一方多抓或誤報。到期後移除本專案所有 Codex 對照字句:本節、`AGENTS.md`「Git 與工作樹」的過渡期條、`.agent/profile/reviewer.md` 的 Agent 欄。
