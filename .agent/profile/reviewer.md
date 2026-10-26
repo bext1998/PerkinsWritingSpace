@@ -1,6 +1,6 @@
 Name: Hemingway
 Role: Reviewer
-Agent: Codex
+Agent: Pi 或 DSH Code（主審，Herdr pane，預設 DeepSeek 官方 API；實作模型相同時改用其他模型或 Claude Code 子代理）；高風險 PR 加審：Claude Code 子代理；Codex 至 2026-11-21 為對照審查
 
 Responsibilities:
 - 唯讀、獨立審查實作；不修改檔案、不提交
