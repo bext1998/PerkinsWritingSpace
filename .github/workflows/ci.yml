@@ -1,0 +1,73 @@
+# 基本 CI(#173):只跑 Windows。前端要先建置——Go 程式以 embed 把 frontend/dist 包進執行檔,沒有 dist 時 go vet/go test 會失敗。
+# E2E 不上 CI(要開 wails dev 視窗、讀寫作者設定、寫死 Edge 路徑)。GitHub 無法使用時改用根目錄 watt.yaml 在本機跑同樣的檢查,兩份步驟要一起改。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25' # 與作者本機建置相同的主版本
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - name: 安裝前端依賴
+        working-directory: app/frontend
+        run: npm ci
+      - name: 建置前端
+        working-directory: app/frontend
+        run: npm run build
+      - name: go vet
+        working-directory: app
+        run: go vet ./...
+      - name: go test
+        working-directory: app
+        run: go test ./...
+
+  # 正式建置只在 main、tag 或手動觸發時跑;手動觸發的執行檔保留 7 天供作者下載試用(正式發佈走 #176)
+  build:
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25'
+          cache-dependency-path: app/go.sum
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: app/frontend/package-lock.json
+      - name: 安裝 Wails CLI(與 go.mod 的 wails 版本一致)
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+      - name: 安裝並建置前端(npm ci 照鎖定檔安裝)
+        working-directory: app/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: wails build(前端已建置,-s 跳過 wails 自己的 npm install)
+        working-directory: app
+        run: wails build -s
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: perkins-windows
+          path: app/build/bin/perkins.exe
+          retention-days: 7

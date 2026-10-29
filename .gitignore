@@ -18,3 +18,6 @@ app/frontend/package.json.md5
 # Author's private manuscript/setting samples used as research material
 docs/user_research/
 researchstats.exe
+
+# Watt 本機備用檢查的執行結果(#173)
+.watt/

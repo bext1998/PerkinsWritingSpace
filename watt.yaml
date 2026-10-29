@@ -1,0 +1,19 @@
+# Watt 本機備用檢查(#173):GitHub 無法使用時,在本機跑與 .github/workflows/ci.yml check 工作相同的步驟。
+# 兩份步驟要在同一個 PR 一起改。執行:repo 根目錄 `watt run --output json`;只驗語法用 `watt check`。
+version: 1
+
+pipelines:
+  default:
+    steps:
+      - name: 安裝前端依賴
+        run: npm ci
+        cwd: app/frontend
+      - name: 建置前端
+        run: npm run build
+        cwd: app/frontend
+      - name: go vet
+        run: go vet ./...
+        cwd: app
+      - name: go test
+        run: go test ./...
+        cwd: app
