@@ -426,8 +426,7 @@ const paperTheme = EditorView.theme({
     '.cm-paper-blank': {height: '0', lineHeight: '0'},
     '.cm-paper-break': {textAlign: 'center', paddingTop: '0.4em', paddingBottom: '0.4em'},
     '.cm-paper-break-mark': {color: 'hsl(var(--muted-foreground))', letterSpacing: '0.35em'},
-    // 表格列(#161):不縮排、列距為 0;第一列與前一段之間用同樣的段距
-    '.cm-paper-table': {textIndent: '0', paddingTop: '0'},
+    // 表格列(#161)不套 cm-paper-para,本來就不縮排、列距為 0;只有第一列與前一段之間用同樣的段距
     '.cm-paper-table-first': {paddingTop: 'var(--paper-gap, 0.7em)'},
     '.cm-paper-pipe': {color: 'hsl(var(--muted-foreground))'},
     '.cm-paper-comment': {color: 'hsl(var(--muted-foreground))', fontSize: '0.85em'},
