@@ -1027,6 +1027,46 @@ module.exports = {
         await page.click('[data-testid=close-settings]');
         await settle(150, 1000);
 
+        // ---- #161 Markdown 表格列不當成段落(不縮排、列距 0、欄線弱化,檔案不變) ----
+        // 變數改名:TDOC2/tbl1(檔案前面兩段測試已用過 const TDOC 與 const t1,同名會變成同範圍重宣告)
+        const long = '很長的說明文字'.repeat(12);
+        const TDOC2 = `前一段。\n\n| 名稱 | 說明 |\n|---|---|\n| 甲 | ${long} |\n\n| 乙 | 中間空一行的列 |\n\n後一段。`;
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End'); // 游標不在表格裡
+        await setDoc(TDOC2);
+        await page.click('.cm-content');
+        await page.keyboard.press('Control+End');
+        await settle(80, 600);
+        const tbl = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].filter(l => !l.classList.contains('cm-paper-blank')).map(l => {
+            const r = l.getBoundingClientRect();
+            const s = getComputedStyle(l);
+            return {t: l.innerText, table: l.classList.contains('cm-paper-table'), para: l.classList.contains('cm-paper-para'),
+                    indent: parseFloat(s.textIndent), pad: parseFloat(s.paddingTop), top: Math.round(r.top), bottom: Math.round(r.bottom),
+                    pipes: l.querySelectorAll('.cm-paper-pipe').length};
+        }));
+        const tbl1 = await tbl();
+        const rowsT = tbl1.filter(l => l.t.trim().startsWith('|'));
+        const prose = tbl1.filter(l => !l.t.trim().startsWith('|') && l.t.trim());
+        check('#161 表格四列都是表格列、不是段落;前後兩段仍是段落',
+            rowsT.length === 4 && rowsT.every(l => l.table && !l.para) && prose.length === 2 && prose.every(l => l.para), JSON.stringify(tbl1));
+        check('#161 表格列不縮排;第一列有段距、後續列(含中間空一行的列)段距為 0',
+            rowsT.every(l => l.indent === 0) && rowsT[0].pad > 0 && rowsT.slice(1).every(l => l.pad === 0), JSON.stringify(rowsT));
+        check('#161 中間空一行的「乙」列緊接上一列(空行不在畫面佔高度)',
+            Math.abs(rowsT[3].top - rowsT[2].bottom) <= 1, JSON.stringify(rowsT.map(l => ({top: l.top, bottom: l.bottom}))));
+        check('#161 欄線看得到且弱化(innerText 仍有 |,每列的 | 都有 cm-paper-pipe)',
+            rowsT.every(l => l.pipes === (l.t.match(/\|/g) || []).length && l.pipes >= 3), JSON.stringify(rowsT.map(l => [l.t.slice(0, 20), l.pipes])));
+        await shot('161-paper-table');
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(200, 1200);
+        await shot('161-paper-table-640');
+        check('#161 640 寬表格不出現水平捲軸',
+            await page.evaluate(() => document.querySelector('.cm-scroller').scrollWidth <= document.querySelector('.cm-scroller').clientWidth + 1));
+        await page.setViewportSize({width: 1440, height: 900});
+        await settle(200, 1000);
+        await save();
+        check('#161 存檔後磁碟內容與貼上的完全相同(只改呈現)',
+            fs.readFileSync(P(FILE), 'utf8') === TDOC2, JSON.stringify(fs.readFileSync(P(FILE), 'utf8')));
+
         // 清理:刪掉專用檔並把章節列還原(後面的組會數章節數量)
         await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
         await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});
