@@ -19,6 +19,7 @@ PERKINS_LIVE_MODEL=<模型id> PERKINS_EVAL_OUT=報告.md go test ./internal/agen
 Windows PowerShell:`$env:PERKINS_LIVE_MODEL="模型id"; $env:PERKINS_EVAL_OUT="報告.md"; go test ./internal/agent -run TestLiveEvalCases -v -timeout 30m`
 
 - `-run TestLiveEvalCases` 只跑評測情境;`-run Live` 會連同 `live_test.go` 的兩個舊實機測試一起跑。
+- 要改用其他 OpenAI 相容端點(例如區網的 llama-server),加 `PERKINS_LIVE_BASEURL=<網址,含 /v1>`,需要金鑰時加 `PERKINS_LIVE_KEY`(只放環境變數,不寫進檔案或報告)。
 - 本機模型跑一輪約 5–6 分鐘;注意記憶體,一次跑一輪即可。
 - 純判定邏輯的單元測試(`TestEvalJudge*`,不寫任何檔案)隨一般 `go test ./internal/agent` 預設執行。
 - 另有一個用假 LLM 走完整 Ask 流程的檔案整合測試(`TestEvalJudgeWithScriptedLLM`),只寫進 Go 測試的 `t.TempDir()`(測試結束自動清除),以 `PERKINS_EVAL_INTEGRATION=1` 選用執行。

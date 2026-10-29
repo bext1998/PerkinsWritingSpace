@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"perkins/internal/llm"
 )
 
 // 實機冒煙測試:需要本機 LM Studio。以 PERKINS_LIVE_MODEL=<模型id> 啟用,平常不執行。
@@ -16,7 +14,7 @@ func TestLiveLMStudioToolCalling(t *testing.T) {
 		t.Skip("未設定 PERKINS_LIVE_MODEL,略過實機測試")
 	}
 	a, _, dir := setup(t)
-	a.LLM = &llm.OpenAI{BaseURL: "http://localhost:1234/v1"}
+	a.LLM = liveLLM()
 	a.Model = model
 	before := snapshot(t, dir)
 
@@ -51,7 +49,7 @@ func TestLiveLMStudioProposePatch(t *testing.T) {
 		t.Skip("未設定 PERKINS_LIVE_MODEL,略過實機測試")
 	}
 	a, _, dir := setup(t)
-	a.LLM = &llm.OpenAI{BaseURL: "http://localhost:1234/v1"}
+	a.LLM = liveLLM()
 	a.Model = model
 	before := snapshot(t, dir)
 
