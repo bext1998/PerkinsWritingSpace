@@ -11,7 +11,7 @@ import {Copy, Focus, Library, Maximize2, Minimize2, Minus, PanelLeftClose, Panel
 import {Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise} from '../../wailsjs/runtime/runtime';
 import {TITLEBAR_HEIGHT} from '@/lib/layout';
 import {getProjectName, getShellActions, isFrameVisible, subscribeShellState} from '@/lib/shellState';
-import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger} from '@/components/ui/overlay';
+import {DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Tip, TooltipProvider} from '@/components/ui/overlay';
 import {cn} from '@/lib/utils';
 import logo from '../assets/images/perkins-logo.svg';
 
@@ -53,17 +53,20 @@ export default function TitleBar() {
     const lFrame = frame && !zen?.on;
 
     return (
+        <TooltipProvider delayDuration={300}>
         <header data-testid="titlebar" style={{...drag, height: TITLEBAR_HEIGHT}}
                 className={cn('pointer-events-auto relative z-[60] flex shrink-0 select-none items-center bg-rail text-xs', !lFrame && 'border-b')}
                 onDoubleClick={() => WindowToggleMaximise()}>
             <div className="flex h-full items-center" style={noDrag} onDoubleClick={e => e.stopPropagation()}>
                 <DropdownMenu>
+                    <Tip label="Perkins WritingSpace 選單" side="bottom">
                     <DropdownMenuTrigger asChild>
-                        <button data-testid="app-menu" title="Perkins WritingSpace 選單" aria-label="Perkins WritingSpace 選單"
+                        <button data-testid="app-menu" aria-label="Perkins WritingSpace 選單"
                                 className="flex h-full w-[60px] items-center justify-center transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
                             <img src={logo} alt="" className="h-5 w-5"/>
                         </button>
                     </DropdownMenuTrigger>
+                    </Tip>
                     <DropdownMenuContent align="start" className="z-[70] min-w-[13rem]" data-testid="app-menu-content">
                         <div className="px-2 py-1.5 text-xs text-muted-foreground">Perkins WritingSpace</div>
                         {(save || bookshelf || zen || focusWriting || actions.settings) && <DropdownMenuSeparator/>}
@@ -89,29 +92,37 @@ export default function TitleBar() {
                     </DropdownMenuContent>
                 </DropdownMenu>
                 {sidebar && (
-                    <button data-testid="titlebar-sidebar" title={sidebar.open ? '收合側欄' : '展開側欄'}
-                            aria-label={sidebar.open ? '收合側欄' : '展開側欄'}
+                    <Tip label={sidebar.open ? '收合側欄' : '展開側欄'} side="bottom">
+                    <button data-testid="titlebar-sidebar" aria-label={sidebar.open ? '收合側欄' : '展開側欄'}
                             className="flex h-full w-9 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             onClick={sidebar.toggle}>
                         {sidebar.open ? <PanelLeftClose className="h-4 w-4"/> : <PanelLeftOpen className="h-4 w-4"/>}
                     </button>
+                    </Tip>
                 )}
             </div>
             <span data-testid="titlebar-title" className="ml-2 truncate text-muted-foreground">{project ?? 'Perkins WritingSpace'}</span>
             <div className="ml-auto flex h-full" style={noDrag} onDoubleClick={e => e.stopPropagation()}>
-                <button data-testid="win-min" title="最小化" className={btn} onClick={() => WindowMinimise()}>
+                <Tip label="最小化" side="bottom">
+                <button data-testid="win-min" aria-label="最小化" className={btn} onClick={() => WindowMinimise()}>
                     <Minus className="h-4 w-4"/>
                 </button>
-                <button data-testid="win-max" title={maximised ? '還原' : '最大化'} className={btn}
+                </Tip>
+                <Tip label={maximised ? '還原' : '最大化'} side="bottom">
+                <button data-testid="win-max" aria-label={maximised ? '還原' : '最大化'} className={btn}
                         onClick={() => WindowToggleMaximise()}>
                     {maximised ? <Copy className="h-3.5 w-3.5"/> : <Square className="h-3.5 w-3.5"/>}
                 </button>
+                </Tip>
                 {/* 關閉走原生路徑:runtime.Quit → OnBeforeClose → 前端流程 → ConfirmQuit,與 Alt+F4 完全相同 */}
-                <button data-testid="win-close" title="關閉" className={`${btn} hover:bg-destructive hover:text-destructive-foreground`}
+                <Tip label="關閉" side="bottom">
+                <button data-testid="win-close" aria-label="關閉" className={`${btn} hover:bg-destructive hover:text-destructive-foreground`}
                         onClick={() => Quit()}>
                     <X className="h-4 w-4"/>
                 </button>
+                </Tip>
             </div>
         </header>
+        </TooltipProvider>
     );
 }

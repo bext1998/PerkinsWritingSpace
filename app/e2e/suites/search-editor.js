@@ -148,7 +148,7 @@ module.exports = {
             check('面板顯示與實際取代條件同步(Ctrl+H 後顯示「天→空」,全部取代移除的正是天)',
                 selChar === '天' && synced.search === '天' && synced.replace === '' && synced.count === '1/1' && synced.sel === '天'
                 && !t2.includes('天很黑') && t2.includes('很黑'), JSON.stringify({selChar, synced, tail: t2.slice(-40)}));
-            check('同步後取代走正常編輯流程(未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            check('同步後取代走正常編輯流程(未儲存)', !!(await page.$('[aria-label="尚未儲存"]')));
             await page.keyboard.press('Control+s');
             await settle(80, 700); // 等 UI 更新(原固定等 300ms)
             await page.keyboard.press('Escape');
@@ -175,7 +175,7 @@ module.exports = {
             await settle(80, 700); // 等 UI 更新(原固定等 300ms)
             const t1 = await editorTxt();
             check('全部取代後內容已改變', !t1.includes('搜尋取代目標字') && (t1.match(/改寫後的字/g) || []).length === 2, t1.slice(-60));
-            check('取代走正常編輯流程(狀態為未儲存)', !!(await page.$('[title="尚未儲存"]')));
+            check('取代走正常編輯流程(狀態為未儲存)', !!(await page.$('[aria-label="尚未儲存"]')));
             await page.keyboard.press('Control+s');
             await settle(80, 700); // 等 UI 更新(原固定等 300ms)
             check('取代結果以正常存檔流程落盤', read(ch1).includes('改寫後的字'));

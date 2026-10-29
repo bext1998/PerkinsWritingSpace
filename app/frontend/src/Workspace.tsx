@@ -742,7 +742,7 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                         {i > 0 && !tight && <span className="mx-1.5 text-muted-foreground/60">›</span>}{c}
                                     </span>
                                 ))}
-                                {dirty && <span className="ml-1 h-2 w-2 shrink-0 rounded-full bg-primary" title="尚未儲存"/>}
+                                {dirty && <Tip label="尚未儲存" side="bottom"><span className="ml-1 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="尚未儲存" role="img"/></Tip>}
                             </div>
                             {chapter && (
                                 <button data-testid="status-badge" className="shrink-0" onClick={() => setStatus(chapter.path, chapter.status === 'done' ? 'draft' : 'done')}>
@@ -754,15 +754,19 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                             <div className="flex-1"/>
                             {chapter && (
                                 <>
-                                    <Button variant="ghost" size="sm" className={cn('shrink-0', tight && 'hidden')}
-                                            aria-label="章節摘要" title="章節摘要"
-                                            onClick={() => setSummaryFor(chapter.path)}><ScrollText/>{!iconOnly && '摘要'}</Button>
+                                    <Tip label="章節摘要" side="bottom">
+                                        <Button variant="ghost" size="sm" className={cn('shrink-0', tight && 'hidden')}
+                                                aria-label="章節摘要"
+                                                onClick={() => setSummaryFor(chapter.path)}><ScrollText/>{!iconOnly && '摘要'}</Button>
+                                    </Tip>
                                     <DropdownMenu>
+                                        <Tip label="複製到平台" side="bottom">
                                         <DropdownMenuTrigger asChild>
                                             <Button variant="ghost" size="sm" data-testid="copy-platform"
                                                     className={cn('shrink-0', tight && 'hidden')}
-                                                    aria-label="複製到平台" title="複製到平台"><Share2/>{!iconOnly && '複製到平台'}</Button>
+                                                    aria-label="複製到平台"><Share2/>{!iconOnly && '複製到平台'}</Button>
                                         </DropdownMenuTrigger>
+                                        </Tip>
                                         <DropdownMenuContent align="end">
                                             <DropdownMenuLabel>複製本章為…</DropdownMenuLabel>
                                             {cfg?.platforms.map(p => (
@@ -794,9 +798,11 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                                     </Button>
                                 </span>
                             </Tip>
+                            <Tip label="版本" side="bottom">
                             <Button variant="ghost" size="sm" onClick={() => setVersions(true)} data-testid="open-versions"
                                     className={cn('shrink-0', tight && 'hidden')}
-                                    aria-label="版本" title="版本"><History/>{!iconOnly && '版本'}</Button>
+                                    aria-label="版本"><History/>{!iconOnly && '版本'}</Button>
+                            </Tip>
                             {/* 最窄段:次要功能收進「更多」下拉,功能一個都不能少(SPEC §17.1 窄寬度不得讓功能無法觸及) */}
                             {tight && (
                                 <DropdownMenu>
@@ -876,11 +882,13 @@ export default function Workspace({tree, setTree, onClose, onSettings, settingsV
                     {current && <span className="shrink-0 whitespace-nowrap">{dirty ? '未儲存' : '已儲存'}</span>}
                     {activeProfile && !zen && <span className="min-w-0 truncate">AI:{activeProfile.model || '未選擇模型'}{activeProfile.remote ? '(雲端)' : '(本機)'}</span>}
                     {zen && (
-                        <button data-testid="zen-exit" title="離開禪模式(Ctrl+Shift+F)"
+                        <Tip label="離開禪模式(Ctrl+Shift+F)" side="top">
+                        <button data-testid="zen-exit"
                                 className={cn('shrink-0 whitespace-nowrap rounded-md px-1.5 hover:bg-accent hover:text-foreground', enter.fade)}
                                 onClick={() => setZen(false)}>
                             離開禪模式
                         </button>
+                        </Tip>
                     )}
                 </footer>
             </main>

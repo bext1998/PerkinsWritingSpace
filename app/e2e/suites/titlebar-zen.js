@@ -176,7 +176,7 @@ module.exports = {
         await page.click('[data-testid=chapter-row]:has-text("第一章")');
         await page.waitForSelector('.cm-line:has-text("艾莉絲走進森林")');
 
-        const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'title');
+        const fabTitle = await page.getAttribute('[data-testid=chat-fab]', 'aria-label');
         check('品牌 開啟按鈕標題為 Perkins Bot', fabTitle === 'Perkins Bot', String(fabTitle));
         await shot('40-brand-rail-dark');
         await page.click('[data-testid=chat-fab]');

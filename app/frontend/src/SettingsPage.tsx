@@ -1129,14 +1129,15 @@ function AppearanceTab({appearance, setAppearance, paper, setPaper}: Pick<Props,
                         </div>
                         <div className="flex shrink-0 gap-1 rounded-md border bg-muted p-1">
                             {MODE_OPTIONS.map(o => (
-                                <button key={o.id} type="button" aria-pressed={appearance.mode === o.id}
+                                <Tip key={o.id} label={o.desc} side="bottom">
+                                <button type="button" aria-pressed={appearance.mode === o.id}
                                         data-testid={`appearance-mode-${o.id}`}
-                                        title={o.desc}
                                         onClick={() => persist(a => ({...a, mode: o.id}))}
                                         className={cn('flex items-center gap-1.5 rounded-sm px-3 py-1 text-xs transition-colors',
                                             appearance.mode === o.id ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground')}>
                                     <o.Icon className="h-3.5 w-3.5"/>{o.label}
                                 </button>
+                                </Tip>
                             ))}
                         </div>
                     </div>

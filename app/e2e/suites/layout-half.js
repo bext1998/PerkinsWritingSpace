@@ -285,8 +285,8 @@ module.exports = {
         await page.setViewportSize({width: 900, height: 600});
         await settle(80, 800); // 等 UI 更新(原固定等 400ms)
         const m900 = await measureToolbar();
-        check('工具列 900×600 退化成只剩圖示(文字收起,按鈕保留 aria-label 與 title)',
-            !!m900.summary && m900.summary.w > 0 && m900.summary.aria === '章節摘要' && !!m900.summary.title
+        check('工具列 900×600 退化成只剩圖示(文字收起,按鈕保留 aria-label,提示改用 Tip、不留原生 title #158)',
+            !!m900.summary && m900.summary.w > 0 && m900.summary.aria === '章節摘要' && m900.summary.title === null
                 && !/摘要|複製到平台|版本/.test(m900.text),
             JSON.stringify({text: m900.text, summary: m900.summary}));
         check('工具列 900×600 內容不超出 main 右緣',
