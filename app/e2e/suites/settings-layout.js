@@ -894,8 +894,10 @@ module.exports = {
         // 版本依 #174 的規則:E2E 必須能斷言(開發版為「開發版 (未注入版本資訊)」,正式建置為 semver + 提交編號)
         check('關於頁顯示完整版本(AppVersion 有值,不是空字串或換行)',
             !!aboutState.version && /開發版|\d+\.\d+\.\d+/.test(aboutState.version), JSON.stringify(aboutState.version));
-        check('關於頁有支援範圍說明(模型與輸入法驗證狀態)',
-            !!aboutState.support && /注音輸入法/.test(aboutState.support) && /待驗證/.test(aboutState.support), JSON.stringify(aboutState.support));
+        // 支援範圍文字照 SPEC/工單原文,不得改寫(工單「文字照抄」)
+        const SUPPORT_TEXT = '市面上絕大多數大型語言模型都支援,但不保證 agent 的輔助效果。目前只驗證過注音輸入法可以正常輸入,其他輸入法待驗證。';
+        check('關於頁顯示支援範圍原文(模型與輸入法驗證狀態)',
+            aboutState.support === SUPPORT_TEXT, JSON.stringify(aboutState.support));
         check('關於頁三個對外連結都在頁面文字中顯示網址且整列可點',
             aboutState.links.length === 3 && aboutState.links.every(l => l.tag === 'BUTTON') &&
             aboutState.links[0].text.includes(REPO_BASE) && !aboutState.links[0].text.includes('/issues') &&

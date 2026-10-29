@@ -1241,12 +1241,12 @@ function parseHSLString(s: string): [number, number, number] {
 
 // ── 關於頁(#175,SPEC §17.2)────────────────────────────────────────
 // 不需要作品也能看(與外觀一樣不依賴 tree);對外連結用 Wails 的 BrowserOpenURL 開系統瀏覽器,
-// 不在 WebView 內導航,不會把作者離線後拖進瀏覽器。
+// 不在 WebView 內導航(應用程式本身不會被帶離目前的畫面)。
 const REPO_URL = 'https://github.com/bext1998/PerkinsWritingSpace';
 const ABOUT_LINKS = [
     {testid: 'about-link-github', title: 'GitHub 倉庫', desc: '專案原始檔與授權條款。', url: REPO_URL},
     {testid: 'about-link-issues', title: '回報問題', desc: '開新的 Issue 或看已有的問題清單。', url: `${REPO_URL}/issues`},
-    {testid: 'about-link-releases', title: '正式版下載', desc: '正式建置的安裝檔與各版本變更。', url: `${REPO_URL}/releases`},
+    {testid: 'about-link-releases', title: '下載新版', desc: '正式建置的安裝檔與各版本變更。', url: `${REPO_URL}/releases`},
 ];
 
 /** 唯讀的設定列(左標題與說明、右值),同 SettingRow 但沒有控制項。 */
@@ -1284,7 +1284,7 @@ function AboutTab() {
     const [versionError, setVersionError] = useState('');
 
     useEffect(() => {
-        // AppVersion 是 Go 綁定:呼延失败要在畫面上講清楚(UI_GUIDE §6 錯誤不吞)
+        // AppVersion 是 Go 綁定:呼叫失敗要在畫面上講清楚(UI_GUIDE §6 錯誤不吞)
         let alive = true;
         AppVersion().then(v => { if (alive) setVersion(v); }).catch(e => { if (alive) setVersionError(errText(e)); });
         return () => { alive = false; };
@@ -1311,7 +1311,7 @@ function AboutTab() {
 
             <Section title="支援範圍" testid="about-support" desc="目前實際驗證過的情況,沒有列出的項目不代表必定不支援。">
                 <p className="rounded-lg border p-4 text-sm leading-relaxed" data-testid="about-support-text">
-                    市面上常見的大型語言模型多半支援,但不保證 agent 的輔助效果;輸入法目前只驗證過注音輸入法可以正常輸入,其他輸入法待驗證。
+                    市面上絕大多數大型語言模型都支援,但不保證 agent 的輔助效果。目前只驗證過注音輸入法可以正常輸入,其他輸入法待驗證。
                 </p>
             </Section>
         </div>
