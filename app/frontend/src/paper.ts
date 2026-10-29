@@ -9,6 +9,7 @@
 //     連續兩個以上的空行只藏掉分隔那一個,作者刻意多留的照實顯示。
 // 三、游標不在該行時隱藏 Markdown 標記(標題前綴、粗體/斜體記號),場景分隔行畫成置中 ◇◇◇、
 //     註解弱化(內容不隱藏);游標或選取碰到該行就顯示原始文字。程式碼區塊與 frontmatter 內完全不套用。
+//     Markdown 表格列(前後都是 |)不當成段落:不縮排、列距 0,欄線弱化(#161)。
 //
 // 分工(CM 的限制):block decoration 不能由 ViewPlugin 提供(會改變高度對應,只能由 state 提供),
 // 所以「藏空行」放在 StateField、整份文件都算(空行本來就少);行內與行樣式仍然只算可見範圍前後各 60 行。
@@ -20,6 +21,8 @@ import {insertNewline, isolateHistory} from '@codemirror/commands';
 // 場景分隔行:判準照 internal/publish/publish.go 的 reBreak(***、---、___、◇◇◇ 等)
 const SCENE_BREAK = /^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,}|[◇◆＊※☆★○●]{3,})$/;
 const HEADING = /^(#{1,6})[ \t]+/;
+// Markdown 表格列(#161):前後都是 |。表格列不當成段落:不縮排、列與列之間不加段距
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
 const BLANK = (t: string) => t.trim() === '';
 const isHeadingOrBreak = (t: string) => HEADING.test(t) || SCENE_BREAK.test(t.trim());
 // 可見範圍外再多算的行數:游標常被移到畫面外一格,原子範圍要先備好才不會停在隱藏空行上
@@ -65,6 +68,9 @@ const h1Deco = Decoration.line({class: 'cm-paper-h1'});
 const h2Deco = Decoration.line({class: 'cm-paper-h2'});
 const h3Deco = Decoration.line({class: 'cm-paper-h3'});
 const breakLineDeco = Decoration.line({class: 'cm-paper-break'});
+const tableDeco = Decoration.line({class: 'cm-paper-table'});
+const tableFirstDeco = Decoration.line({class: 'cm-paper-table cm-paper-table-first'}); // 表格第一列:與前一段之間保留段距
+const pipeDeco = Decoration.mark({class: 'cm-paper-pipe'}); // 欄線弱化(不隱藏)
 const dimDeco = Decoration.mark({class: 'cm-paper-comment'});
 // 標記符號用 mark + display:none,不用 replace:語法高亮會在同樣的字上產生 mark,
 // 兩者重疊時 CM 不會建立 replace 的 widget(畫面會照樣出現原始符號,實測 2026-10-10)。
@@ -245,9 +251,23 @@ const computePaper = (view: EditorView): DecorationSet => {
         const touching = onCursor(line.from, line.to);
         const heading = HEADING.exec(text);
         const isBreak = SCENE_BREAK.test(text.trim());
+        const isTable = TABLE_ROW.test(text);
         // 段落樣式:每一個非空白的一般行都是一段——與「複製為平台格式」(publish.Convert 每個非空行一段)一致,
         // 作者以單一換行分段的既有稿件看起來才和發文結果相同(PR #69 審查)
-        if (!BLANK(text) && !heading && !isBreak) list.push(paraDeco.range(line.from));
+        if (!BLANK(text) && !heading && !isBreak && !isTable) list.push(paraDeco.range(line.from));
+        if (isTable) {
+            // 上一個非空白行也是表格列 → 同一張表的後續列(中間空了一行也算,空行本來就被藏起來)
+            // 注:prevNonBlank 對相鄰的非空白行會回傳整串裡的第一行(prevNB === i 時改讀 prevNonBlank[i - 1]),
+            // 不是上一行,所以表格這裡自己往回找最近的非空白行。
+            let prev = i - 1;
+            while (prev >= 1 && !flags.blocked[prev] && BLANK(doc.line(prev).text)) prev--;
+            const cont = prev >= 1 && !flags.blocked[prev] && TABLE_ROW.test(doc.line(prev).text);
+            list.push((cont ? tableDeco : tableFirstDeco).range(line.from));
+            for (let k = text.indexOf('|'); k >= 0; k = text.indexOf('|', k + 1)) {
+                if (k > 0 && text[k - 1] === '\\') continue; // \| 是儲存格內的字,不是欄線
+                list.push(pipeDeco.range(line.from + k, line.from + k + 1));
+            }
+        }
         if (heading) {
             const level = heading[1].length;
             list.push((level === 1 ? h1Deco : level === 2 ? h2Deco : h3Deco).range(line.from));
@@ -406,6 +426,9 @@ const paperTheme = EditorView.theme({
     '.cm-paper-blank': {height: '0', lineHeight: '0'},
     '.cm-paper-break': {textAlign: 'center', paddingTop: '0.4em', paddingBottom: '0.4em'},
     '.cm-paper-break-mark': {color: 'hsl(var(--muted-foreground))', letterSpacing: '0.35em'},
+    // 表格列(#161)不套 cm-paper-para,本來就不縮排、列距為 0;只有第一列與前一段之間用同樣的段距
+    '.cm-paper-table-first': {paddingTop: 'var(--paper-gap, 0.7em)'},
+    '.cm-paper-pipe': {color: 'hsl(var(--muted-foreground))'},
     '.cm-paper-comment': {color: 'hsl(var(--muted-foreground))', fontSize: '0.85em'},
     '.cm-paper-gap': {height: '0', lineHeight: '0'},
 });
