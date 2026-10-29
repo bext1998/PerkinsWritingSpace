@@ -10,6 +10,7 @@
 // 三、游標不在該行時隱藏 Markdown 標記(標題前綴、粗體/斜體記號),場景分隔行畫成置中 ◇◇◇、
 //     註解弱化(內容不隱藏);游標或選取碰到該行就顯示原始文字。程式碼區塊與 frontmatter 內完全不套用。
 //     Markdown 表格列(前後都是 |)不當成段落:不縮排、列距 0,欄線弱化(#161)。
+//     Markdown 表格列上按 Enter 只換一行(#185),不補段落分隔。
 //
 // 分工(CM 的限制):block decoration 不能由 ViewPlugin 提供(會改變高度對應,只能由 state 提供),
 // 所以「藏空行」放在 StateField、整份文件都算(空行本來就少);行內與行樣式仍然只算可見範圍前後各 60 行。
@@ -336,6 +337,11 @@ const paragraphEnter = (v: EditorView): boolean => {
     const pos = sel.head;
     const line = doc.lineAt(pos);
     if (blockedLineAt(v, line.number)) return false; // 程式碼區塊/frontmatter:預設行為(單一換行)
+    if (TABLE_ROW.test(line.text)) {
+        // Markdown 表格列(#185):只換一行,不補段落分隔——空行會把表格拆斷(畫面上空行被藏起來,看不出來)
+        insertAt(v, pos, '\n', pos + 1);
+        return true;
+    }
     if (doc.sliceString(pos, pos + 2) === '\n\n') {
         // 游標後面已經是段落分隔:只把游標移到下一段開頭,不再插入(否則會多出空行)
         v.dispatch({selection: EditorSelection.cursor(pos + 2), effects: EditorView.scrollIntoView(pos + 2, {y: 'nearest'})});

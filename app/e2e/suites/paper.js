@@ -1067,6 +1067,25 @@ module.exports = {
         check('#161 存檔後磁碟內容與貼上的完全相同(只改呈現)',
             fs.readFileSync(P(FILE), 'utf8') === TDOC2, JSON.stringify(fs.readFileSync(P(FILE), 'utf8')));
 
+        // ---- #185 在表格列按 Enter 只換一行,接著打字就是新的一列(表格不被空行拆開) ----
+        await setDoc('前一段。\n\n| 甲 | 一 |\n| 乙 | 二 |\n\n後一段。');
+        await home();
+        await press('ArrowDown'); // 到「| 甲 | 一 |」(段落間的空行是原子範圍,方向鍵會跳過)
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await settle(80, 500);
+        await page.keyboard.type('| 丙 | 三 |');
+        await settle(80, 500);
+        check('#185 表格列尾按 Enter 再打字:新列插在兩列之間,沒有多出空行',
+            (await doc()) === '前一段。\n\n| 甲 | 一 |\n| 丙 | 三 |\n| 乙 | 二 |\n\n後一段。', JSON.stringify(await doc()));
+        // 一般段落的 Enter 不受影響(仍是一個 Enter 一段)
+        await press('ArrowDown', 2); // 到「後一段。」
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await settle(80, 500);
+        check('#185 一般段落尾按 Enter 仍補出段落分隔',
+            (await doc()).endsWith('後一段。\n\n'), JSON.stringify(await doc()));
+
         // 清理:刪掉專用檔並把章節列還原(後面的組會數章節數量)
         await page.locator('[data-testid=chapter-row]:has-text("第一章")').first().click({timeout: 15000});
         await page.waitForFunction(() => (document.querySelector('[data-testid=crumbs]')?.textContent || '').includes('第一章'), null, {timeout: 15000});
