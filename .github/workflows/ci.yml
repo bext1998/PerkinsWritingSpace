@@ -44,6 +44,10 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: check
     runs-on: windows-latest
+    env:
+      # Alpha 階段標記(#174 / SPEC §17 版本號規則):整個 Alpha 期間固定不變,進 Beta 只改這一處。
+      # 完整版本字串在建置時注入 app/internal/buildinfo;exe 的 Windows 版本欄位只取 wails.json 的純數字部分。
+      ALPHA_STAGE: a1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -62,9 +66,33 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: wails build(前端已建置,-s 跳過 wails 自己的 npm install)
+      - name: 組出完整版本字串(wails.json 的 productVersion + 階段標記 + 提交編號 7 碼)
+        id: version
         working-directory: app
-        run: wails build -s
+        shell: pwsh
+        run: |
+          $base = (Get-Content wails.json -Raw | ConvertFrom-Json).info.productVersion
+          if (-not $base) { throw "app/wails.json 缺少 info.productVersion(#174)" }
+          "base=$base" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "full=$base-$env:ALPHA_STAGE" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "commit=$($env:GITHUB_SHA.Substring(0,7))" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: wails build(前端已建置,-s 跳過 wails 自己的 npm install;完整版本用 ldflags 注入)
+        working-directory: app
+        shell: pwsh
+        run: wails build -s -ldflags "-X perkins/internal/buildinfo.version=${{ steps.version.outputs.full }} -X perkins/internal/buildinfo.commit=${{ steps.version.outputs.commit }}"
+      - name: 驗收 exe 版本欄位與注入的完整版本字串
+        working-directory: app
+        shell: pwsh
+        run: |
+          $base = "${{ steps.version.outputs.base }}"
+          $full = "${{ steps.version.outputs.full }}"
+          $commit = "${{ steps.version.outputs.commit }}"
+          $exe = "build/bin/perkins.exe"
+          $info = (Get-Item $exe).VersionInfo
+          if ($info.ProductVersion -ne $base) { throw "exe ProductVersion = $($info.ProductVersion), 預期只有數字部分: $base" }
+          # 完整字串由 FullVersion() 在執行時串接,執行檔裡只出現注入的兩段;兩段都要在。
+          if (-not (Select-String -Path $exe -Pattern $full -SimpleMatch -Quiet)) { throw "執行檔找不到注入的版本 $full" }
+          if (-not (Select-String -Path $exe -Pattern $commit -SimpleMatch -Quiet)) { throw "執行檔找不到注入的提交編號 $commit" }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch'
         with:
