@@ -41,7 +41,7 @@ jobs:
 
   # 正式建置只在 main、tag 或手動觸發時跑;手動觸發的執行檔保留 7 天供作者下載試用(正式發佈走 #176)
   build:
-    if: github.event_name != 'pull_request'
+    if: true # 暫時:PR 上也跑正式建置,驗證乾淨主機能建置(下一個提交還原)
     needs: check
     runs-on: windows-latest
     steps:
@@ -66,7 +66,7 @@ jobs:
         working-directory: app
         run: wails build -s
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: github.event_name == 'workflow_dispatch'
+        if: true # 暫時
         with:
           name: perkins-windows
           path: app/build/bin/perkins.exe
