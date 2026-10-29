@@ -745,9 +745,14 @@ func TestSummaryDraftNotUsedUntilSavedAndStaleAfterEdit(t *testing.T) {
 // B7 意圖:對話變長時濃縮一定要讓作者知道;濃縮後下一次的預覽仍等於實際送出。
 func TestCompactionNotifiesAndPreviewStillMatches(t *testing.T) {
 	a, s, _ := setup(t)
-	// 預算以系統提示為基準再加固定額度:系統提示加規則時不必回頭調這個數字,濃縮觸發點維持不變
-	a.ContextTokens = EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 950
-	long := strings.Repeat("很長的討論內容。", 12)
+	long := strings.Repeat("很長的討論內容。", 60)
+	// 預算讓濃縮剛好在第 3 回合回覆後觸發:可用量(扣掉回覆保留的 1/4)放得下系統提示 + 前兩回合 4 則 + 本回合問題,
+	// 而回覆後的濃縮門檻(2/5 預算)落在 4 則與 6 則歷史之間。則數遠大於系統提示的增減,系統提示加規則時不必回頭調(#154)。
+	L := EstimateTokens([]llm.Message{{Role: "user", Content: long}})
+	a.ContextTokens = (EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 5*L + 200) * 4 / 3
+	if th := a.ContextTokens * 2 / 5; th <= 4*L || th >= 6*L {
+		t.Fatalf("測試預算失效:濃縮門檻 %d 應在 %d 與 %d 之間(系統提示變太長時調大 long)", th, 4*L, 6*L)
+	}
 	var notices []string
 	emit := func(e Event) {
 		if e.Kind == "notice" {
@@ -2340,7 +2345,7 @@ func TestStatusFollowsUserMessageAfterAutoCompactInAsk(t *testing.T) {
 	}
 	a.RestoreSession(hist, nil, nil)
 	// 預算以系統提示為基準再加固定額度:舊對話加本回合會超預算(送出前觸發自動濃縮),濃縮後可以送出。
-	a.ContextTokens = EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 950
+	a.ContextTokens = (EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 580) * 4 / 3 // 扣掉回覆保留的 1/4 後,可用量 = 系統提示 + 580(#154 前的同一個餘裕)
 	s.replies = []llm.Message{
 		{Role: "assistant", Content: "摘要:討論了森林。"}, // 給濃縮用
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "propose_patch",
@@ -2615,5 +2620,29 @@ func TestPreviewInstructionsListsSentLayers(t *testing.T) {
 	}
 	if len(pv.Notices) != 1 || !strings.Contains(pv.Notices[0], "作品 AGENTS.md 超過長度上限") {
 		t.Fatalf("未送出原因應在 Notices, got %+v", pv.Notices)
+	}
+}
+
+// Issue #154 意圖:作者核准的 9 條寫作規則確實送進模型(一般與檢查報告模式都有)。
+// 提示詞是常數,只檢查每條的關鍵句;行為效果由實機評測人工比對。
+func TestSystemPromptWritingRules(t *testing.T) {
+	a, _, _ := setup(t)
+	for _, mode := range []string{"", ModeReport} {
+		sys := sysOf(t, mustMsgs(t, a, AskParams{Question: "q", Mode: mode}))
+		for _, s := range []string{
+			"維持原文的敘事人稱與視角角色",
+			"保留每個角色各自的說話方式",
+			"不要把刻意的短句連成長句",
+			"改寫時不要加上直接的說明",
+			"不要因為「顯得多餘」就建議刪除",
+			"不要自己挑一邊改掉",
+			"沿用作者的用字習慣、標點與引號格式",
+			"不要寫出常見的陳腔濫調與 AI 套語",
+			"說明它在讀者那一端造成什麼",
+		} {
+			if !strings.Contains(sys, s) {
+				t.Errorf("模式 %q 的 system 訊息缺少寫作規則:%s", mode, s)
+			}
+		}
 	}
 }
