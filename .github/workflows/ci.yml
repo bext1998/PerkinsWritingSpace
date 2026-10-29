@@ -93,6 +93,9 @@ jobs:
           $exe = "build/bin/perkins.exe"
           $info = (Get-Item $exe).VersionInfo
           if ($info.ProductVersion -ne $base) { throw "exe ProductVersion = $($info.ProductVersion), 預期只有數字部分: $base" }
+          # wails 有把 ldflags 交給 go build:Go 在 build info 記錄實際收到的 -ldflags(驗傳遞,不是驗注入;注入由下一步的測試驗)
+          $bi = go version -m $exe | Out-String
+          if (-not $bi.Contains("buildinfo.version=${{ steps.version.outputs.full }}")) { throw "exe 的 build info 沒有記錄預期的 -ldflags,wails 可能沒有把它傳給 go build" }
       # 完整版本字串的驗收:用與 wails build 相同的一組 ldflags 建置測試,讀回 FullVersion() 的實際值。
       # 不要在 exe 全文搜字串:Go 會把 -ldflags 參數本身寫進執行檔的 build metadata,
       # 搜得到字串不代表注入成功(-X 變數名稱拼錯 Go 不報錯,FullVersion() 改壞仍回開發版時也照樣搜得到)。
