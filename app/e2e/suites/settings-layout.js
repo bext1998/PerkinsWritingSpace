@@ -904,7 +904,27 @@ module.exports = {
             aboutState.links[1].text.includes(`${REPO_BASE}/issues`) &&
             aboutState.links[2].text.includes(`${REPO_BASE}/releases`),
             JSON.stringify(aboutState.links.map(l => `${l.testid}:${l.text}`)));
-        await shot('81-settings-about-1280-dark');
+        await shot('85-settings-about-1280-dark');
+        // 「支援範圍」是關於頁最後一個區塊,1280×800 要捲動才看得到:捲到該區塊再補一張截圖(#195 審查)
+        await page.evaluate(() => document.querySelector('[data-testid=about-support]')?.scrollIntoView({behavior: 'instant', block: 'end'}));
+        await settle(80, 700);
+        const supportState = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const s = document.querySelector('[data-testid=about-support]');
+            const t = document.querySelector('[data-testid=about-support-text]');
+            if (!c || !s || !t) return null;
+            const cr = c.getBoundingClientRect(), sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+            return {shown: sr.top >= cr.top - 1 && sr.bottom <= cr.bottom + 1 && sr.height > 0 &&
+                    tr.top >= cr.top - 1 && tr.bottom <= cr.bottom + 1 && tr.height > 0,
+                    scrollTop: c.scrollTop, supportTop: Math.round(sr.top), supportBottom: Math.round(sr.bottom),
+                    clientH: c.clientHeight};
+        });
+        check('關於頁 1280×800 捲動後「支援範圍」與文字完整可見(截圖有拍到底部)',
+            !!supportState && supportState.shown, JSON.stringify(supportState));
+        await shot('85b-settings-about-1280-support');
+        // 捲回頂端:後面與連結檢查相關的截圖從頁首開始
+        await page.evaluate(() => { const c = document.querySelector('[data-testid=settings-content]'); c.scrollTop = 0; });
+        await settle(80, 400);
 
         // 對外連結要用系統瀏覽器開啟,不能在 WebView 內導航。把 window.runtime.BrowserOpenURL 換成記錄器
         // (其他 runtime 方法一律轉傳真的 runtime),所以不會打開真的瀏覽器,又能斷言有呼叫到。
@@ -956,13 +976,25 @@ module.exports = {
         await settle(900);
         const aboutLight = await page.evaluate(() => document.documentElement.classList.contains('light'));
         check('關於頁在淺色主題下可見(模式切到淺色)', aboutLight, JSON.stringify(aboutLight));
-        await shot('81b-settings-about-1280-light');
+        await shot('85c-settings-about-1280-light');
         await page.click('[data-testid=tab-appearance]');
         await waitSel('[data-testid=appearance-visual]');
         await page.click('[data-testid=appearance-mode-dark]');
         await settle(80, 500);
         await page.click('[data-testid=tab-about]');
         await waitSel('[data-testid=about-info]');
+
+        // 900×600(SPEC §17.2 驗收:五頁都要在 900×600 與 1280×800 通過;「關於」頁原本只量 1280 與 640)
+        // (量完的尺寸由下一個 640 段落自己設回去)
+        await page.setViewportSize({width: 900, height: 600});
+        await settle(80, 900); // 等 UI 更新
+        const about900 = await waitSel('[data-testid=about-info]');
+        await settle(80, 700); // 等版本列與版面穩定
+        g = await geoSettings();
+        check('關於頁 900×600 捲軸在內容區(根節點不滾動)', about900 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('關於頁 900×600 內容無水平捲軸', about900 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        check('關於頁 900×600 元素右緣不超出內容區', about900 && !!g && g.overflowing.length === 0, JSON.stringify(g && g.overflowing));
 
         // 640×672:窄寬度下不得出現水平捲軸(UI_GUIDE §13 最小宽度 640)
         await page.setViewportSize({width: 640, height: 672});
@@ -976,7 +1008,7 @@ module.exports = {
         check('關於頁 640×672 無水平捲軸', about640.sw <= about640.cw + 1 && !about640.rootScroll, JSON.stringify(about640));
         check('關於頁 640×672 連結列仍看得見(不超出內容寬)', about640.links.length === 3 && about640.links.every(w => w > 0 && w <= about640.cw),
             JSON.stringify(about640.links));
-        await shot('82-settings-about-640-dark');
+        await shot('85d-settings-about-640-dark');
         // 640 淺色主題：由外觀頁切換模式再回到關於頁（導覽欄與內容都必須仍可用）
         await page.click('[data-testid=tab-appearance]');
         await waitSel('[data-testid=appearance-visual]');
@@ -994,7 +1026,7 @@ module.exports = {
         check('關於頁 640×672 淺色主題也不出現水平捲軸',
             about640Light.sw <= about640Light.cw + 1 && !about640Light.rootScroll && about640Light.links.length === 3 && about640Light.links.every(w => w > 0 && w <= about640Light.cw),
             JSON.stringify(about640Light));
-        await shot('82b-settings-about-640-light');
+        await shot('85e-settings-about-640-light');
         await page.click('[data-testid=tab-appearance]');
         await waitSel('[data-testid=appearance-visual]');
         await page.click('[data-testid=appearance-mode-dark]');
