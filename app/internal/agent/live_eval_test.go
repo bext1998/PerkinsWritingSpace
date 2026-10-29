@@ -19,6 +19,15 @@ import (
 
 const liveBaseURL = "http://localhost:1234/v1"
 
+// liveLLM:預設本機 LM Studio;PERKINS_LIVE_BASEURL/PERKINS_LIVE_KEY 可改指其他 OpenAI 相容端點(例如區網的 llama-server)
+func liveLLM() *llm.OpenAI {
+	base := os.Getenv("PERKINS_LIVE_BASEURL")
+	if base == "" {
+		base = liveBaseURL
+	}
+	return &llm.OpenAI{BaseURL: base, APIKey: os.Getenv("PERKINS_LIVE_KEY")}
+}
+
 const liveEvalTimeout = 5 * time.Minute
 
 func TestLiveEvalCases(t *testing.T) {
@@ -59,7 +68,7 @@ func runEvalCase(t *testing.T, model string, lc evalCase) evalCaseResult {
 			return res
 		}
 	}
-	a.LLM = &llm.OpenAI{BaseURL: liveBaseURL}
+	a.LLM = liveLLM()
 	a.Model = model
 	before := snapshot(t, dir)
 	var tools []string
