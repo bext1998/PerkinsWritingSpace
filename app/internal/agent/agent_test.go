@@ -746,12 +746,13 @@ func TestSummaryDraftNotUsedUntilSavedAndStaleAfterEdit(t *testing.T) {
 func TestCompactionNotifiesAndPreviewStillMatches(t *testing.T) {
 	a, s, _ := setup(t)
 	long := strings.Repeat("很長的討論內容。", 60)
-	// 預算讓濃縮剛好在第 3 回合回覆後觸發:可用量(扣掉回覆保留的 1/4)放得下系統提示 + 前兩回合 4 則 + 本回合問題,
-	// 而回覆後的濃縮門檻(2/5 預算)落在 4 則與 6 則歷史之間。則數遠大於系統提示的增減,系統提示加規則時不必回頭調(#154)。
+	// 預算讓濃縮剛好在第 3 回合回覆後觸發:回覆後的濃縮門檻(2/5 預算)= 5 則對話,落在 4 則與 6 則歷史之間;
+	// 可用量(扣掉回覆保留的 1/4)約 9 則,放得下系統提示 + 前兩回合 4 則 + 本回合問題。
+	// 預算只跟對話長度有關,系統提示增減不影響觸發點(#154 加規則後原本的固定預算失效)。
 	L := EstimateTokens([]llm.Message{{Role: "user", Content: long}})
-	a.ContextTokens = (EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 5*L + 200) * 4 / 3
-	if th := a.ContextTokens * 2 / 5; th <= 4*L || th >= 6*L {
-		t.Fatalf("測試預算失效:濃縮門檻 %d 應在 %d 與 %d 之間(系統提示變太長時調大 long)", th, 4*L, 6*L)
+	a.ContextTokens = L * 25 / 2
+	if need := EstimateTokens([]llm.Message{{Role: "system", Content: systemPrompt}}) + 5*L + 50; need > a.ContextTokens-replyReserve(a.ContextTokens) {
+		t.Fatalf("測試預算失效:第 3 回合約需 %d,可用 %d(系統提示變太長時調大 long)", need, a.ContextTokens-replyReserve(a.ContextTokens))
 	}
 	var notices []string
 	emit := func(e Event) {
