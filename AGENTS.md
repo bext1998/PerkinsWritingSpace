@@ -18,7 +18,7 @@
 - 在外部輸入、檔案系統、模型回應與 Go／前端綁定等真實邊界處理錯誤。已由型別或上游不變條件保證的內部資料，不重複層層驗證；不為假設性情境加入 fallback、重試或防禦性程式碼。
 - 測試以風險和可觀察結果為準。Bug 修復須有能重現根因的回歸測試；新功能只涵蓋主要流程、關鍵失敗模式及受影響的 G1–G4 護欄。不為覆蓋率、私有呼叫順序或每個小分支增加大量測試，也不複製實作邏輯到測試。
 - 按變更範圍選擇驗證：Go 程式用相關套件測試，前端用型別檢查或建置；介面變更須實際 render 並檢查畫面與互動，並依 `docs/UI_GUIDE.md`。完整 E2E 會使用本機模型並可能影響使用者設定，只有相關風險需要時才執行，步驟與注意事項見 `.agent/skills/e2e/SKILL.md`。
-- CI:`.github/workflows/ci.yml` 在 PR 與 main 上跑前端建置、`go vet`、`go test`(只跑 Windows)。GitHub 無法使用時(作者 2026-10-29 授權,不必先問),在本機用根目錄 `watt.yaml` 跑同樣的檢查(`watt run --output json`,結果判讀見 watt 技能),回報時註明「以 Watt 代替 CI」,GitHub 恢復後照常讓 CI 再跑一次。`ci.yml` 的 check 步驟與 `watt.yaml` 要在同一個 PR 一起改。
+- CI:`.github/workflows/ci.yml` 的 check 在 PR、main、`v*` tag 與手動觸發時跑前端建置、`go vet`、`go test`(只跑 Windows);build(`wails build`)只在 main、tag 與手動觸發時跑,手動觸發才上傳執行檔。GitHub 無法使用時(作者 2026-10-29 授權,不必先問),在本機用根目錄 `watt.yaml` 跑與 check 相同的檢查(Watt 不涵蓋 build,通過不代表正式建置驗證過)(`watt run --output json`,結果判讀見 watt 技能),回報時註明「以 Watt 代替 CI」,GitHub 恢復後照常讓 CI 再跑一次。`ci.yml` 的 check 步驟與 `watt.yaml` 要在同一個 PR 一起改。
 - 不把金鑰、憑證、私人稿件或本機設定寫進程式碼、文件、測試資料、`.agent` 或 Git 歷史。不要把應用程式使用者的作品目錄與此原始碼倉庫混為一談。
 
 ## Git 與工作樹
