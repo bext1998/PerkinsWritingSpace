@@ -14,6 +14,10 @@ export function AgentsMdTokens(arg1) {
   return window['go']['main']['App']['AgentsMdTokens'](arg1);
 }
 
+export function AppVersion() {
+  return window['go']['main']['App']['AppVersion']();
+}
+
 export function ApplyEntityHeader(arg1, arg2) {
   return window['go']['main']['App']['ApplyEntityHeader'](arg1, arg2);
 }

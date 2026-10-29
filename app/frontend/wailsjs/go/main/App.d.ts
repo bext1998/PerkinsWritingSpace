@@ -19,6 +19,8 @@ export function AckRemote(arg1:string):Promise<main.SettingsView>;
 
 export function AgentsMdTokens(arg1:string):Promise<number>;
 
+export function AppVersion():Promise<string>;
+
 export function ApplyEntityHeader(arg1:string,arg2:Array<string>):Promise<string>;
 
 export function ArchiveSession(arg1:string,arg2:boolean):Promise<void>;

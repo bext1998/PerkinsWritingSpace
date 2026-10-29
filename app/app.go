@@ -17,6 +17,7 @@ import (
 
 	"perkins/internal/agent"
 	"perkins/internal/bible"
+	"perkins/internal/buildinfo"
 	"perkins/internal/health"
 	"perkins/internal/llm"
 	"perkins/internal/notion"
@@ -82,6 +83,12 @@ func (a *App) ConfirmQuit() {
 }
 
 func (a *App) allowQuit() { a.quitConfirmed.Store(true) }
+
+// AppVersion 回傳完整版本字串(SPEC §17 版本號規則,#174):正式建置是 "0.1.0-a1 (abc1234)",
+// 本機 wails dev / wails build 未注入版本時回報開發版標示。不依賴專案,任何時刻可呼叫。
+func (a *App) AppVersion() string {
+	return buildinfo.FullVersion()
+}
 
 // randomID 產生研究記錄的 session id(區分不同使用時段)。
 func randomID() string {

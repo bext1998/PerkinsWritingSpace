@@ -44,6 +44,10 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: check
     runs-on: windows-latest
+    env:
+      # Alpha 階段標記(#174 / SPEC §17 版本號規則):整個 Alpha 期間固定不變,進 Beta 只改這一處。
+      # 完整版本字串在建置時注入 app/internal/buildinfo;exe 的 Windows 版本欄位只取 wails.json 的純數字部分。
+      ALPHA_STAGE: a1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -62,9 +66,46 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: wails build(前端已建置,-s 跳過 wails 自己的 npm install)
+      # ldflags 與預期值都在這一處組好,wails build 與後面的注入測試共用同一個輸出,避免兩邊各寫一份而不同步。
+      - name: 組出完整版本字串與 ldflags(wails.json 的 productVersion + 階段標記 + 提交編號 7 碼)
+        id: version
         working-directory: app
-        run: wails build -s
+        shell: pwsh
+        run: |
+          $base = (Get-Content wails.json -Raw | ConvertFrom-Json).info.productVersion
+          if (-not $base) { throw "app/wails.json 缺少 info.productVersion(#174)" }
+          $full = "$base-$env:ALPHA_STAGE"
+          $commit = $env:GITHUB_SHA.Substring(0,7)
+          "base=$base" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "full=$full" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "expect=$full ($commit)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "ldflags=-X perkins/internal/buildinfo.version=$full -X perkins/internal/buildinfo.commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: wails build(前端已建置,-s 跳過 wails 自己的 npm install;完整版本用 ldflags 注入)
+        working-directory: app
+        shell: pwsh
+        run: wails build -s -ldflags "${{ steps.version.outputs.ldflags }}"
+      - name: 驗收 exe 的 Windows 版本欄位(只有純數字部分)
+        working-directory: app
+        shell: pwsh
+        run: |
+          $base = "${{ steps.version.outputs.base }}"
+          $exe = "build/bin/perkins.exe"
+          $info = (Get-Item $exe).VersionInfo
+          if ($info.ProductVersion -ne $base) { throw "exe ProductVersion = $($info.ProductVersion), 預期只有數字部分: $base" }
+          # wails 有把 ldflags 交給 go build:Go 在 build info 記錄實際收到的 -ldflags(驗傳遞,不是驗注入;注入由下一步的測試驗)
+          $bi = go version -m $exe | Out-String
+          if (-not $bi.Contains("buildinfo.version=${{ steps.version.outputs.full }}")) { throw "exe 的 build info 沒有記錄預期的 -ldflags,wails 可能沒有把它傳給 go build" }
+      # 完整版本字串的驗收:用與 wails build 相同的一組 ldflags 建置測試,讀回 FullVersion() 的實際值。
+      # 不要在 exe 全文搜字串:Go 會把 -ldflags 參數本身寫進執行檔的 build metadata,
+      # 搜得到字串不代表注入成功(-X 變數名稱拼錯 Go 不報錯,FullVersion() 改壞仍回開發版時也照樣搜得到)。
+      # -count=1:go test 會快取結果,避免 ldflags 改變時沿用舊結果。
+      - name: 驗收 ldflags 注入後 FullVersion() 的實際值
+        working-directory: app
+        shell: pwsh
+        env:
+          PERKINS_EXPECT_FULL_VERSION: ${{ steps.version.outputs.expect }}
+        run: go test ./internal/buildinfo -run TestFullVersionFromLdflags -count=1 -v -ldflags "${{ steps.version.outputs.ldflags }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'workflow_dispatch'
         with:
