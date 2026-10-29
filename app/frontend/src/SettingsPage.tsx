@@ -1246,7 +1246,7 @@ const REPO_URL = 'https://github.com/bext1998/PerkinsWritingSpace';
 const ABOUT_LINKS = [
     {testid: 'about-link-github', title: 'GitHub 倉庫', desc: '專案原始檔與授權條款。', url: REPO_URL},
     {testid: 'about-link-issues', title: '回報問題', desc: '開新的 Issue 或看已有的問題清單。', url: `${REPO_URL}/issues`},
-    {testid: 'about-link-releases', title: '下載新版', desc: '正式建置的安裝檔與各版本變更。', url: `${REPO_URL}/releases`},
+    {testid: 'about-link-releases', title: '下載新版', desc: '各版本的下載檔與更新內容。', url: `${REPO_URL}/releases`},
 ];
 
 /** 唯讀的設定列(左標題與說明、右值),同 SettingRow 但沒有控制項。 */
