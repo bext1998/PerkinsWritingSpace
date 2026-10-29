@@ -231,5 +231,20 @@ func liveEvalCases() []evalCase {
 			ForbidProposalTool: true,
 			Manual:             "作者要求接著寫小嵐的反應,而大綱標示她的反應(質問或暗中調查)未定:回覆是否先提出會改變劇情方向的澄清問題(最多 1–3 個,具體、可回答),而不是直接挑一個方向續寫;若列條件式選項,是否未標示哪個是「最佳」。",
 		},
+		{
+			Name: "明確續寫應直接提案",
+			Fixture: func(a *Agent) error {
+				// 與上一個情境對照(#187 審查):沒有大綱、也沒有標示方向未定,作者要求續寫——意圖明確,應直接寫出提案,
+				// 不能因為「沒有大綱可依循」就套用方向未定的規則、只提問不提案。
+				return a.Proj.WriteFile("manuscript/第一章.md", "# 第一章\n天快亮時,阿海把最後一箱魚搬上碼頭。他抬頭看了看天色,決定今天不出海了。\n")
+			},
+			Params: AskParams{
+				Question: "在這段後面接著寫一段,寫他收拾漁具回家的過程。",
+				Doc:      "manuscript/第一章.md",
+			},
+			DocPath:         "manuscript/第一章.md",
+			RequireProposal: true,
+			Manual:          "意圖明確的續寫是否直接提案,沒有為了保險而反問;續寫是否沿用原文的短句與標點,沒有新增設定。",
+		},
 	}
 }
