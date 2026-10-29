@@ -1681,7 +1681,10 @@ func TestResearchRequestsIncludeIntermediateReplies(t *testing.T) {
 func TestSystemPromptUncertaintyRules(t *testing.T) {
 	for _, s := range []string{
 		"意圖明確時直接做,不要為了保險而提問",
-		"先問最多 1–3 個具體問題,再提案",
+		"先問最多 1–3 個具體問題,等作者回答後再提案",
+		"這一輪只提問、不要提案",
+		"不要用幾個版本同時寫出不同走向來代替提問",
+		"只是沒有大綱不算",
 		"不要標示哪個是「最佳」",
 	} {
 		if !strings.Contains(systemPrompt, s) {
