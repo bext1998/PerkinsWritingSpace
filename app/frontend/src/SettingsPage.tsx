@@ -1,9 +1,10 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {ArrowLeft, BookMarked, ChevronRight, Cloud, Cpu, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
+import {ArrowLeft, BookMarked, ChevronRight, Cloud, Cpu, ExternalLink, Info, KeyRound, Monitor, Moon, Palette, Plus, RefreshCw, RotateCcw, Save, Share2, Sun, Trash2} from 'lucide-react';
 import {
-    AgentsMdTokens, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
+    AgentsMdTokens, AppVersion, ClearCover, ConvertOptions, DeleteProfile, GetBotRead, GetCover, GetResearch, GetSettings, ListModels, ListProfilePresets, PickCover, PreviewExport,
     ReadAgentsMd, RenameProject, ResetPlatforms, SavePlatforms, SaveProfile, SetAppearance, SetAutosave, SetBotRead, SetPaperLayout, SetResearch, SetTypingSound, WriteAgentsMd,
 } from '../wailsjs/go/main/App';
+import {BrowserOpenURL} from '../wailsjs/runtime/runtime';
 import {main, project, publish, settings} from '../wailsjs/go/models';
 import {ACCENT_PRESETS, HEX_RE, contrastRatio, hexToHSL, readThemeToken} from './appearance';
 import {Button} from '@/components/ui/button';
@@ -1238,8 +1239,87 @@ function parseHSLString(s: string): [number, number, number] {
     return [parseFloat(parts[0]) || 0, (parseFloat(parts[1]) || 0) / 100, (parseFloat(parts[2]) || 0) / 100];
 }
 
-type Page = 'project' | 'models' | 'platforms' | 'appearance';
-const PAGE_LABEL: Record<Page, string> = {project: '作品', models: 'Perkins Bot', platforms: '平台輸出', appearance: '外觀'};
+// ── 關於頁(#175,SPEC §17.2)────────────────────────────────────────
+// 不需要作品也能看(與外觀一樣不依賴 tree);對外連結用 Wails 的 BrowserOpenURL 開系統瀏覽器,
+// 不在 WebView 內導航(應用程式本身不會被帶離目前的畫面)。
+const REPO_URL = 'https://github.com/bext1998/PerkinsWritingSpace';
+const ABOUT_LINKS = [
+    {testid: 'about-link-github', title: 'GitHub 倉庫', desc: '專案原始檔與授權條款。', url: REPO_URL},
+    {testid: 'about-link-issues', title: '回報問題', desc: '開新的 Issue 或看已有的問題清單。', url: `${REPO_URL}/issues`},
+    {testid: 'about-link-releases', title: '下載新版', desc: '各版本的下載檔與更新內容。', url: `${REPO_URL}/releases`},
+];
+
+/** 唯讀的設定列(左標題與說明、右值),同 SettingRow 但沒有控制項。 */
+function StaticRow({title, desc, testid, children}: {title: string; desc?: string; testid?: string; children: React.ReactNode}) {
+    return (
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-1 px-4 py-3">
+            <div className="min-w-[12rem] flex-1">
+                <div className="text-sm font-medium">{title}</div>
+                {desc && <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{desc}</p>}
+            </div>
+            <div className="min-w-0 max-w-full break-words text-sm leading-relaxed" data-testid={testid}>{children}</div>
+        </div>
+    );
+}
+
+/** 對外連結列:左標題與說明、右網址與↗(UI_GUIDE §12.3 外部連結用↗,不用›)。 */
+function LinkRow({testid, title, desc, url}: {testid: string; title: string; desc: string; url: string}) {
+    return (
+        <button type="button" data-testid={testid} onClick={() => BrowserOpenURL(url)}
+                className="flex w-full flex-wrap items-start gap-x-4 gap-y-1 px-4 py-3 text-left hover:bg-accent/60">
+            <span className="min-w-[12rem] flex-1">
+                <span className="block text-sm font-medium">{title}</span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{desc}</span>
+            </span>
+            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="break-all">{url}</span>
+                <ExternalLink className="h-4 w-4 shrink-0" aria-hidden/>
+            </span>
+        </button>
+    );
+}
+
+function AboutTab() {
+    const [version, setVersion] = useState('');
+    const [versionError, setVersionError] = useState('');
+
+    useEffect(() => {
+        // AppVersion 是 Go 綁定:呼叫失敗要在畫面上講清楚(UI_GUIDE §6 錯誤不吞)
+        let alive = true;
+        AppVersion().then(v => { if (alive) setVersion(v); }).catch(e => { if (alive) setVersionError(errText(e)); });
+        return () => { alive = false; };
+    }, []);
+
+    return (
+        <div className="grid gap-8">
+            <Section title="基本資料" testid="about-info" desc="專案正式名稱、完整版本字串與授權。">
+                <RowCard testid="about-info-card">
+                    <StaticRow title="名稱" testid="about-name">Perkins WritingSpace</StaticRow>
+                    <StaticRow title="版本" desc="正式建置顯示版本號與提交編號;從原始檔運行的開發版會顯示未注入的標示。">{versionError
+                        ? <span className="text-destructive" data-testid="about-version-error">{versionError}</span>
+                        : <span data-testid="about-version">{version || '讀取中…'}</span>}
+                    </StaticRow>
+                    <StaticRow title="授權" desc="完整條款見倉庫根目錄的 LICENSE。" testid="about-license">MIT License</StaticRow>
+                </RowCard>
+            </Section>
+
+            <Section title="對外連結" testid="about-links" desc="點選後用系統瀏覽器開啟對應頁面,不會在應用程式內換頁。">
+                <RowCard testid="about-links-card">
+                    {ABOUT_LINKS.map(l => <LinkRow key={l.testid} {...l}/>)}
+                </RowCard>
+            </Section>
+
+            <Section title="支援範圍" testid="about-support" desc="目前實際驗證過的情況,沒有列出的項目不代表必定不支援。">
+                <p className="rounded-lg border p-4 text-sm leading-relaxed" data-testid="about-support-text">
+                    市面上絕大多數大型語言模型都支援,但不保證 agent 的輔助效果。目前只驗證過注音輸入法可以正常輸入,其他輸入法待驗證。
+                </p>
+            </Section>
+        </div>
+    );
+}
+
+type Page = 'project' | 'models' | 'platforms' | 'appearance' | 'about';
+const PAGE_LABEL: Record<Page, string> = {project: '作品', models: 'Perkins Bot', platforms: '平台輸出', appearance: '外觀', about: '關於'};
 
 export default function SettingsPage({tree, setTree, appearance, setAppearance, paper, setPaper, onClose}: Props) {
     const [cfg, setCfg] = useState<main.SettingsView | null>(null);
@@ -1307,6 +1387,7 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
                     {navBtn('models', Cpu)}
                     {navBtn('platforms', Share2)}
                     {navBtn('appearance', Palette)}
+                    {navBtn('about', Info)}
                 </nav>
                 {/* 內容區:獨立捲動、單一 max-w-5xl 置中(SPEC §17.2) */}
                 <div ref={contentRef} data-testid="settings-content" className="min-w-0 flex-1 overflow-y-auto">
@@ -1327,6 +1408,7 @@ export default function SettingsPage({tree, setTree, appearance, setAppearance, 
                             {page === 'models' && <PerkinsBotTab cfg={cfg} setCfg={setCfg} hasProject={!!tree} guard={guard} setDirty={setDirty}/>}
                             {page === 'platforms' && <PlatformsTab cfg={cfg} setCfg={setCfg} guard={guard} setDirty={setDirty}/>}
                             {page === 'appearance' && <AppearanceTab appearance={appearance} setAppearance={setAppearance} paper={paper} setPaper={setPaper}/>}
+                            {page === 'about' && <AboutTab/>}
                         </div>
                     )}
                 </div>

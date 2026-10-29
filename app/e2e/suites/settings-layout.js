@@ -8,6 +8,8 @@ module.exports = {
         const fs = require('fs');
         const path = require('path');
         const os = require('os');
+        // 關於頁(#175,SPEC §17.2):對外連結的倉庫位址與版本斷言
+        const REPO_BASE = 'https://github.com/bext1998/PerkinsWritingSpace';
         await ctx.ensureProject('第一章', 'manuscript');
         // ===== 設定頁左側導覽版面(SPEC §17.2):900×600 與 1280×800 三頁 =====
         // 量測:根節點是否滾動(捲軸該在內容區)、內容水平捲軸、元素右緣、研究記錄間距、
@@ -864,6 +866,171 @@ module.exports = {
         await settle(80, 400);
         const afterEsc = await page.evaluate(() => ({list: !!document.querySelector('[role=listbox]'), settings: !!document.querySelector('[data-testid=settings-page]')}));
         check('#155 設定頁開著下拉時按 Esc 只關下拉,設定頁仍在', listOpen && !afterEsc.list && afterEsc.settings, JSON.stringify({listOpen, ...afterEsc}));
+
+        // ===== 關於頁(#175,SPEC §17.2):導覽項目、內容、對外連結與 BrowserOpenURL =====
+        await page.click('[data-testid=tab-about]');
+        const about1280 = await waitSel('[data-testid=about-info]');
+        await settle(80, 700); // 等 AppVersion 綁定回應與渲染
+        const aboutState = await page.evaluate(() => {
+            const txt = (sel) => { const e = document.querySelector(sel); return e ? (e.textContent || '').trim().replace(/\s+/g, ' ') : null; };
+            return {
+                title: txt('[data-testid=settings-page-title]'),
+                name: txt('[data-testid=about-name]'),
+                version: txt('[data-testid=about-version]'),
+                license: txt('[data-testid=about-license]'),
+                support: txt('[data-testid=about-support-text]'),
+                navLabels: [...document.querySelectorAll('[data-testid=settings-nav] button')].map(b => (b.textContent || '').trim()),
+                links: [...document.querySelectorAll('[data-testid^=about-link-]')].map(b => ({
+                    testid: b.getAttribute('data-testid'),
+                    tag: b.tagName,
+                    text: (b.textContent || '').trim().replace(/\s+/g, ' '),
+                })),
+            };
+        });
+        check('設定頁有「關於」導覽項目(tab-about)', !!about1280 && aboutState.navLabels.includes('關於'), JSON.stringify(aboutState.navLabels));
+        check('關於頁標題與名稱、授權正確',
+            aboutState.title === '關於' && aboutState.name === 'Perkins WritingSpace' && aboutState.license === 'MIT License',
+            JSON.stringify({title: aboutState.title, name: aboutState.name, license: aboutState.license}));
+        // 版本依 #174 的規則:E2E 必須能斷言(開發版為「開發版 (未注入版本資訊)」,正式建置為 semver + 提交編號)
+        check('關於頁顯示完整版本(AppVersion 有值,不是空字串或換行)',
+            !!aboutState.version && /開發版|\d+\.\d+\.\d+/.test(aboutState.version), JSON.stringify(aboutState.version));
+        // 支援範圍文字照 SPEC/工單原文,不得改寫(工單「文字照抄」)
+        const SUPPORT_TEXT = '市面上絕大多數大型語言模型都支援,但不保證 agent 的輔助效果。目前只驗證過注音輸入法可以正常輸入,其他輸入法待驗證。';
+        check('關於頁顯示支援範圍原文(模型與輸入法驗證狀態)',
+            aboutState.support === SUPPORT_TEXT, JSON.stringify(aboutState.support));
+        check('關於頁三個對外連結都在頁面文字中顯示網址且整列可點',
+            aboutState.links.length === 3 && aboutState.links.every(l => l.tag === 'BUTTON') &&
+            aboutState.links[0].text.includes(REPO_BASE) && !aboutState.links[0].text.includes('/issues') &&
+            aboutState.links[1].text.includes(`${REPO_BASE}/issues`) &&
+            aboutState.links[2].text.includes(`${REPO_BASE}/releases`),
+            JSON.stringify(aboutState.links.map(l => `${l.testid}:${l.text}`)));
+        await shot('85-settings-about-1280-dark');
+        // 「支援範圍」是關於頁最後一個區塊,1280×800 要捲動才看得到:捲到該區塊再補一張截圖(#195 審查)
+        await page.evaluate(() => document.querySelector('[data-testid=about-support]')?.scrollIntoView({behavior: 'instant', block: 'end'}));
+        await settle(80, 700);
+        const supportState = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const s = document.querySelector('[data-testid=about-support]');
+            const t = document.querySelector('[data-testid=about-support-text]');
+            if (!c || !s || !t) return null;
+            const cr = c.getBoundingClientRect(), sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+            return {shown: sr.top >= cr.top - 1 && sr.bottom <= cr.bottom + 1 && sr.height > 0 &&
+                    tr.top >= cr.top - 1 && tr.bottom <= cr.bottom + 1 && tr.height > 0,
+                    scrollTop: c.scrollTop, supportTop: Math.round(sr.top), supportBottom: Math.round(sr.bottom),
+                    clientH: c.clientHeight};
+        });
+        check('關於頁 1280×800 捲動後「支援範圍」與文字完整可見(截圖有拍到底部)',
+            !!supportState && supportState.shown, JSON.stringify(supportState));
+        await shot('85b-settings-about-1280-support');
+        // 捲回頂端:後面與連結檢查相關的截圖從頁首開始
+        await page.evaluate(() => { const c = document.querySelector('[data-testid=settings-content]'); c.scrollTop = 0; });
+        await settle(80, 400);
+
+        // 對外連結要用系統瀏覽器開啟,不能在 WebView 內導航。把 window.runtime.BrowserOpenURL 換成記錄器
+        // (其他 runtime 方法一律轉傳真的 runtime),所以不會打開真的瀏覽器,又能斷言有呼叫到。
+        const proxyInstalled = await page.evaluate(() => {
+            const real = window.runtime;
+            if (!real || typeof real.BrowserOpenURL !== 'function') return false;
+            window.__realRuntime = real;
+            window.__opened = [];
+            window.__runtimeProxy = new Proxy(real, {
+                get(t, k) {
+                    if (k === 'BrowserOpenURL') return (u) => { window.__opened.push(u); };
+                    const v = Reflect.get(t, k);
+                    return typeof v === 'function' ? v.bind(t) : v;
+                },
+                set() { return true; },
+            });
+            window.runtime = window.__runtimeProxy;
+            return true;
+        });
+        const urlBefore = page.url();
+        for (const tid of ['about-link-github', 'about-link-issues', 'about-link-releases']) {
+            await page.click(`[data-testid=${tid}]`);
+        }
+        await settle(80, 900);
+        const afterLinks = await page.evaluate(() => ({
+            opened: window.__opened || [],
+            settings: !!document.querySelector('[data-testid=settings-page]'),
+            title: (document.querySelector('[data-testid=settings-page-title]') || {}).textContent,
+            version: (document.querySelector('[data-testid=about-version]') || {}).textContent,
+        }));
+        await page.evaluate(() => { if (window.__realRuntime) window.runtime = window.__realRuntime; });
+        const urlsOk = afterLinks.opened.length === 3
+            && afterLinks.opened[0] === REPO_BASE
+            && afterLinks.opened[1] === `${REPO_BASE}/issues`
+            && afterLinks.opened[2] === `${REPO_BASE}/releases`;
+        check('關於頁三個連結都經 BrowserOpenURL 交給系統瀏覽器開啟(未開啟瀏覽器、未在 WebView 內導航)',
+            proxyInstalled && urlsOk && page.url() === urlBefore && afterLinks.settings && (afterLinks.title || '').trim() === '關於'
+            && (afterLinks.version || '').trim() === (aboutState.version || '').trim(),
+            JSON.stringify({proxyInstalled, opened: afterLinks.opened, moved: page.url() !== urlBefore,
+                            settings: afterLinks.settings, title: afterLinks.title}));
+
+        // 淺色主題截圖(拍完還原成深色,不留下狀態)
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(80, 500);
+        await page.click('[data-testid=tab-about]');
+        await waitSel('[data-testid=about-info]');
+        await settle(900);
+        const aboutLight = await page.evaluate(() => document.documentElement.classList.contains('light'));
+        check('關於頁在淺色主題下可見(模式切到淺色)', aboutLight, JSON.stringify(aboutLight));
+        await shot('85c-settings-about-1280-light');
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
+        await settle(80, 500);
+        await page.click('[data-testid=tab-about]');
+        await waitSel('[data-testid=about-info]');
+
+        // 900×600(SPEC §17.2 驗收:五頁都要在 900×600 與 1280×800 通過;「關於」頁原本只量 1280 與 640)
+        // (量完的尺寸由下一個 640 段落自己設回去)
+        await page.setViewportSize({width: 900, height: 600});
+        await settle(80, 900); // 等 UI 更新
+        const about900 = await waitSel('[data-testid=about-info]');
+        await settle(80, 700); // 等版本列與版面穩定
+        g = await geoSettings();
+        check('關於頁 900×600 捲軸在內容區(根節點不滾動)', about900 && !!g && !g.rootScrollable,
+            JSON.stringify(g && {root: `${g.rootScrollH}/${g.rootClientH}`}));
+        check('關於頁 900×600 內容無水平捲軸', about900 && !!g && !g.hScroll, JSON.stringify(g && {sw: g.scScrollW, cw: g.scClientW}));
+        check('關於頁 900×600 元素右緣不超出內容區', about900 && !!g && g.overflowing.length === 0, JSON.stringify(g && g.overflowing));
+
+        // 640×672:窄寬度下不得出現水平捲軸(UI_GUIDE §13 最小宽度 640)
+        await page.setViewportSize({width: 640, height: 672});
+        await settle(80, 900); // 等 UI 更新
+        const about640 = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const links = [...document.querySelectorAll('[data-testid^=about-link-]')]
+                .map(b => Math.round(b.getBoundingClientRect().width));
+            return {sw: c.scrollWidth, cw: c.clientWidth, links, rootScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth};
+        });
+        check('關於頁 640×672 無水平捲軸', about640.sw <= about640.cw + 1 && !about640.rootScroll, JSON.stringify(about640));
+        check('關於頁 640×672 連結列仍看得見(不超出內容寬)', about640.links.length === 3 && about640.links.every(w => w > 0 && w <= about640.cw),
+            JSON.stringify(about640.links));
+        await shot('85d-settings-about-640-dark');
+        // 640 淺色主題：由外觀頁切換模式再回到關於頁（導覽欄與內容都必須仍可用）
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-light]');
+        await settle(900); // 等顏色轉場完成(DOM quiet 不等過轉場)
+        await page.click('[data-testid=tab-about]');
+        await waitSel('[data-testid=about-info]');
+        await settle(900);
+        const about640Light = await page.evaluate(() => {
+            const c = document.querySelector('[data-testid=settings-content]');
+            const links = [...document.querySelectorAll('[data-testid^=about-link-]')]
+                .map(b => Math.round(b.getBoundingClientRect().width));
+            return {sw: c.scrollWidth, cw: c.clientWidth, links, rootScroll: document.documentElement.scrollWidth > document.documentElement.clientWidth};
+        });
+        check('關於頁 640×672 淺色主題也不出現水平捲軸',
+            about640Light.sw <= about640Light.cw + 1 && !about640Light.rootScroll && about640Light.links.length === 3 && about640Light.links.every(w => w > 0 && w <= about640Light.cw),
+            JSON.stringify(about640Light));
+        await shot('85e-settings-about-640-light');
+        await page.click('[data-testid=tab-appearance]');
+        await waitSel('[data-testid=appearance-visual]');
+        await page.click('[data-testid=appearance-mode-dark]');
+        await settle(80, 500);
 
         // 還原:視窗與設定頁關閉(後續測試在 1440×900 進行)
         await page.setViewportSize({width: 1440, height: 900});
