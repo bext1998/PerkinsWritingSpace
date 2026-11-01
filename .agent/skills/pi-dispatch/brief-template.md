@@ -11,8 +11,8 @@
 
 ## 限制
 - 不 commit、不 push、不開 PR、不切分支（由 Orchestrator 做）。
-- 只在上面的工作樹內改檔；不碰作者的作品與 `%USERPROFILE%\.perkins` 設定。
-- E2E：<不跑／只跑 `<組名>`>；要跑時照 `.agent/skills/e2e/SKILL.md` 備份與還原設定（它會寫真實設定）。
+- 只在上面的工作樹內改檔；不碰作者的作品與 `%USERPROFILE%\.perkins` 設定，唯一例外是下一條明確核准的 E2E 備份／測試／還原流程。
+- E2E：<不跑／只跑 `<組名>`>。不跑時完全不碰設定；指定組別時只跑那些組，照 `.agent/skills/e2e/SKILL.md` 備份、還原與清理（它會寫真實設定）。
 - 收尾關掉自己啟動的 `wails dev` 等程序。
 
 ## 交付
