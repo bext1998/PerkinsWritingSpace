@@ -33,7 +33,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 - `node app/e2e/run.js`:印出組清單、各組內容與「何時跑哪組」。
 - `--smoke`:冒煙組(全新 fixture 約 20 秒,不重建 fixture 時更快),涵蓋開檔、打字存檔、提案預覽不外流、關閉保護主流程、標題欄/禪模式基本進出、搜尋開關。平常改完程式先跑這個。
 - `<組名>...`:只跑指定組(可與 `--smoke` 並用,如 `node run.js search-editor --smoke`)。各組自行把應用帶到需要的起始狀態(必要時回書櫃重開作品、切面板、開章節),可單獨執行。
-- `--all`:全部 15 組依序執行(全新 fixture 約 140 秒 + wails 啟動)。**合併前跑一次**。
+- `--all`:全部 15 組依序執行(全新 fixture 約 140 秒 + wails 啟動)。只在改動牽涉多組或共用機制時跑。
 - `--reuse [其他模式]`:重用已經在 34115 上的 `wails dev`,不冷啟動。它會:重建 fixture → 呼叫既有綁定 `OpenProjectAt(測試專案)`(後端 `setProject` 會取消在途請求並換掉 `proj`、`agent`(含對話與提案快取)、`research`)→ 重載頁面回到起始畫面。整個重載約 0.6 秒,對照冷啟動 20–41 秒。`--reuse` 可放任意位置(例如 `node run.js --reuse --all`)。
 - 測試組在 `app/e2e/suites/*.js`,共用基礎(啟動、check/shot、fixture、狀態準備)在 `app/e2e/lib.js`。
 
@@ -73,7 +73,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 
 - 平常開發:`--smoke` + 受影響的組(一兩分鐘內)。
 - 破壞驗證、返工:只跑該組。
-- 合併前:`--all`(檢查清單必須與基準一致,不得減少)。
+- 合併前:依改動風險選組(`AGENTS.md`「工作方式」);改動牽涉多組或共用機制時才 `--all`,此時檢查清單必須與基準一致,不得減少。
 
 ## 多個 Agent 同時跑 E2E
 
