@@ -7,11 +7,12 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
 - `.agent/profile/runtime.json`:`start.sh`/`stop.sh` 自動維護 `worker_pi`(pane、標籤、模型、開始時間),只是備忘,實際狀態以 `herdr agent list` 為準。另有 Orchestrator 手動登記的 `reviewer_pi`(常駐審查者的 pane ID,見 `review` 技能),`start.sh` 的名額檢查會讀它,不要刪。
 
 ## 步驟
-1. **選模型**:預設簡單工作 `xiaomi/mimo-v2.6-flash`、複雜工作 `xiaomi/mimo-v2.6-pro`。為累積比較資料,可依任務性質改用 `z-ai/glm-5.3`、`z-ai/glm-5.3-flash`、`deepseek/deepseek-v4.1-flash`、`minimax/minimax-m3.1-flash`;選擇理由寫進紀錄。
+1. **選模型**:選之前先翻 `pi-ledger.md` 裡同模型、同類任務的近期紀錄(初審、返工、花費、備註),看最後版本的結果,不把返工列或審查列算成該模型的實作成績;選擇理由寫進任務說明與紀錄,引用「日期+任務+PR」(PR 號在帳本裡不唯一);沒有可參考的紀錄就寫「無同類紀錄」。
+   預設簡單工作 `xiaomi/mimo-v2.6-flash`、複雜工作 `xiaomi/mimo-v2.6-pro`。為累積比較資料,可依任務性質改用 `z-ai/glm-5.3`、`z-ai/glm-5.3-flash`、`deepseek/deepseek-v4.1-flash`、`minimax/minimax-m3.1-flash`。
    **MiniMax M3.1 Flash** 走 OpenRouter(原本的 MiniMax 訂閱不再使用)。pi 1.1.0 的內建模型表(`pi update --models` 之後仍然)沒有這個模型,2026-10-25 已補在 `~/.pi/agent/models.json` 的 `openrouter.models`(只新增這一筆,內建模型照舊);pi 收錄後可移除。
    **DeepSeek 官方 API**:Pi 內建供應商 `deepseek`,寫 `deepseek/deepseek-flash`(V4.1 Flash),走作者的 DeepSeek 帳戶額度,不經 OpenRouter。同一份額度也可用 dsh-code(`dsh-dispatch` 技能)派工,依任務擇一;OpenRouter 上的 `deepseek/deepseek-v4.1-flash` 則照常走 OpenRouter。
    **Qoder**(Qwen 3.8 Flash Next):作者自己開的 pane,免費期間作備援,免費結束後停用;不經本腳本啟動。
-   **本機模型**(作者家中 RTX 4070 那台跑 llama-server,Pi 供應商由作者設在 `~/.pi/agent/models.json`)有兩個:`mirai/mirai-s-27b`(Qwen3.8-27B 約 2.4 位元量化)與 `strata-lan/qwen3.8-flash-next-iq3_xxs`(Qwen3.8-Flash-Next,2026-10-29 加入,單次輸出上限 4096 token,長檔案整段寫入可能被截斷)。兩者共用同一台伺服器,**作者開哪個就只有哪個**,不請作者切換;`start.sh` 會先查伺服器實際載入的模型,不符就拒絕。不另外花錢,適合簡單、範圍明確的工作;程式品質尚在試用(strata 尚未實際派工),重要工作仍用 OpenRouter 模型。那台電腦不一定開著;一次只能處理一個請求。
+   **本機模型**(作者家中 RTX 4070 那台跑 llama-server,Pi 供應商由作者設在 `~/.pi/agent/models.json`)有兩個:`mirai/mirai-s-27b`(Qwen3.8-27B 約 2.4 位元量化)與 `strata-lan/qwen3.8-flash-next-iq3_xxs`(Qwen3.8-Flash-Next,2026-10-29 加入;單次輸出上限原為 4096 token,#175 兩次卡在整段寫入,2026-10-30 作者調為 32768 後未再發生)。兩者共用同一台伺服器,**作者開哪個就只有哪個**,不請作者切換;`start.sh` 會先查伺服器實際載入的模型,不符就拒絕。不另外花錢,適合簡單、範圍明確的工作;程式品質尚在試用(兩者都已正式派工,紀錄見帳本),重要工作仍用 OpenRouter 模型。那台電腦不一定開著;一次只能處理一個請求。
    **思考強度**依任務難度選:簡單工作 `medium`;複雜工作、或返工/審查被打回後重派用 `high`;`xhigh`/`max` 原則上不用(思考 token 也計費)。不依賴 `~/.pi/agent/settings.json` 的預設值(實測不一定生效),一律在啟動時指定。
    各模型實際可用的強度(2026-10-12 查 OpenRouter `/api/v1/models` 的 `reasoning.supported_efforts` 與 pi 1.1.0 內建模型表;換模型或升級 pi 後重查):
 
@@ -26,9 +27,10 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
 
    pi 遇到不支援的值會**往上**找最近的檔位,所以「簡單工作 medium」在 GLM、DeepSeek 上實際是 high;這兩家簡單工作改用 `low`。MiniMax M3.1 Flash 有 medium,照一般規則。
 2. **啟動**:`start.sh <完整模型 ID(OpenRouter 含廠商前綴,如 `xiaomi/mimo-v2.6-pro`;直連供應商寫 `mirai/mirai-s-27b`、`strata-lan/qwen3.8-flash-next-iq3_xxs`、`deepseek/deepseek-flash`)> <分支短雜湊> [思考強度]` → 印出 pane ID。思考強度省略時用 `medium`。**不帶廠商前綴會被拒絕**:pi 對 `openrouter/<名稱>` 做模糊比對,2026-10-19 `mimo-v2.6-pro` 被解析成 `xiaomi/mimo-v2.6-pro-ultraspeed`(輸入/輸出單價 10 倍),#132、#130 兩次派工因此多花約 2 美元;腳本會等 pi 狀態列出現剛好這個模型 ID,不符就關掉 pane 並回錯。本專案(主倉庫或工作樹)已有 Pi 或 dsh-code 實作者時會拒絕(同時最多一個);作者在其他專案開的 Pi 不算。分支短雜湊由 Orchestrator 先決定並寫進任務說明,讓標籤與分支對得上。
-3. **送任務**:任務說明寫成檔案,`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
-   **啟動前先 `cd` 到任務工作樹**(`start.sh` 以執行時目錄為新 pane 的工作目錄)。任務說明的「交付」寫明:**完成回報直接送給 Orchestrator,不必等它空閒**——Orchestrator 作業期間幾乎一直是 working,照一般排隊規則等待會卡住(2026-10-13 實際發生,Pi 以 `herdr agent wait --until idle` 反覆等了數分鐘)。
-4. **監看**:立刻在背景執行 `watch.sh <pane ID>`。它會印出供應商,並在 Pi 停下、30 分鐘沒有任何修改、或花費超過停損門檻時結束。
+3. **送任務**:任務說明寫成檔案(可照 `brief-template.md` 填),`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
+   **啟動前先 `cd` 到任務工作樹**(`start.sh` 以執行時目錄為新 pane 的工作目錄)。任務說明的「交付」寫明:完成或受阻的回報直接送給 Orchestrator,不必等它空閒(`AGENTS.md`「排隊送訊」的例外)。
+4. **監看**:立刻在背景執行 `watch.sh <pane ID>`。它會印出供應商,並在 Pi 停下、約 30 分鐘時整個 session 仍沒有寫檔、或花費超過停損門檻時結束。
+   - `watch.sh` 只結束監看、不中斷 Pi,結束後由 Orchestrator 看畫面處置。它的「沒有修改」只在約 30 分鐘時查一次 session 有沒有 write/edit,之後改了一次就不再觸發;Pi 中途停滯要靠自己看 pane 與工作樹。
    - `watch.sh` 的花費停損只查 OpenRouter;用 DeepSeek 官方或本機模型時這項不會觸發,DeepSeek 官方要自己看平台餘額。
    - 迷路或超過門檻:Esc 中斷 Pi,判斷改由自己接手、換模型重派,或回報作者;不讓它繼續燒錢。
    - 同一問題返工兩輪仍未通過審查:停止返工,由 Orchestrator 接手。

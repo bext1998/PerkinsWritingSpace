@@ -1,7 +1,8 @@
 #!/bin/bash
 # 用法:watch.sh <Pi pane> [起點 usage];派工後在背景執行。
-# 2 分鐘後印出最近請求的供應商;之後每分鐘看狀態、每 15 分鐘看花費。
-# 碰到任一條件就結束並印出原因:Pi 不在工作、30 分鐘內沒有任何修改、這次花費超過停損門檻(讀 pi-ledger.md 的「停損門檻」)。
+# 2 分鐘後印出最近請求的供應商;之後每分鐘看狀態、每 5 分鐘看花費。
+# 碰到任一條件就結束並印出原因:Pi 不在工作、約 30 分鐘時整個 session 仍沒有 write/edit、這次花費超過停損門檻(讀 pi-ledger.md 的「停損門檻」)。
+# 只結束監看,不中斷 Pi。
 D=$(cd "$(dirname "$0")" && pwd); P=$1
 L="$(dirname "$(git -C "$D" rev-parse --path-format=absolute --git-common-dir)")/.agent/profile/pi-ledger.md"
 LIMIT=$(python -c "import re,sys;m=re.search(r'停損門檻[:：]\s*([0-9.]+)',open(sys.argv[1],encoding='utf-8').read());print(m.group(1) if m else '')" "$L")

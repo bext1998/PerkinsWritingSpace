@@ -13,16 +13,17 @@
    - 任務:審查 `git diff origin/main...HEAD`;寫明任務與驗收條件、相關 SPEC 章節;職責與範圍指向 `.agent/profile/reviewer.md`、`AGENTS.md`「審查範圍」。
    - 只寫事實背景(已知會另外處理的部分、相關既有機制),**不寫 Orchestrator 對風險或對錯的判斷**,保持審查獨立;高風險加審也用同一份。
    - 限制:唯讀——不改檔、不 commit、不 push、不切分支、不在 GitHub 留言;可以跑 git、讀檔、在暫存目錄做小實驗。
-   - 交付:完成用 `herdr agent prompt <Orchestrator pane> "…"` 回報(不必等對方空閒),開頭寫寄件者、主旨、狀態(通過／Request changes);每項發現附嚴重度、檔案:行、觸發情境、建議修法;範圍外另列;最後寫沒驗證到的部分。內容長就寫到暫存檔,訊息只附路徑。
+   - 交付:完成用 `herdr agent prompt <Orchestrator pane> "…"` 回報(不必等對方空閒,`AGENTS.md`「排隊送訊」的例外),開頭寫寄件者、主旨、狀態(通過／Request changes);每項發現附嚴重度、檔案:行、觸發情境、建議修法;範圍外另列;最後寫沒驗證到的部分。內容長就寫到暫存檔,訊息只附路徑。
 2. **啟動**:`cd` 到 PR 的工作樹根目錄。
    - Pi:`pi-dispatch/start.sh deepseek/deepseek-flash <分支短雜湊> high`;送任務用 `herdr agent prompt <pane> "…"`。
    - dsh-code:`dsh-dispatch/start.sh <分支短雜湊>`;送任務用 `dsh-dispatch/send.sh`。
    - 啟動後 `herdr pane rename <pane> Hemingway-<分支短雜湊>`。
 3. **監看**:背景執行對應的監看腳本:Pi 用 `pi-dispatch/watch.sh <pane>`,dsh-code 用 `dsh-dispatch/watch.sh <pane> <工作樹路徑>`。審查本來就不改檔,「30 分鐘沒有修改」不代表卡住,結束時看 pane 畫面判斷。
-4. **處理**:先在工作樹跑 `git status` 確認審查者沒有改檔;再逐項親自核對發現是否成立(可能誤判);成立的修掉,在同一個 session 請它複審,說明只放修補提交範圍與先前的發現。不成立的在 PR 回覆寫明理由。
-5. **高風險 PR 加審**(定義見 `AGENTS.md`):另開一個新的 Claude Code 子代理(不是 fork,不帶 Orchestrator 的對話脈絡),只給同一份說明檔與工作樹路徑。
-6. **記錄**:主倉庫 `.agent/profile/pi-ledger.md` 加一列(任務寫「審查 #<PR>」);DeepSeek 官方 API 的花費以 DeepSeek 平台餘額前後差為準(Pi 的 `watch.sh` 只看 OpenRouter)。PR「Agent 貢獻」寫 `Reviewed-by: Hemingway (Pi) | deepseek/deepseek-flash` 或 `Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)`;加審另列 `Reviewed-by: <角色名或「未知」> (Claude Code 子代理) | <模型 ID>`。
-7. **收尾**:審查通過、不再需要複審時 `stop.sh <pane>`。
+4. **標題標記**:PR 標題前綴 `[未經獨立審查]`(`AGENTS.md`「Git 與工作樹」),主審、高風險加審都通過且修補已複審後才移除。
+5. **處理**:先在工作樹跑 `git status` 確認審查者沒有改檔;再逐項親自核對發現是否成立(可能誤判);成立的修掉,在同一個 session 請它複審,說明只放修補提交範圍與先前的發現。不成立的在 PR 回覆寫明理由。
+6. **高風險 PR 加審**(定義見 `AGENTS.md`):另開一個新的 Claude Code 子代理(不是 fork,不帶 Orchestrator 的對話脈絡),只給同一份說明檔與工作樹路徑。
+7. **記錄**:主倉庫 `.agent/profile/pi-ledger.md` 加一列(任務寫「審查 #<PR>」);DeepSeek 官方 API 的花費以 DeepSeek 平台餘額前後差為準(Pi 的 `watch.sh` 只看 OpenRouter)。PR「Agent 貢獻」寫 `Reviewed-by: Hemingway (Pi) | deepseek/deepseek-flash` 或 `Reviewed-by: Hemingway (DSH Code) | deepseek-flash(V4.1-Flash-1017)`;加審另列 `Reviewed-by: <角色名或「未知」> (Claude Code 子代理) | <模型 ID>`。
+8. **收尾**:審查通過、不再需要複審時 `stop.sh <pane>`。
 
 ## 常駐審查者(Codex 到期後,作者自己開)
 作者會自己開一個常駐的 Pi pane 當審查者;有它時用它,不另外啟動。
