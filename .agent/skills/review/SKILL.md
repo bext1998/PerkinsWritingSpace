@@ -9,11 +9,11 @@
 - 啟動腳本會檢查「本專案同時最多一個 Pi／dsh-code」;送審時實作者應已回報並收掉,還開著就先 `stop.sh`。
 
 ## 步驟
-1. **審查說明**寫成系統暫存目錄的檔案,開頭列寄件者、回報對象(Orchestrator pane ID)、主旨、關聯(PR／分支／工作樹)。
+1. **審查說明**寫在 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\Agent2AgentMSG`,檔名包含日期、分支或 PR 與用途；開頭列寄件者、回報對象(Orchestrator pane ID)、主旨、關聯(PR／分支／工作樹)。
    - 任務:審查 `git diff origin/main...HEAD`;寫明任務與驗收條件、相關 SPEC 章節;職責與範圍指向 `.agent/profile/reviewer.md`、`AGENTS.md`「審查範圍」。
    - 只寫事實背景(已知會另外處理的部分、相關既有機制),**不寫 Orchestrator 對風險或對錯的判斷**,保持審查獨立;高風險加審也用同一份。
-   - 限制:唯讀——不改檔、不 commit、不 push、不切分支、不在 GitHub 留言;可以跑 git、讀檔、在暫存目錄做小實驗。
-   - 交付:完成用 `herdr agent prompt <Orchestrator pane> "…"` 回報(不必等對方空閒,`AGENTS.md`「排隊送訊」的例外),開頭寫寄件者、主旨、狀態(通過／Request changes);每項發現附嚴重度、檔案:行、觸發情境、建議修法;範圍外另列;最後寫沒驗證到的部分。內容長就寫到暫存檔,訊息只附路徑。
+   - 限制:唯讀——不改受版本控制的檔案、不 commit、不 push、不切分支、不在 GitHub 留言;可以跑 git、讀檔、在任務工作樹內以未追蹤檔案做小實驗，信件目錄只放說明與回報。
+   - 交付:完成用 `herdr agent prompt <Orchestrator pane> "…"` 回報(不必等對方空閒,`AGENTS.md`「排隊送訊」的例外),開頭寫寄件者、主旨、狀態(通過／Request changes);每項發現附嚴重度、檔案:行、觸發情境、建議修法;範圍外另列;最後寫沒驗證到的部分。內容長就寫到上述 Agent2AgentMSG 目錄的回報檔,訊息只附路徑。
 2. **啟動**:`cd` 到 PR 的工作樹根目錄。
    - Pi:`pi-dispatch/start.sh deepseek/deepseek-flash <分支短雜湊> high`;送任務用 `herdr agent prompt <pane> "…"`。
    - dsh-code:`dsh-dispatch/start.sh <分支短雜湊>`;送任務用 `dsh-dispatch/send.sh`。
