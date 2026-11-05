@@ -16,7 +16,7 @@ Pi(`pi-dispatch`)以外的第二種派工方式。`dsh-code` 是作者為 DeepSe
 - **回報**:任務說明要求「完成用 `herdr agent prompt w12:p1 …` 回報」時,它會自己送出,內容與實際 diff 一致(測試派工實測)。
 
 ## 步驟
-1. **任務說明**寫成檔案(放系統暫存目錄;格式照 `AGENTS.md`「Agent 之間的主動溝通」:寄件者、回報對象 pane ID、主旨、關聯;「任務」「限制」「交付」)。限制裡一律寫:
+1. **任務說明**寫成檔案(放 `AGENTS.md` 指定的信件目錄 `Agent2AgentMSG`;格式照 `AGENTS.md`「Agent 之間的主動溝通」:寄件者、回報對象 pane ID、主旨、關聯;「任務」「限制」「交付」)。限制裡一律寫:
    - 不 commit、不 push、不開 PR、不切分支(由 Orchestrator 做;它跑完整權限,這條要明寫)。
    - 只在目前工作樹內改檔;不碰 `%USERPROFILE%\.perkins`、`~/.dsh`、作者設定與作品資料。
    - 不跑完整 E2E。真的要跑時寫出完整可複製的一行指令(含 `E2E_SKIP_AI=1`),註明「不帶這個變數會載入本機大模型」。

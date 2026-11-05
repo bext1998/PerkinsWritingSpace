@@ -30,7 +30,7 @@
   - 過渡期（2026-11-21 Codex 訂閱到期前）：Codex 照舊審同一份 PR 作對照，雙方發現的差異記在本機紀錄，用來判斷 DeepSeek 審查是否可靠；到期後移除本條，以及 `.agent/skills/review/SKILL.md`「過渡期」與 `.agent/profile/reviewer.md` 的 Codex 字句。
 - 分支名稱格式：`maze/yyyy-mm-dd-<短雜湊>`，短雜湊為隨機 7 位小寫十六進位，例如 `maze/2026-09-30-b14fae6`。
 - 本專案的隔離分支一律使用工作樹，根目錄固定為 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace`（依作者指定保留此拼法），其下路徑與分支名稱相同，例如 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\maze\2026-09-30-b14fae6`。不得放在主倉庫、其他專案目錄、共用 worktrees 根目錄或使用者家目錄的 `.codex\worktrees`。
-- 本專案的臨時腳本、實驗與驗證產物放在對應任務工作樹內；不進 Git 的共用工作資料也須放在上述專案根目錄內，不散放到其外。既有工具設定、執行期檔案與帳本仍依各技能指定位置保存。
+- 本專案的臨時腳本、實驗與驗證產物放在對應任務工作樹內；不進 Git 的共用工作資料也須放在上述專案根目錄內，不散放到其外。既有工具設定、執行期檔案、帳本與 E2E 的拋棄式測試專案（清理腳本只處理系統暫存資料夾）仍依各技能指定位置保存。
 - 提交訊息使用中文，第一行簡述改了什麼，必要時空一行後補充原因。
 - 本機主倉庫的 `main` 要與遠端保持一致：開始任務、開分支前，以及得知 PR 已合併後，先在主倉庫 `git pull --ff-only`；分支一律從最新的 `origin/main` 建立。若同步帶進 `package-lock.json` 的變動，在主倉庫對應目錄執行 `npm ci`。主倉庫只用來同步與建立工作樹，不在裡面改檔；無法快轉（本機有未推送的提交或改動）時停下來回報，不要強制覆蓋。
 
@@ -61,7 +61,7 @@
   - 範圍外發現的既有問題或改善想法，另列「範圍外」區塊，標明不阻擋合併，由 Orchestrator 判斷是否開成待辦，不要求在本 PR 處理。
   - Orchestrator 請求審查時，須寫明審查範圍（PR／分支、任務與驗收條件）；重審只看修補的 diff 與先前的發現，不重新擴大範圍。
 - **Agent 之間的主動溝通**：位於 Herdr 環境時，Worker 與 Reviewer 可透過 `herdr` skill 主動聯絡其他 Agent，不必等 Orchestrator 詢問。
-  - Agent 之間的信件檔案（派工、審查請求與結果、交接、阻斷問題及長篇回報）一律放在 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\Agent2AgentMSG`，檔名包含日期、分支或 PR 與用途，避免互相覆寫；不得使用系統暫存目錄、主倉庫或其他共用目錄。此目錄只放信件，不放工作樹、測試腳本或驗證產物；短訊息仍可直接透過 Herdr 傳送。
+  - Agent 之間的信件檔案（派工、審查請求與結果、交接、阻斷問題及長篇回報）一律放在 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\Agent2AgentMSG`，檔名包含日期、分支或 PR 與用途，避免互相覆寫；不得使用系統暫存目錄、主倉庫或其他共用目錄。此目錄只放信件，不放工作樹、測試腳本或驗證產物；短訊息仍可直接透過 Herdr 傳送。信件目錄由 Orchestrator 定期清理：PR 合併或任務結束時，刪除該分支或 PR 的信件；每次開新分支前，再刪除修改時間超過 14 天且不屬於進行中任務的信件。信件不是紀錄來源，要留存的事實先寫進 PR、Issue 或帳本。
   - 必須主動回報 Orchestrator 的情況：任務完成（附分支、提交與驗證結果）、遇到阻礙、發現任務說明與 SPEC 或現有程式衝突、需要擴大範圍才能完成。不得默默擴大範圍或自行改變任務。
   - Worker 與 Reviewer 可直接溝通，用來釐清審查發現或實作意圖；同一議題直接往返最多兩輪，仍未取得共識就交給 Orchestrator 裁決。範圍變更、駁回發現、新增工作等決定一律由 Orchestrator 做，直接溝通的結論也要同步給 Orchestrator。
   - **排隊送訊，避免提示詞撞在一起**：送訊前先用 Herdr 查詢對方狀態（例如 `herdr agent list`），對方正在處理工作時不送出，等它空閒再送；同一個對象一次只送一則，前一則得到回應或處理完之前不送下一則。收到訊息時若正在工作，先完成目前步驟再處理，不中斷手上的修改。例外：Worker 與 Reviewer 給 Orchestrator 的完成、受阻回報直接送，不等空閒——Orchestrator 作業期間幾乎一直是 working，等待會卡住（2026-10-13 實際發生）。
