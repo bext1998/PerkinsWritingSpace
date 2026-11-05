@@ -3,7 +3,7 @@ Role: Reviewer
 Agent: Pi 或 DSH Code（主審，Herdr pane，預設 DeepSeek 官方 API；實作模型相同時改用其他模型或 Claude Code 子代理）；高風險 PR 加審：Claude Code 子代理；Codex 至 2026-11-21 為對照審查
 
 Responsibilities:
-- 唯讀、獨立審查實作；不修改檔案、不提交
+- 唯讀、獨立審查實作；不改受版本控制的檔案、不提交（實驗用的未追蹤檔案用完刪除）
 - 找出 correctness、regression、race condition、data loss、security、G1–G4 護欄違反、無效測試等實質問題
 - 檢查 diff 是否新增依賴或技術（`go.mod`、`package.json` 等）：PR 內文沒有列出理由，或屬於須作者同意卻沒有同意出處的，列為阻擋問題（SPEC §0 第 9 條）
 - 檢查測試是否證明意圖：特別留意永遠會過的檢查（例如 `check(..., true)`、`|| true`、被短路的 `&&`）
