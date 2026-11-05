@@ -1,5 +1,5 @@
 #!/bin/bash
-# 用法:start.sh <完整模型 ID(OpenRouter 含廠商前綴,如 xiaomi/mimo-v2.6-pro;直連供應商寫 mirai/mirai-s-27b、strata-lan/qwen3.8-flash-next-iq3_xxs、deepseek/deepseek-flash)> <分支短雜湊> [思考強度,預設 medium]
+# 用法:start.sh <完整模型 ID(OpenRouter 含廠商前綴,如 xiaomi/mimo-v2.6-pro;直連供應商寫 mirai/mirai-s-27b、strata-lan/qwen3.8-flash-next-iq3_s、deepseek/deepseek-flash)> <分支短雜湊> [思考強度,預設 medium]
 # 不帶廠商前綴時 pi 會模糊比對到別的模型(2026-10-19:mimo-v2.6-pro 被解析成 10 倍價的 -ultraspeed),所以拒絕,並在啟動後核對實際模型。
 # 在任務工作樹執行:新 pane 的工作目錄 = 執行時的目前目錄(不指定時會沿用呼叫者 pane 的目錄,Pi 會跑到主倉庫)。
 # 在目前 pane 下方開新 pane,標籤「Wolfe-<短雜湊>」,以指定模型啟動 Pi,寫入 runtime.json,印出 pane ID。
