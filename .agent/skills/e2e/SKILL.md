@@ -77,7 +77,7 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 
 ## 多個 Agent 同時跑 E2E
 
-- E2E 共用 34115/5173 埠與 settings.json,一次只能跑一個。開始前建立鎖檔(Orchestrator 指定路徑,例如 scratchpad 的 `e2e.lock`,以 noclobber 建立),已存在就等;跑完、清理、還原、清書櫃垃圾後刪除。
+- E2E 共用 34115/5173 埠與 settings.json,一次只能跑一個。開始前建立鎖檔(`D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\e2e.lock`,以 noclobber 建立;各 Agent 要用同一個路徑才互斥),已存在就等;跑完、清理、還原、清書櫃垃圾後刪除。
 - 備份 settings.json 必須在拿到鎖之後才做:在別人跑到一半時備份,會把對方留下的測試作品一起「還原」回去,書櫃因此累積垃圾(2026-10-08 實際發生,一次多出 11 筆)。
 
 ## 已知陷阱

@@ -27,7 +27,7 @@ Orchestrator 派工給 Pi 實作者時使用。Pi 不常駐:派工時才開 pane
 
    pi 遇到不支援的值會**往上**找最近的檔位,所以「簡單工作 medium」在 GLM、DeepSeek 上實際是 high;這兩家簡單工作改用 `low`。MiniMax M3.1 Flash 有 medium,照一般規則。
 2. **啟動**:`start.sh <完整模型 ID(OpenRouter 含廠商前綴,如 `xiaomi/mimo-v2.6-pro`;直連供應商寫 `mirai/mirai-s-27b`、`strata-lan/qwen3.8-flash-next-iq3_s`、`deepseek/deepseek-flash`)> <分支短雜湊> [思考強度]` → 印出 pane ID。思考強度省略時用 `medium`。**不帶廠商前綴會被拒絕**:pi 對 `openrouter/<名稱>` 做模糊比對,2026-10-19 `mimo-v2.6-pro` 被解析成 `xiaomi/mimo-v2.6-pro-ultraspeed`(輸入/輸出單價 10 倍),#132、#130 兩次派工因此多花約 2 美元;腳本會等 pi 狀態列出現剛好這個模型 ID,不符就關掉 pane 並回錯。本專案(主倉庫或工作樹)已有 Pi 或 dsh-code 實作者時會拒絕(同時最多一個);作者在其他專案開的 Pi 不算。分支短雜湊由 Orchestrator 先決定並寫進任務說明,讓標籤與分支對得上。
-3. **送任務**:任務說明寫成檔案(可照 `brief-template.md` 填),`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
+3. **送任務**:任務說明寫在 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\Agent2AgentMSG`，檔名包含日期、分支與用途(可照 `brief-template.md` 填),`herdr agent prompt <pane ID> "<寄件者、主旨、檔案路徑>"`。
    **啟動前先 `cd` 到任務工作樹**(`start.sh` 以執行時目錄為新 pane 的工作目錄)。任務說明的「交付」寫明:完成或受阻的回報直接送給 Orchestrator,不必等它空閒(`AGENTS.md`「排隊送訊」的例外)。
 4. **監看**:立刻在背景執行 `watch.sh <pane ID>`。它會印出供應商,並在 Pi 停下、約 30 分鐘時整個 session 仍沒有寫檔、花費超過停損門檻,或監看滿 4 小時時結束。
    - `watch.sh` 只結束監看、不中斷 Pi,結束後由 Orchestrator 看畫面處置。它的「沒有修改」只在約 30 分鐘時查一次 session 有沒有 write/edit,之後改了一次就不再觸發;Pi 中途停滯要靠自己看 pane 與工作樹。
