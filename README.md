@@ -6,13 +6,13 @@
 
 **核心流程已實作並經過驗證，尚未作為穩定產品發布。** 「AI 只能提案、作者接受後才寫入、接受後可回溯」的核心流程已可使用。現階段依新的產品定位（見 [規格書](docs/SPEC.md) §0）調整 Agent 的治理方式，並持續修整介面與操作體驗、改進試用回饋。
 
-介面與操作細節仍可能依試用回饋調整。試用前請備份作品；已實作項目與已知限制見 GitHub Issues 與 PR;2026-10-27 以前的實作紀錄見 [docs/PROGRESS.md](docs/PROGRESS.md)(已凍結)。
+介面與操作細節仍可能依試用回饋調整。試用前請備份作品；已實作項目與已知限制見 GitHub Issues 與 PR；2026-10-27 以前的實作紀錄見 [docs/PROGRESS.md](docs/PROGRESS.md)（已凍結）。
 
 ## 專案內容
 
 - `app/`：桌面應用程式與測試。
 - `docs/SPEC.md`：功能規格與驗收標準。
-- `docs/PROGRESS.md`：2026-10-27 以前的實作紀錄(已凍結,現況見 Issues 與 PR)。
+- `docs/PROGRESS.md`：2026-10-27 以前的實作紀錄（已凍結，現況見 Issues 與 PR）。
 - `docs/PITFALLS.md`：已確認的問題與教訓。
 - `.agent/`：專案 Agent 的記憶與專用技能，不屬於應用程式的 AI 工具權限。
 
