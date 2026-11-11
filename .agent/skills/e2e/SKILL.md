@@ -24,7 +24,8 @@ description: 以 wails dev + 無頭 Edge 執行 Perkins 前端 E2E(app/e2e/run.j
 3. 另開背景程序:在 `app/` 執行 `PERKINS_OPEN=<測試專案> wails dev -noreload`,等 `http://localhost:34115` 有回應且記錄出現 `Watching`。
    **要跑很多輪(破壞驗證)時只需啟動這一次**:之後每輪用 `--reuse`,它會重建 fixture、叫後端重新開啟作品、重載頁面(見「重用同一個 wails dev」)。
 4. 第一次使用時在 `app/e2e/` 執行 `npm install`(只有 playwright-core,使用本機 Edge:`C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe`)。
-5. 執行:`PROJ=<測試專案> node app/e2e/run.js <模式或組名>`。截圖在 `app/e2e/shots/`(已被 .gitignore 排除)。
+5. 執行:`E2E_SKIP_AI=1 PROJ=<測試專案> node app/e2e/run.js <模式或組名>`。截圖在 `app/e2e/shots/`(已被 .gitignore 排除)。
+   只有改動涉及模型流程時才拿掉 `E2E_SKIP_AI=1`;不帶它會呼叫本機模型,大模型可能吃光記憶體(2026-10-15 實際發生)。
 6. 清理:`taskkill //F //IM perkins-dev.exe`、`taskkill //F //IM wails.exe`,並結束監聽 `[::1]:5173` 的 vite node 程序;還原 settings.json。
 7. 清書櫃垃圾:`node .agent/skills/e2e/clean-recent.js`(先加 `--dry-run` 看清單)。移除「最近作品」中位於系統暫存資料夾的項目與殘留的 `perkins-e2e-b-*` 測試專案;暫存資料夾以外的作品一律保留。**只在沒有其他 E2E 在跑時執行**(會刪掉正在使用的乙作品目錄)。
 
