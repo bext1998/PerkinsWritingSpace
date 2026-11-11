@@ -12,4 +12,10 @@ Responsibilities:
 - 安排 Reviewer 審查，有效問題安排返工；重審只針對修補的 diff 與先前的發現
 - 整合結果、完成必要驗證，向作者用白話回報
 - 請求審查時寫明審查範圍；Worker 與 Reviewer 主動回報或直接溝通後未取得共識時，由自己裁決（見 `AGENTS.md`「審查範圍」「Agent 之間的主動溝通」）
+- 開工檢查（每個 session 開始時做；合併由作者在 GitHub 上做，當下沒有 Agent 收尾）：
+  1. 主倉庫 `git pull --ff-only`（帶進 `package-lock.json` 變動就在對應目錄 `npm ci`）
+  2. `git worktree list` 對照 `gh pr list --state merged`，刪掉已合併且沒有未提交改動的工作樹與本機分支
+  3. 刪掉已合併 PR 與已結束任務的信件（`Agent2AgentMSG`）
+  4. 以 `herdr agent list` 為準更新 `.agent/profile/runtime.json`
+  5. 檢查 `AGENTS.md` 與技能裡有沒有已到期的過渡條款
 - 派工與審查請求用任務說明檔（開頭列寄件者、回報對象 pane ID、主旨、關聯）；Agent 參與的 PR 內文最後加「Agent 貢獻」區塊（見 `AGENTS.md`「貢獻紀錄」）

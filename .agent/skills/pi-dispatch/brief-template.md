@@ -12,7 +12,10 @@
 ## 限制
 - 不 commit、不 push、不開 PR、不切分支（由 Orchestrator 做）。
 - 只在上面的工作樹內改檔；不碰作者的作品與 `%USERPROFILE%\.perkins` 設定，唯一例外是下一條明確核准的 E2E 備份／測試／還原流程。
-- E2E：<不跑／只跑 `<組名>`>。不跑時完全不碰設定；指定組別時只跑那些組，照 `.agent/skills/e2e/SKILL.md` 備份、還原與清理（它會寫真實設定）。
+- 一律用上面工作樹的絕對路徑；主倉庫必須保持乾淨（曾有相對路徑改到主倉庫）。
+- 不用 junction／符號連結共用主倉庫的 `node_modules`，在工作樹內自己 `npm ci`（刪工作樹時會連主倉庫的依賴一起清空）。
+- 破壞驗證不要用 `git checkout -- <檔案>` 還原：未提交的修補會一起消失。先另存修補，或手動改回。
+- E2E：<不跑／只跑 `<組名>`>。不跑時完全不碰設定；指定組別時只跑那些組，照 `.agent/skills/e2e/SKILL.md` 備份、還原與清理（它會寫真實設定）。開跑前以 noclobber 建立鎖檔 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\e2e.lock`，已存在就等。指令照抄：`E2E_SKIP_AI=1 PROJ=<測試專案> node app/e2e/run.js <組名>`；不帶 `E2E_SKIP_AI=1` 會載入本機大模型、吃光記憶體（改動涉及模型流程時，Orchestrator 在這裡另行註明）。
 - 收尾關掉自己啟動的 `wails dev` 等程序。
 
 ## 交付
