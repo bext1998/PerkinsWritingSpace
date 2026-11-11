@@ -1,5 +1,7 @@
 # PROGRESS.md
 
+> **已凍結(2026-11-11 作者決定)**:本檔是 2026-10-27 以前的實作紀錄,不再更新。現況以 Git 紀錄、PR 與 Issue 為準。
+
 ## 2026-10-26 — #160 右鍵選單與子選單依實際尺寸避開視窗邊緣、#162 右鍵選單「全選」(分支 maze/2026-10-26-e1fd37b)
 
 - **#160**:`app/frontend/src/Editor.tsx` 右鍵選單新增 `menuRef` + `useLayoutEffect`,依量到的尺寸把主選單 clamped 在 4px 邊緣內(取代舊的 `left/top Math.min(... - 200/-220)` 估算);四個子選單(快速指令、插入標點、格式、段落與場景)改由共同的 `SubMenu` 元件依實際量到的尺寸決定往右開/往左開(右側溢出時往左)與超出底部時往上移(取代舊的 `flip` 估算:`menu.x > innerWidth - 420`);主選單與子選單都加 `whitespace-nowrap`,文字不換行。`useLayoutEffect` 在繪製前執行,不會閃。
