@@ -25,7 +25,7 @@ Pi(`pi-dispatch`)以外的第二種派工方式。`dsh-code` 是作者為 DeepSe
 3. **送任務**:`send.sh <pane> "請讀任務說明檔 <Windows 路徑> 並照做。"`
 4. **監看**:立刻在背景執行 `watch.sh <pane> <工作樹路徑>`;dsh-code 停下(idle/blocked)或 30 分鐘沒有任何修改時結束。`blocked` 時先 `pane read --source visible` 看它在問什麼,只在任務範圍內回答(用 `send.sh`);要求提權、改系統設定一律拒絕。迷路就 `stop.sh`,改由自己接手或換方式重派。
 5. **驗收**:讀回報後親自核對 `git status`/`git diff` 與相關測試(介面改動照 `UI_GUIDE.md` 實看),再由 Orchestrator commit、推送、開 PR。返工用 `send.sh` 在同一個 session 送修正說明;同一問題返工兩輪仍不過就自己接手。
-6. **記錄**:每次派工在主倉庫 `.agent/profile/pi-ledger.md` 加一列,方式寫 `dsh-code`,模型寫 `deepseek-flash(V4.1-Flash-1017)`;花費以 DeepSeek 平台餘額前後差為準。PR「Agent 貢獻」寫 `Implemented-by: DSH Code (DeepSeek Harness) | deepseek-flash(V4.1-Flash-1017)`。
+6. **記錄**:每次派工在主倉庫 `.agent/profile/pi-ledger.md` 加一列,方式寫 `dsh-code`,模型寫 `deepseek-flash(V4.1-Flash-1017)`;花費欄寫「月結」,每月初記上月總額(見 pi-dispatch 步驟 5)。PR「Agent 貢獻」寫 `Implemented-by: DSH Code (DeepSeek Harness) | deepseek-flash(V4.1-Flash-1017)`。
 7. **收尾**:回報且不再需要時 `stop.sh <pane>`;PR 合併後照常清掉工作樹與分支。
 
 ## 限制

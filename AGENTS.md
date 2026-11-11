@@ -29,7 +29,7 @@
   - 主審由 Orchestrator 在 Herdr pane 派審查者，Pi 或 dsh-code 擇一，預設用 DeepSeek（官方 API）；審查模型不得與該 PR 的實作模型相同，相同時改用另一個 Pi 模型主審（例如 `xiaomi/mimo-v2.6-pro`），Claude Code 子代理不當主審、只當高風險加審。步驟見 `.agent/skills/review/SKILL.md`。高風險 PR 另加一位 Claude Code 新開的子代理獨立審查（不帶 Orchestrator 的對話脈絡）；高風險指動到稿件、Canon 或設定的寫入，提案的接受、拒絕與還原，G1–G4 護欄，Bot 工具權限或送出模型的內容。
   - 過渡期（2026-11-21 Codex 訂閱到期前）：Codex 照舊審同一份 PR 作對照，雙方發現的差異記在本機紀錄，用來判斷 DeepSeek 審查是否可靠；到期後移除本條，以及 `.agent/skills/review/SKILL.md`「過渡期」與 `.agent/profile/reviewer.md` 的 Codex 字句。
 - 分支名稱格式：`maze/yyyy-mm-dd-<短雜湊>`，短雜湊為隨機 7 位小寫十六進位，例如 `maze/2026-09-30-b14fae6`。
-- 雲端 session（例如 claude.ai/code）可以開 PR：分支名可用平台指定的，「Agent 貢獻」寫實際模型 ID。它沒有 Herdr 與本機帳本，無法送審：標題保留 `[未經獨立審查]`，由下一個本機 Orchestrator session 依「每個 PR 都要經 Reviewer 審查」補審、補帳本列，通過後移除前綴。
+- 雲端 session（例如 claude.ai/code）可以開 PR：分支名可用平台指定的，「Agent 貢獻」寫實際模型 ID。它沒有 Herdr 與本機帳本，無法送審：標題保留 `[未經獨立審查]`，由下一個本機 Orchestrator session 依「每個 PR 都要經 Reviewer 審查」補審、補帳本列，通過後移除前綴。雲端 session 的分支建在平台上，不受下面工作樹條的限制。
 - 本專案的隔離分支一律使用工作樹，根目錄固定為 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace`（依作者指定保留此拼法），其下路徑與分支名稱相同，例如 `D:\AgentCoding\.codex\worktrees\PerkinsWiritingSpace\maze\2026-09-30-b14fae6`。不得放在主倉庫、其他專案目錄、共用 worktrees 根目錄或使用者家目錄的 `.codex\worktrees`。
 - 本專案的臨時腳本、實驗與驗證產物放在對應任務工作樹內；不進 Git 的共用工作資料也須放在上述專案根目錄內，不散放到其外。既有工具設定、執行期檔案、帳本與 E2E 的拋棄式測試專案（清理腳本只處理系統暫存資料夾）仍依各技能指定位置保存。
 - 提交訊息使用中文，第一行簡述改了什麼，必要時空一行後補充原因。
@@ -49,7 +49,7 @@
 - 派工後仍須追蹤結果、檢查成果（例如實際看截圖、核對分支與提交），必要時要求修正或安排 Reviewer。派出去的工作照樣適用本文件的規則。
 - **派工成本與優先級**：Pi 實作者使用作者付費的模型 API，預算有限且與作者其他用途共用；派工前衡量成本與效益，以每一美元換到可交付的成果為準。
   - 優先級：P0 阻斷性問題，優先處理；P1 當前核心任務，確保交付；P2 一般改善，依實際需要安排；P3 非必要最佳化，原則上延後。
-  - 小型、已釐清或以驗證為主的工作（補測試、小修正、改文件）由 Orchestrator 自己做；實作量大、自己做明顯不划算時才派給 Pi，任務說明寫清楚，減少返工往返。本機模型開著時，審查發現的返工交回本機模型，Orchestrator 只寫明確指令（檔案:行、改法、驗證方式）並核對；一行就能改完，或本機模型同一問題已失敗兩次時才自己修。
+  - 小型、已釐清或以驗證為主的工作（補測試、小修正、改文件）由 Orchestrator 自己做；實作量大、自己做明顯不划算時才派給 Pi，任務說明寫清楚，減少返工往返。本機模型開著時，審查發現的返工交回本機模型，Orchestrator 只寫明確指令（檔案:行、改法、驗證方式）並核對；一行就能改完，或同一問題返工兩輪仍未通過審查時才自己修。
   - Orchestrator 可視工作難易度，自行決定是否把一部分工作交給自己的子代理（例如 Claude Code 的 sub-agent）：適合範圍明確、可獨立完成的搜尋、調查或局部實作；簡單到自己做更快的不拆，難度高、需要完整上下文判斷的留給自己。子代理不占用 Pi 名額，成果一樣要親自核對。
   - 任何時刻最多只有一個 Pi 實作者在本專案執行任務，適用於在本倉庫或其工作樹裡透過 Herdr 啟動的 Pi pane（作者在其他專案開的 Pi 不算；作者開的常駐審查者也不算，見 `.agent/skills/review/SKILL.md`「常駐審查者」）；不得為了加快進度自行解除。
   - **Pi 按需啟動**：實作用的 Pi 不常駐（作者開的常駐審查者例外，Orchestrator 不關閉它）。派工時由 Orchestrator 開 pane、指定模型啟動，步驟與腳本見 `.agent/skills/pi-dispatch/SKILL.md`。模型選擇：本機模型開著時預設用它實作（`mirai/mirai-s-27b` 或 `strata-lan/qwen3.8-flash-next-iq3_s`，同一台伺服器，作者開哪個用哪個，`start.sh` 會先查）；沒開時簡單工作用 MiMo V2.6 Flash、複雜工作用 MiMo V2.6 Pro。為持續累積比較資料，可依需求改用 GLM 5.3、GLM 5.3 Flash、DeepSeek V4.1 Flash、MiniMax M3.1 Flash（皆經 OpenRouter），或從 Pi 直連 DeepSeek 官方 API（`deepseek/deepseek-flash`）。思考強度依任務難度在啟動時指定：簡單工作 medium（模型沒有 medium 時用 low，各模型可用檔位見 pi-dispatch 技能）；複雜工作，或曾返工、審查被打回的重派，用 high；xhigh、max 原則上不用（思考 token 照樣計費）。每次派工的模型、思考強度、供應商、花費與審查結果記在本機紀錄（不進 Git）；DeepSeek 官方 API 的花費（多為審查，金額小）不逐次記，每月初記一次上月總額。
